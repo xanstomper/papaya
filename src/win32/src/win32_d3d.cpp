@@ -21,13 +21,17 @@ using msabi_void1 = u64 (*)(void*);
 using msabi_void0 = u64 (*)();
 
 // ---- COM IUnknown (QueryInterface/AddRef/Release) shared thunks --------------
-static u64 thunk_query_interface(void* self, u64 riid, u64 ppv) {
+// All D3D/DXGI vtable thunks use the Microsoft x64 calling convention (ms_abi),
+// because the guest invokes COM methods via the vtable with ms_abi semantics.
+#define D3DMS __attribute__((ms_abi))
+
+static D3DMS u64 thunk_query_interface(void* self, u64 riid, u64 ppv) {
     (void)self; (void)riid;
     if (ppv) *reinterpret_cast<void**>(ppv) = self;
     return 0; // S_OK
 }
-static u64 thunk_add_ref(void*) { return 1; }
-static u64 thunk_release(void*) { return 0; }
+static D3DMS u64 thunk_add_ref(void*) { return 1; }
+static D3DMS u64 thunk_release(void*) { return 0; }
 
 struct D3DObject {
     void** vtbl;
@@ -58,7 +62,7 @@ D3DContext* g_context = nullptr;
 SwapChain*  g_swap    = nullptr;
 
 // ---- ID3D11Device methods ----------------------------------------------------
-static u64 dev_create_render_target_view(void* self, void* res, void* desc, void* rtv_out) {
+static D3DMS u64 dev_create_render_target_view(void* self, void* res, void* desc, void* rtv_out) {
     (void)res; (void)desc;
     auto* dev = static_cast<D3DDevice*>(self);
     auto* rtv = new RenderTargetView();
@@ -70,35 +74,35 @@ static u64 dev_create_render_target_view(void* self, void* res, void* desc, void
 }
 
 // ---- ID3D11DeviceContext methods --------------------------------------------
-static u64 ctx_om_set_render_targets(void* self, u64 count, void* rtv_ptr, void* dsv) {
+static D3DMS u64 ctx_om_set_render_targets(void* self, u64 count, void* rtv_ptr, void* dsv) {
     (void)count; (void)dsv;
     auto* ctx = static_cast<D3DContext*>(self);
     ctx->rtv = rtv_ptr ? *reinterpret_cast<void**>(rtv_ptr) : nullptr;
     return 0;
 }
-static u64 ctx_clear_render_target_view(void* self, void* rtv, const float* rgba) {
+static D3DMS u64 ctx_clear_render_target_view(void* self, void* rtv, const float* rgba) {
     auto* ctx = static_cast<D3DContext*>(self);
-    auto* target = static_cast<RenderTargetView*>(rtv);
+    auto* target = (rtv) ? static_cast<RenderTargetView*>(rtv) : nullptr;
     ctx->rtv = rtv;
-    if (rgba) { ctx->clear_color[0]=rgba[0]; ctx->clear_color[1]=rgba[1];
-                ctx->clear_color[2]=rgba[2]; ctx->clear_color[3]=rgba[3]; }
-    if (g_swap && g_swap->fb && target) {
-        // fill the swapchain backbuffer with the clear color
-        u32 n = g_swap->w * g_swap->h;
-        u8 r=(u8)(rgba[0]*255), g2=(u8)(rgba[1]*255), b=(u8)(rgba[2]*255), a=(u8)(rgba[3]*255);
-        u8* p = g_swap->fb;
-        for (u32 i=0;i<n;i++){ p[0]=r; p[1]=g2; p[2]=b; p[3]=a; p+=4; }
-    }
+    if (!rgba) return 0;
+    ctx->clear_color[0]=rgba[0]; ctx->clear_color[1]=rgba[1];
+    ctx->clear_color[2]=rgba[2]; ctx->clear_color[3]=rgba[3];
+    SwapChain* sc = g_swap;
+    if (!sc || !sc->fb || !target) return 0;
+    u32 n = sc->w * sc->h;
+    u8 r=(u8)(rgba[0]*255), g2=(u8)(rgba[1]*255), b=(u8)(rgba[2]*255), a=(u8)(rgba[3]*255);
+    u8* p = sc->fb;
+    for (u32 i=0;i<n;i++){ p[0]=r; p[1]=g2; p[2]=b; p[3]=a; p+=4; }
     return 0;
 }
-static u64 ctx_rsset_viewports(void* self, u64 count, void* vp) { (void)self;(void)count;(void)vp; return 0; }
-static u64 ctx_flush(void* self) { (void)self; return 0; }
-static u64 ctx_clear_state(void* self) { (void)self; return 0; }
+static D3DMS u64 ctx_rsset_viewports(void* self, u64 count, void* vp) { (void)self;(void)count;(void)vp; return 0; }
+static D3DMS u64 ctx_flush(void* self) { (void)self; return 0; }
+static D3DMS u64 ctx_clear_state(void* self) { (void)self; return 0; }
 // draw/shader set calls are no-ops (software surface doesn't run shaders)
-static u64 ctx_noop(void*, u64, u64, u64) { return 0; }
+static D3DMS u64 ctx_noop(void*, u64, u64, u64) { return 0; }
 
 // ---- IDXGISwapChain methods -------------------------------------------------
-static u64 sc_get_buffer(void* self, u64 index, u64 riid, void* bufp) {
+static D3DMS u64 sc_get_buffer(void* self, u64 index, u64 riid, void* bufp) {
     auto* sc = static_cast<SwapChain*>(self);
     if (index != 0) return 0x887A0022; // DXGI_ERROR_INVALID_CALL
     if (!sc->backbuffer_rtv) {
@@ -109,7 +113,7 @@ static u64 sc_get_buffer(void* self, u64 index, u64 riid, void* bufp) {
     (void)riid;
     return 0; // S_OK
 }
-static u64 sc_present(void* self, u64 sync, u64 flags) {
+static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
     auto* sc = static_cast<SwapChain*>(self);
     (void)sync; (void)flags;
     // blit the CPU backbuffer to the native window
@@ -124,8 +128,8 @@ static u64 sc_present(void* self, u64 sync, u64 flags) {
     }
     return 0; // S_OK
 }
-static u64 sc_set_fullscreen(void* self, u64 b, void*) { (void)self;(void)b; return 0; }
-static u64 sc_get_desc(void* self, u64 out_desc) {
+static D3DMS u64 sc_set_fullscreen(void* self, u64 b, void*) { (void)self;(void)b; return 0; }
+static D3DMS u64 sc_get_desc(void* self, u64 out_desc) {
     auto* sc = static_cast<SwapChain*>(self);
     if (out_desc) { // DXGI_SWAP_CHAIN_DESC: Width=0 Height=4 OutputWindow=8...
         auto* d = reinterpret_cast<u32*>(out_desc);
@@ -134,7 +138,7 @@ static u64 sc_get_desc(void* self, u64 out_desc) {
     }
     return 0;
 }
-static u64 sc_resize_buffers(void* self, u64 count, u64 w, u64 h, u64 fmt, u64 flags_) {
+static D3DMS u64 sc_resize_buffers(void* self, u64 count, u64 w, u64 h, u64 fmt, u64 flags_) {
     auto* sc = static_cast<SwapChain*>(self);
     (void)count; (void)fmt; (void)flags_;
     sc->w = (u32)w; sc->h = (u32)h;

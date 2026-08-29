@@ -96,6 +96,10 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_tls_free(u32 dwTlsIndex);
     static PAPAYA_MS_ABI void* hle_tls_get_value(u32 dwTlsIndex);
     static PAPAYA_MS_ABI BOOL  hle_tls_set_value(u32 dwTlsIndex, void* lpTlsValue);
+    static PAPAYA_MS_ABI u32   hle_fls_alloc(void* lpCallback);
+    static PAPAYA_MS_ABI BOOL  hle_fls_free(u32 dwFlsIndex);
+    static PAPAYA_MS_ABI void* hle_fls_get_value(u32 dwFlsIndex);
+    static PAPAYA_MS_ABI BOOL  hle_fls_set_value(u32 dwFlsIndex, void* lpFlsData);
     static PAPAYA_MS_ABI HANDLE hle_create_thread(void* lpSec, size_t dwStack, void* lpStart, void* lpParam, u32 dwFlags, u32* lpId);
     static PAPAYA_MS_ABI u32   hle_get_current_thread_id();
     static PAPAYA_MS_ABI u32   hle_get_current_process_id();

@@ -202,6 +202,23 @@ BOOL Win32ApiHle::hle_tls_set_value(u32 dwTlsIndex, void* lpTlsValue) {
     return FALSE_VAL;
 }
 
+u32 Win32ApiHle::hle_fls_alloc(void* lpCallback) {
+    (void)lpCallback;
+    return hle_tls_alloc();
+}
+
+BOOL Win32ApiHle::hle_fls_free(u32 dwFlsIndex) {
+    return hle_tls_free(dwFlsIndex);
+}
+
+void* Win32ApiHle::hle_fls_get_value(u32 dwFlsIndex) {
+    return hle_tls_get_value(dwFlsIndex);
+}
+
+BOOL Win32ApiHle::hle_fls_set_value(u32 dwFlsIndex, void* lpFlsData) {
+    return hle_tls_set_value(dwFlsIndex, lpFlsData);
+}
+
 // Handle-type tags so wait/close dispatch correctly (thread vs event vs mutex).
 enum : u32 {
     kHandleNone   = 0,
@@ -626,6 +643,22 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
             }
         }
     }
+
+    if (symbol_name == "EncodePointer") return reinterpret_cast<void*>(&hle_encode_pointer);
+    if (symbol_name == "DecodePointer") return reinterpret_cast<void*>(&hle_decode_pointer);
+    if (symbol_name == "EncodeSystemPointer") return reinterpret_cast<void*>(&hle_encode_system_pointer);
+    if (symbol_name == "DecodeSystemPointer") return reinterpret_cast<void*>(&hle_decode_system_pointer);
+    if (symbol_name == "FlsAlloc") return reinterpret_cast<void*>(&hle_fls_alloc);
+    if (symbol_name == "FlsFree") return reinterpret_cast<void*>(&hle_fls_free);
+    if (symbol_name == "FlsGetValue") return reinterpret_cast<void*>(&hle_fls_get_value);
+    if (symbol_name == "FlsSetValue") return reinterpret_cast<void*>(&hle_fls_set_value);
+    if (symbol_name == "InitializeCriticalSectionEx" || symbol_name == "InitializeCriticalSection") return reinterpret_cast<void*>(&hle_init_critical_section);
+    if (symbol_name == "InitializeCriticalSectionAndSpinCount") return reinterpret_cast<void*>(&hle_init_critical_section_and_spin_count);
+    if (symbol_name == "CreateEventExA" || symbol_name == "CreateEventA") return reinterpret_cast<void*>(&hle_create_event_a);
+    if (symbol_name == "CreateEventExW" || symbol_name == "CreateEventW") return reinterpret_cast<void*>(&hle_create_event_w);
+    if (symbol_name == "CreateSemaphoreExA" || symbol_name == "CreateSemaphoreA") return reinterpret_cast<void*>(&hle_create_semaphore_a);
+    if (symbol_name == "CreateSemaphoreExW" || symbol_name == "CreateSemaphoreW") return reinterpret_cast<void*>(&hle_create_semaphore_w);
+    if (symbol_name == "CreateMutexExA" || symbol_name == "CreateMutexA" || symbol_name == "CreateMutexW" || symbol_name == "CreateMutexExW") return reinterpret_cast<void*>(&hle_create_mutex_a);
 
     if (symbol_name.starts_with("gl") || symbol_name.starts_with("wgl")) {
         void* p = hle_wgl_get_proc_address(symbol_name.c_str());
@@ -2160,6 +2193,29 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "TlsGetValue", reinterpret_cast<void*>(&hle_tls_get_value));
     register_function("KERNEL32.DLL", "TlsSetValue", reinterpret_cast<void*>(&hle_tls_set_value));
 
+    register_function("KERNEL32.DLL", "FlsAlloc", reinterpret_cast<void*>(&hle_fls_alloc));
+    register_function("KERNEL32.DLL", "FlsFree", reinterpret_cast<void*>(&hle_fls_free));
+    register_function("KERNEL32.DLL", "FlsGetValue", reinterpret_cast<void*>(&hle_fls_get_value));
+    register_function("KERNEL32.DLL", "FlsSetValue", reinterpret_cast<void*>(&hle_fls_set_value));
+
+    register_function("api-ms-win-core-fibers-l1-1-0.dll", "FlsAlloc", reinterpret_cast<void*>(&hle_fls_alloc));
+    register_function("api-ms-win-core-fibers-l1-1-0.dll", "FlsFree", reinterpret_cast<void*>(&hle_fls_free));
+    register_function("api-ms-win-core-fibers-l1-1-0.dll", "FlsGetValue", reinterpret_cast<void*>(&hle_fls_get_value));
+    register_function("api-ms-win-core-fibers-l1-1-0.dll", "FlsSetValue", reinterpret_cast<void*>(&hle_fls_set_value));
+
+    register_function("api-ms-win-core-fibers-l1-1-1.dll", "FlsAlloc", reinterpret_cast<void*>(&hle_fls_alloc));
+    register_function("api-ms-win-core-fibers-l1-1-1.dll", "FlsFree", reinterpret_cast<void*>(&hle_fls_free));
+    register_function("api-ms-win-core-fibers-l1-1-1.dll", "FlsGetValue", reinterpret_cast<void*>(&hle_fls_get_value));
+    register_function("api-ms-win-core-fibers-l1-1-1.dll", "FlsSetValue", reinterpret_cast<void*>(&hle_fls_set_value));
+
+    register_function("api-ms-win-core-util-l1-1-0.dll", "EncodePointer", reinterpret_cast<void*>(&hle_encode_pointer));
+    register_function("api-ms-win-core-util-l1-1-0.dll", "DecodePointer", reinterpret_cast<void*>(&hle_decode_pointer));
+    register_function("api-ms-win-core-util-l1-1-0.dll", "EncodeSystemPointer", reinterpret_cast<void*>(&hle_encode_system_pointer));
+    register_function("api-ms-win-core-util-l1-1-0.dll", "DecodeSystemPointer", reinterpret_cast<void*>(&hle_decode_system_pointer));
+
+    register_function("api-ms-win-core-util-l1-1-1.dll", "EncodePointer", reinterpret_cast<void*>(&hle_encode_pointer));
+    register_function("api-ms-win-core-util-l1-1-1.dll", "DecodePointer", reinterpret_cast<void*>(&hle_decode_pointer));
+
     register_function("KERNEL32.DLL", "CreateThread", reinterpret_cast<void*>(&hle_create_thread));
     register_function("KERNEL32.DLL", "GetCurrentThreadId", reinterpret_cast<void*>(&hle_get_current_thread_id));
     register_function("KERNEL32.DLL", "GetCurrentProcessId", reinterpret_cast<void*>(&hle_get_current_process_id));
@@ -2620,8 +2676,8 @@ void* Win32ApiHle::resolve_symbol(std::string_view dll_name, std::string_view fu
         }
     }
 
-    // Default safe fallback stub instead of returning nullptr
-    return reinterpret_cast<void*>(&generic_stub_zero);
+    // Return nullptr so PE loader can resolve from guest DLLs (e.g. UnityPlayer.dll)
+    return nullptr;
 }
 
 } // namespace papaya::win32
