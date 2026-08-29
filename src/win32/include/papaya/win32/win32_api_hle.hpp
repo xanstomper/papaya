@@ -264,6 +264,8 @@ public:
     static PAPAYA_MS_ABI void* hle_decode_pointer(void* ptr);
     static PAPAYA_MS_ABI void* hle_encode_system_pointer(void* ptr);
     static PAPAYA_MS_ABI void* hle_decode_system_pointer(void* ptr);
+    static PAPAYA_MS_ABI u32   hle_get_current_processor_number();
+    static PAPAYA_MS_ABI void* hle_interlocked_flush_slist(void* head);
 
     // KERNEL32: Environment, System & Clock
     static PAPAYA_MS_ABI void  hle_get_system_info(Win32SystemInfo* lpSystemInfo);

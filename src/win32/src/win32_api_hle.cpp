@@ -1627,6 +1627,17 @@ void* Win32ApiHle::hle_decode_pointer(void* ptr) {
 void* Win32ApiHle::hle_encode_system_pointer(void* ptr) { return hle_encode_pointer(ptr); }
 void* Win32ApiHle::hle_decode_system_pointer(void* ptr) { return hle_decode_pointer(ptr); }
 
+u32 Win32ApiHle::hle_get_current_processor_number() {
+    // As-if single-logical-CPU view (or map to sched_getcpu on Linux).
+    return static_cast<u32>(sched_getcpu());
+}
+void* Win32ApiHle::hle_interlocked_flush_slist(void* head) {
+    // Pop the whole thread-safe singly-linked list and return the first entry.
+    // The HLE does not track an actual list; report empty.
+    (void)head;
+    return nullptr;
+}
+
 void Win32ApiHle::hle_get_system_info(Win32SystemInfo* lpSystemInfo) {
     if (!lpSystemInfo) return;
     *lpSystemInfo = Win32SystemInfo{};
@@ -4339,11 +4350,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "GetVersionExA",    reinterpret_cast<void*>(&hle_get_version_ex_a));
     register_function("KERNEL32.DLL", "GetVersionExW",    reinterpret_cast<void*>(&hle_get_version_ex_w));
     register_function("KERNEL32.DLL", "GetSystemTimeAsFileTime", reinterpret_cast<void*>(&hle_get_system_time_as_file_time));
-    register_function("KERNEL32.DLL", "EncodePointer",    reinterpret_cast<void*>(&generic_stub_arg0));
-    register_function("KERNEL32.DLL", "DecodePointer",    reinterpret_cast<void*>(&generic_stub_arg0));
-    register_function("KERNEL32.DLL", "GetCurrentProcessorNumber", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("KERNEL32.DLL", "InitializeSListHead", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("KERNEL32.DLL", "InterlockedFlushSList", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("KERNEL32.DLL", "EncodePointer",          reinterpret_cast<void*>(&hle_encode_pointer));
+    register_function("KERNEL32.DLL", "DecodePointer",          reinterpret_cast<void*>(&hle_decode_pointer));
+    register_function("KERNEL32.DLL", "GetCurrentProcessorNumber", reinterpret_cast<void*>(&hle_get_current_processor_number));
+    register_function("KERNEL32.DLL", "InitializeSListHead",    reinterpret_cast<void*>(&hle_initialize_slist_head));
+    register_function("KERNEL32.DLL", "InterlockedFlushSList",  reinterpret_cast<void*>(&hle_interlocked_flush_slist));
 
     // WINMM.DLL
     register_function("WINMM.DLL", "timeGetTime",         reinterpret_cast<void*>(&hle_time_get_time));
