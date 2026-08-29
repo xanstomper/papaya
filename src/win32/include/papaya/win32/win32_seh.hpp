@@ -59,8 +59,11 @@ void seh_register_image(void* image_base, void* pdata, u32 pdata_size);
 
 // Finds the RUNTIME_FUNCTION whose [begin_addr,end_addr) RVA range contains the
 // given guest IP. Returns the raw header bytes of the UNWIND_INFO (or nullptr).
-// Out-params: eh_rva = RVA of the EH handler function if the frame has one.
-const void* seh_find_unwind_info(u64 guest_ip, u64 image_base, u64* eh_rva_out);
+// Out-params: eh_rva = RVA of the EH handler function if the frame has one;
+// scope_table_rva = RVA of the handler's language-specific data (the SCOPE_TABLE
+// for __C_specific_handler), if present.
+const void* seh_find_unwind_info(u64 guest_ip, u64 image_base, u64* eh_rva_out,
+                                 u64* scope_table_rva_out = nullptr);
 
 // Runs __C_specific_handler dispatch for the faulting IP against the scope table
 // at handler_base. Returns EXCEPTION_CONTINUE_EXECUTION (0) - meaning the caller
@@ -75,5 +78,13 @@ int seh_c_specific_dispatch(const GuestExceptionRecord& rec,
 // Raises a structured exception (used by RaiseException HLE). Returns the final
 // disposition and may install a recovery IP. Returns 0 if nobody handled it.
 int seh_raise_exception(u32 code, u64 guest_eip_override);
+
+// Core fault dispatch: given a faulting (guest) IP, resolve the enclosing
+// __C_specific_handler scope and, if one matches, set *recovery_ip to the
+// __except handler address and return true (the caller resumes guest execution
+// there, i.e. EXCEPTION_CONTINUE_EXECUTION). Returns false if no scope matched
+// (the fault is unhandled and should propagate / crash).
+bool seh_dispatch_fault(u64 fault_ip_at_exception, u64 image_base,
+                        u64* recovery_ip_out);
 
 } // namespace papaya::win32
