@@ -2808,6 +2808,37 @@ s64 Win32ApiHle::hle_imm_get_composition_string_w(void* himc, u32 index, void* b
     if (buf && buflen >= 2) static_cast<wchar_t*>(buf)[0] = 0;
     return 0;
 }
+void* Win32ApiHle::hle_imm_associate_context(void* hwnd, void* himc) {
+    (void)hwnd;
+    return himc ? himc : reinterpret_cast<void*>(0x1);   // keep the context associated
+}
+BOOL Win32ApiHle::hle_imm_set_candidate_window(void* himc, void* lpCandidateList) {
+    (void)himc; (void)lpCandidateList;
+    return TRUE_VAL;   // accept the candidate-window layout request
+}
+BOOL Win32ApiHle::hle_imm_set_composition_window(void* himc, void* lpCompositionForm) {
+    (void)himc; (void)lpCompositionForm;
+    return TRUE_VAL;   // accept the composition-window placement request
+}
+
+// ---- Privilege lookups (used by game clients / anti-cheat probes) ------------
+// Simple deterministic LUID table so the same name maps to the same value within
+// a process; AdjustTokenPrivileges reports success (privileges are no-op here).
+BOOL Win32ApiHle::hle_lookup_privilege_value_w(const wchar_t* lpSystemName, const wchar_t* lpName, u64* lpLuid) {
+    (void)lpSystemName;
+    if (!lpName || !lpLuid) return FALSE_VAL;
+    // Hash the privilege name to a stable 32-bit LUID so the same name -> same value.
+    u32 h = 5381;
+    for (const wchar_t* p = lpName; *p; ++p) h = h * 33 + static_cast<u32>(*p);
+    *lpLuid = (static_cast<u64>(h) << 32) | (h & 0xFFFFFFFF);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_adjust_token_privileges(void* hToken, BOOL bDisableAllPrivileges, const void* lpNewState,
+                                              u32 bufLen, void* lpPrevState, u32* lpReturnLength) {
+    (void)hToken; (void)bDisableAllPrivileges; (void)lpNewState; (void)bufLen; (void)lpPrevState;
+    if (lpReturnLength) *lpReturnLength = 0;
+    return TRUE_VAL;   // privileges are a no-op; report success
+}
 
 // ---- CRYPT32 certificate store (real, empty) ---------------------------------
 void* Win32ApiHle::hle_cert_open_system_store_a(void* hprov, const char* name) {
@@ -4291,8 +4322,8 @@ Result<> Win32ApiHle::initialize() {
     register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&hle_reg_enum_value_w));
     register_function("ADVAPI32.dll", "RegEnumValueA", reinterpret_cast<void*>(&hle_reg_enum_value_a));
     register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&hle_get_current_hw_profile_a));
-    register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&hle_lookup_privilege_value_w));
+    register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&hle_adjust_token_privileges));
     register_function("ADVAPI32.dll", "GetSidSubAuthority", reinterpret_cast<void*>(&hle_get_sid_sub_authority));
     register_function("ADVAPI32.dll", "GetSidSubAuthorityCount", reinterpret_cast<void*>(&hle_get_sid_sub_authority_count));
 
@@ -4305,10 +4336,10 @@ Result<> Win32ApiHle::initialize() {
     // IMM32.DLL
     register_function("IMM32.dll", "ImmGetContext", reinterpret_cast<void*>(&hle_imm_get_context));
     register_function("IMM32.dll", "ImmReleaseContext", reinterpret_cast<void*>(&hle_imm_release_context));
-    register_function("IMM32.dll", "ImmSetCandidateWindow", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("IMM32.dll", "ImmSetCandidateWindow", reinterpret_cast<void*>(&hle_imm_set_candidate_window));
     register_function("IMM32.dll", "ImmGetCompositionStringW", reinterpret_cast<void*>(&hle_imm_get_composition_string_w));
-    register_function("IMM32.dll", "ImmSetCompositionWindow", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("IMM32.dll", "ImmAssociateContext", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("IMM32.dll", "ImmSetCompositionWindow", reinterpret_cast<void*>(&hle_imm_set_composition_window));
+    register_function("IMM32.dll", "ImmAssociateContext", reinterpret_cast<void*>(&hle_imm_associate_context));
 
     // OPENGL32.DLL
     register_function("OPENGL32.dll", "wglCreateContext", reinterpret_cast<void*>(&hle_wgl_create_context));

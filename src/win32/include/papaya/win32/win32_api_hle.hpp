@@ -504,6 +504,11 @@ public:
     static PAPAYA_MS_ABI void* hle_imm_get_context(void* hwnd);
     static PAPAYA_MS_ABI BOOL  hle_imm_release_context(void* hwnd, void* himc);
     static PAPAYA_MS_ABI s64   hle_imm_get_composition_string_w(void* himc, u32 index, void* buf, u32 buflen);
+    static PAPAYA_MS_ABI void* hle_imm_associate_context(void* hwnd, void* himc);
+    static PAPAYA_MS_ABI BOOL  hle_imm_set_candidate_window(void* himc, void* lpCandidateList);
+    static PAPAYA_MS_ABI BOOL  hle_imm_set_composition_window(void* himc, void* lpCompositionForm);
+    static PAPAYA_MS_ABI BOOL  hle_lookup_privilege_value_w(const wchar_t* lpSystemName, const wchar_t* lpName, u64* lpLuid);
+    static PAPAYA_MS_ABI BOOL  hle_adjust_token_privileges(void* hToken, BOOL bDisableAllPrivileges, const void* lpNewState, u32 bufLen, void* lpPrevState, u32* lpReturnLength);
 
     // CRYPT32 certificate store (real, empty store for games that probe certs)
     static PAPAYA_MS_ABI void* hle_cert_open_system_store_a(void* hprov, const char* name);
