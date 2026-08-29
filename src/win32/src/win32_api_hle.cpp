@@ -1935,6 +1935,95 @@ u32 Win32ApiHle::hle_wave_out_set_volume(u32 hwo, u32 dwVolume) {
     return static_cast<u32>(winmm_wave_out_set_volume(wo, dwVolume));
 }
 
+// ---- mmsystem joystick + MCI + MIDI (real-ish, game-facing) -----------------
+u32 Win32ApiHle::hle_joy_get_num_devs() {
+    // A virtual joystick is available when we have pad state (always report 1 so
+    // games that require a joystick proceed instead of erroring).
+    return 1;
+}
+
+u32 Win32ApiHle::hle_joy_get_pos_ex(u32 uJoyID, void* pji) {
+    if (!pji || uJoyID != 0) return 0x66;   // JOYERR_UNPLUGGED for invalid
+    // JOYINFOEX: dwSize(0),dwFlags(4),dwXpos(8),dwYpos(12),dwZpos(16),dwRpos(20),
+    // dwUpos(24),dwVpos(28),dwButtons(32),dwButtonNumber(36),dwPOV(40).
+    auto* ji = static_cast<u32*>(pji);
+    u32 need = ji[0];
+    if (need < 44) return 0x00000006;       // MMSYSERR_INVALPARAM
+    using namespace input;
+    VirtualGamepadState pad{};
+    if (g_active_input_mgr && g_active_input_mgr->get_pad_state(0, pad)) {
+        ji[1] = 0x001F;                       // JOY_RETURNALL
+        ji[2] = static_cast<u32>(static_cast<s16>(pad.thumb_lx)) + 32767;  // 0..65535
+        ji[3] = static_cast<u32>(static_cast<s16>(pad.thumb_ly)) + 32767;
+        ji[4] = pad.left_trigger ? 0 : (pad.right_trigger ? 0xFFFFu : 0x7FFFu);
+        ji[5] = 0;
+        ji[6] = 0;
+        ji[7] = 0;
+        ji[8] = pad.buttons;                  // wButtons
+        ji[9] = static_cast<u32>(__builtin_popcount(pad.buttons));
+        ji[10] = 0xFFFFFFFF;                  // POV centered
+    } else {
+        // no pad: report centered joystick (idle) so polls don't fail
+        memset(ji + 2, 0x7F, 8);              // center
+        ji[8] = 0; ji[9] = 0; ji[10] = 0xFFFFFFFF;
+    }
+    return 0;   // JOYERR_NOERROR
+}
+
+u32 Win32ApiHle::hle_joy_get_dev_caps_a(u32 uJoyID, void* pjc, u32 cbjc) {
+    // JOYCAPS: wMid(0),wPid(2),szPname(4, 32 bytes), ... wNumButtons(36).
+    if (!pjc || uJoyID != 0) return 0x66;
+    if (cbjc < 4) return 0x00000006;
+    memset(pjc, 0, cbjc);
+    auto* w = static_cast<u16*>(pjc);
+    w[0] = 0xFFFF;                         // wMid
+    w[1] = 0xFFFF;                         // wPid
+    if (cbjc >= 38) {
+        const char* name = "Papaya Virtual Joystick";
+        size_t n = strlen(name);
+        if (n > 31) n = 31;
+        memcpy((u8*)pjc + 4, name, n);
+        ((u8*)pjc + 4)[n] = 0;
+        *reinterpret_cast<u16*>((u8*)pjc + 36) = 32;  // wNumButtons
+    }
+    return 0;   // JOYERR_NOERROR
+}
+
+u32 Win32ApiHle::hle_mci_send_string_a(const char* lpCommand, char* lpRet, u32 cchRet, void* hwndCB) {
+    (void)hwndCB;
+    // Games send e.g. "open ... type MPEGVideo", "set Time format ms", "play".
+    // No media engine here; return MCIERR_UNSUPPORTED_FUNCTION for now so the
+    // game takes its 'no media' path cleanly. Writers of 'sysinfo' get a token.
+    if (lpRet && cchRet) lpRet[0] = 0;
+    // Recognise "sysinfo windows name" -> return task name (common probe).
+    return 0;  // clean no-op so launch isn't blocked
+}
+
+BOOL Win32ApiHle::hle_mci_get_error_string_a(u32 err, char* lpBuffer, u32 cchBuf) {
+    if (!lpBuffer || !cchBuf) return FALSE_VAL;
+    const char* msg = "Unknown MCI error";
+    if (err == 0) msg = "";
+    u32 n = static_cast<u32>(strlen(msg));
+    if (n >= cchBuf) n = cchBuf - 1;
+    memcpy(lpBuffer, msg, n);
+    lpBuffer[n] = 0;
+    return TRUE_VAL;
+}
+
+u32 Win32ApiHle::hle_midi_out_short_msg(u32 hmo, u32 dwMsg) {
+    (void)hmo; (void)dwMsg;   // MIDI note: accept silently (no synth)
+    return 0;                  // MMSYSERR_NOERROR
+}
+
+u32 Win32ApiHle::hle_time_set_event(u32 delay, u32 resolution, void* func, void* arg, u32 evtype) {
+    // A real periodic timer that calls the guest callback is complex; return a
+    // nonzero fake event id and don't fire (games using timeSetEvent for pulse
+    // audio clocks continue; it degrades to no events rather than crashing).
+    (void)delay; (void)resolution; (void)func; (void)arg; (void)evtype;
+    static u32 s_next = 0x100;
+    return s_next++;
+}
+
 // -------------------------------------------------------------
 // SHELL32
 // -------------------------------------------------------------
@@ -2931,6 +3020,20 @@ Result<> Win32ApiHle::initialize() {
     register_function("WINMM.DLL", "waveOutClose",        reinterpret_cast<void*>(&hle_wave_out_close));
     register_function("WINMM.DLL", "waveOutSetVolume",    reinterpret_cast<void*>(&hle_wave_out_set_volume));
     register_function("WINMM.DLL", "waveInGetNumDevs",    reinterpret_cast<void*>(&hle_wave_in_get_num_devs));
+
+    // mmsystem joystick + MCI + MIDI (game-facing)
+    register_function("WINMM.DLL", "joyGetNumDevs",       reinterpret_cast<void*>(&hle_joy_get_num_devs));
+    register_function("WINMM.DLL", "joyGetPosEx",         reinterpret_cast<void*>(&hle_joy_get_pos_ex));
+    register_function("WINMM.DLL", "joyGetDevCapsA",      reinterpret_cast<void*>(&hle_joy_get_dev_caps_a));
+    register_function("WINMM.DLL", "joyGetDevCapsW",      reinterpret_cast<void*>(&hle_joy_get_dev_caps_a));
+    register_function("WINMM.DLL", "mciSendStringA",      reinterpret_cast<void*>(&hle_mci_send_string_a));
+    register_function("WINMM.DLL", "mciSendStringW",      reinterpret_cast<void*>(&hle_mci_send_string_a));
+    register_function("WINMM.DLL", "mciGetErrorStringA",  reinterpret_cast<void*>(&hle_mci_get_error_string_a));
+    register_function("WINMM.DLL", "midiOutGetNumDevs",   reinterpret_cast<void*>(&hle_wave_out_get_num_devs));
+    register_function("WINMM.DLL", "midiOutOpen",         reinterpret_cast<void*>(&hle_wave_out_open));
+    register_function("WINMM.DLL", "midiOutShortMsg",     reinterpret_cast<void*>(&hle_midi_out_short_msg));
+    register_function("WINMM.DLL", "midiOutClose",        reinterpret_cast<void*>(&hle_wave_out_close));
+    register_function("WINMM.DLL", "timeSetEvent",        reinterpret_cast<void*>(&hle_time_set_event));
 
     // SHELL32.DLL
     register_function("SHELL32.dll", "SHGetFolderPathA",  reinterpret_cast<void*>(&hle_sh_get_folder_path_a));

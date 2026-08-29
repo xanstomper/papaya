@@ -372,6 +372,14 @@ public:
     static PAPAYA_MS_ABI u32   hle_wave_out_close(u32 hwo);
     static PAPAYA_MS_ABI u32   hle_wave_out_set_volume(u32 hwo, u32 dwVolume);
     static PAPAYA_MS_ABI u32   hle_wave_in_get_num_devs();
+    // mmsystem joystick + MCI + MIDI
+    static PAPAYA_MS_ABI u32   hle_joy_get_num_devs();
+    static PAPAYA_MS_ABI u32   hle_joy_get_pos_ex(u32 uJoyID, void* pji);
+    static PAPAYA_MS_ABI u32   hle_joy_get_dev_caps_a(u32 uJoyID, void* pjc, u32 cbjc);
+    static PAPAYA_MS_ABI u32   hle_mci_send_string_a(const char* lpCommand, char* lpRet, u32 cchRet, void* hwndCB);
+    static PAPAYA_MS_ABI BOOL  hle_mci_get_error_string_a(u32 err, char* lpBuffer, u32 cchBuf);
+    static PAPAYA_MS_ABI u32   hle_midi_out_short_msg(u32 hmo, u32 dwMsg);
+    static PAPAYA_MS_ABI u32   hle_time_set_event(u32 delay, u32 resolution, void* func, void* arg, u32 evtype);
 
     // SHELL32
     static PAPAYA_MS_ABI s32   hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath);
