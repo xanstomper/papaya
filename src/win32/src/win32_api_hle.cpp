@@ -1,5 +1,6 @@
 #include "papaya/win32/win32_api_hle.hpp"
 #include "papaya/win32/win32_d3d.hpp"
+#include "papaya/win32/win32_dsound.hpp"
 #include "papaya/win32/win32_audio.hpp"
 #include "papaya/win32/win32_window.hpp"
 #include "papaya/win32/pe_loader.hpp"
@@ -2078,6 +2079,20 @@ long Win32ApiHle::hle_create_dxgi_factory(void* riid, void** factory_out) {
     return 0; // S_OK
 }
 
+// ---- DirectSound (audio) ----------------------------------------------------
+long Win32ApiHle::hle_direct_sound_create(const void* guid, void** ods8_out, void* unk_outer) {
+    (void)unk_outer;
+    return dsound_create8(guid, ods8_out);
+}
+long Win32ApiHle::hle_direct_sound_create8(const void* guid, void** ods8_out, void* unk_outer) {
+    (void)unk_outer;
+    return dsound_create8(guid, ods8_out);
+}
+long Win32ApiHle::hle_direct_sound_enumerate_a(void* cb, void* ctx) {
+    (void)cb; (void)ctx;
+    return 0; // DS_OK (no devices enumerated; games tolerate this)
+}
+
 int Win32ApiHle::hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd) {
     (void)hdc; (void)iPixelFormat; (void)nBytes; (void)ppfd;
     return 1;
@@ -2885,6 +2900,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("DXGI.DLL", "CreateDXGIFactory2",   reinterpret_cast<void*>(&hle_create_dxgi_factory));
     register_function("D3D11.DLL", "D3D11CreateDevice",   reinterpret_cast<void*>(&hle_d3d11_create_device));
     register_function("D3D11.DLL", "D3D11CreateDeviceAndSwapChain", reinterpret_cast<void*>(&hle_d3d11_create_device_and_swapchain));
+    register_function("dsound.dll", "DirectSoundCreate",  reinterpret_cast<void*>(&hle_direct_sound_create));
+    register_function("dsound.dll", "DirectSoundCreate8", reinterpret_cast<void*>(&hle_direct_sound_create8));
+    register_function("dsound.dll", "DirectSoundEnumerateA", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
+    register_function("dsound.dll", "DirectSoundEnumerateW", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
     register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&generic_stub_zero));
 
     return {};

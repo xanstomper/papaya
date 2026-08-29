@@ -404,6 +404,11 @@ public:
                                                                       void** device_out, void* feature_out, void** ctx_out);
     static PAPAYA_MS_ABI long   hle_create_dxgi_factory(void* riid, void** factory_out);
 
+    // DirectSound (audio)
+    static PAPAYA_MS_ABI long   hle_direct_sound_create(const void* guid, void** ods8_out, void* unk_outer);
+    static PAPAYA_MS_ABI long   hle_direct_sound_create8(const void* guid, void** ods8_out, void* unk_outer);
+    static PAPAYA_MS_ABI long   hle_direct_sound_enumerate_a(void* cb, void* ctx);
+
     // OpenGL & Vulkan dynamic loaders
     static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);
     static PAPAYA_MS_ABI void* hle_vk_get_instance_proc_addr(void* instance, const char* pName);
