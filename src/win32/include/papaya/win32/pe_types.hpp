@@ -200,6 +200,50 @@ struct ImageTlsDirectory {
     u32  characteristics;            // reserved
 };
 
+// x64 .pdata entry (IMAGE_RUNTIME_FUNCTION_ENTRY). begin_address/end_address are
+// RVAs (image-relative). If UNWIND_INFO bit 0 is set (RUNTIME_FUNCTION_INDIRECT),
+// unwind_info_address is an RVA pointing to an IMAGE_RUNTIME_FUNCTION_ENTRY; else
+// it is the RVA of the .xdata UNWIND_INFO.
+struct RuntimeFunction {
+    u32 begin_address;      // RVA of code start
+    u32 end_address;        // RVA of code end (exclusive)
+    u32 unwind_info_address;// RVA of UNWIND_INFO (or RVA of another RUNTIME_FUNCTION)
+};
+
+// .xdata UNWIND_INFO header.
+struct UnwindInfo {
+    u8  version_flags;      // bits 0-2 version, bit 3 EHANDLER, bit 4 UHANDLER
+    u8  size_of_prolog;     // prolog size in bytes
+    u8  count_of_codes;     // number of UNWIND_CODE slots
+    u8  frame_register;     // bits 0-3 frame reg, bits 4-5 frame reg offset scaled by 16
+    // UNWIND_CODE slots follow (count_of_codes * 2 bytes), then padding,
+    // then optional handler RVA + handler data if EHANDLER/UHANDLER set.
+};
+
+// __C_specific_handler scope table entry (the "scope table" / SCOPE_RECORD).
+// begin_address/end_address are image-relative offsets OFFSET FROM THE TABLE
+// BASE of the try-body, handler_address is a 32-bit SEH-relative offset
+// (image base + handler_address = handler VA), and jump_target is used for
+// __leave (an RVA, or SEH-relative, depends on compiler; mingw uses RVA).
+struct ScopeRecord {
+    u32 begin_address;      // offset-from-table-base of try start
+    u32 end_address;        // offset-from-table-base of try end
+    u32 handler_address;    // SEH-rel (image base + this) = handler function
+    u32 jump_target;        // RVA for __leave/cleanup or 0
+};
+
+// Exception code values (few we handle).
+enum : u32 {
+    kExceptionAccessViolation = 0xC0000005,
+    kExceptionIllegalInstruction = 0xC000001D,
+    kExceptionIntegerDivideByZero = 0xC0000094,
+    kExceptionBreakpoint = 0x80000003,
+    kExceptionStackOverflow = 0xC00000FD,
+    kContinueExecution = 0,     // EXCEPTION_CONTINUE_EXECUTION
+    kContinueSearch = 1,        // EXCEPTION_CONTINUE_SEARCH
+    kHandleException = 2,       // EXCEPTION_EXECUTE_HANDLER
+};
+
 // Context the loader captures for per-thread TLS init.
 struct ImgTlsContext {
     bool      enabled{false};
@@ -236,6 +280,20 @@ struct ImageImportDescriptor {
     u32 forwarder_chain;
     u32 name;                    // RVA to DLL name string
     u32 first_thunk;             // RVA to IAT (Import Address Table)
+};
+
+struct ImageExportDirectory {
+    u32 characteristics{0};
+    u32 time_date_stamp{0};
+    u16 major_version{0};
+    u16 minor_version{0};
+    u32 name{0};
+    u32 base{0};
+    u32 number_of_functions{0};
+    u32 number_of_names{0};
+    u32 address_of_functions{0};
+    u32 address_of_names{0};
+    u32 address_of_name_ordinals{0};
 };
 
 struct ImageBaseRelocation {

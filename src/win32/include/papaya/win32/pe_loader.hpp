@@ -72,11 +72,15 @@ private:
     Result<> setup_tls_directory(u8* base_bytes, u64 size_of_image,
                                  const ImageTlsDirectory& tls, bool is_64bit);
 
+    Result<> process_load_config(u8* base_bytes, u64 size_of_image, const ImageNtHeadersUnified& nt);
+    void* resolve_guest_export(void* image_base, const std::string& symbol);
+
     std::shared_ptr<Win32ApiHle> hle_;
     WinTeb64* teb_{nullptr};
     WinPeb64* peb_{nullptr};
     // Per-process TLS block + a stable index (single-threaded for now).
     ImgTlsContext tls_;
+    std::unordered_map<std::string, LoadedPeImage> loaded_dlls_;
 };
 
 } // namespace papaya::win32

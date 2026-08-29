@@ -1,4 +1,5 @@
 #include "papaya/win32/pe_loader.hpp"
+#include "papaya/win32/win32_seh.hpp"
 #include "papaya/common/logger.hpp"
 #include <fstream>
 #include <cstring>
@@ -218,6 +219,9 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
         for (u16 i = 0; i < nsec; ++i) image.sections.push_back(sh[i]);
     }
 
+    // Process Windows Load Config Directory (CFG guard pointers, SEH tables).
+    process_load_config(reinterpret_cast<u8*>(allocated_base), size_of_image, nt);
+
     auto prot_res = apply_section_protections(allocated_base, size_of_image, image.sections);
     if (!prot_res) {
         munmap(allocated_base, size_of_image);
@@ -234,6 +238,15 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
         if (!tls_res) {
             log::warn("PE_LOADER", "TLS directory present but setup failed — continuing without per-thread TLS");
         }
+    }
+
+    // Process the PE exception directory (.pdata) for SEH/__C_specific_handler.
+    const auto& exc_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    if (exc_dir.virtual_address != 0 && exc_dir.size > 0) {
+        void* pdata = reinterpret_cast<u8*>(allocated_base) + exc_dir.virtual_address;
+        seh_register_image(allocated_base, pdata, exc_dir.size);
+        log::info("PE_LOADER", "SEH: registered .pdata exception directory ({} functions, {} bytes)",
+                  exc_dir.size / sizeof(RuntimeFunction), exc_dir.size);
     }
 
     log::info("PE_LOADER", "Loaded PE Image [Base: 0x{:X}, Entry: 0x{:X}, Size: {} KB, Sections: {}, Arch: {}]",
@@ -451,13 +464,32 @@ Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& 
             if (thunk_val == 0) break;
 
             void* fn_ptr = nullptr;
+            std::string sym_name;
             if (thunk_val & ord_flag) {
                 u16 ordinal = static_cast<u16>(thunk_val & 0xFFFF);
-                fn_ptr = hle_->resolve_symbol(dll_name, std::to_string(ordinal));
+                sym_name = std::to_string(ordinal);
+                fn_ptr = hle_->resolve_symbol(dll_name, sym_name);
             } else {
                 u32 name_rva = static_cast<u32>(thunk_val & 0xFFFFFFFF);
                 const char* func_name = reinterpret_cast<const char*>(base_bytes + name_rva + 2);
+                sym_name = func_name;
                 fn_ptr = hle_->resolve_symbol(dll_name, func_name);
+            }
+
+            if (!fn_ptr) {
+                auto it = loaded_dlls_.find(dll_name);
+                if (it == loaded_dlls_.end()) {
+                    if (std::filesystem::exists(dll_name)) {
+                        auto load_res = load_from_file(dll_name);
+                        if (load_res) {
+                            loaded_dlls_[dll_name] = *load_res;
+                            it = loaded_dlls_.find(dll_name);
+                        }
+                    }
+                }
+                if (it != loaded_dlls_.end()) {
+                    fn_ptr = resolve_guest_export(it->second.image_base, sym_name);
+                }
             }
 
             if (!fn_ptr) ++failed;
@@ -566,6 +598,17 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         teb_->client_id_proc = getpid();
         teb_->client_id_thread = getpid();
         teb_->thread_local_storage_pointer = &teb_->tls_slots[0];
+
+        pthread_attr_t attr;
+        if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+            void* stack_addr = nullptr;
+            size_t stack_size = 0;
+            pthread_attr_getstack(&attr, &stack_addr, &stack_size);
+            pthread_attr_destroy(&attr);
+            teb_->stack_limit = stack_addr;
+            teb_->stack_base = static_cast<u8*>(stack_addr) + stack_size;
+        }
+
         // Wire __declspec(thread) storage: TLS index 0 -> per-process block.
         if (tls_.enabled) teb_->tls_slots[0] = tls_.storage;
     }
@@ -793,6 +836,57 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
     }
 
     return exit_code;
+}
+
+Result<> PeLoader::process_load_config(u8* base_bytes, u64 size_of_image, const ImageNtHeadersUnified& nt) {
+    const auto& lc_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG];
+    if (lc_dir.virtual_address == 0 || lc_dir.size < 64) return {};
+
+    u8* lc_ptr = base_bytes + lc_dir.virtual_address;
+    if (nt.is_64bit && lc_dir.size >= 0x58) {
+        u64 check_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x48);
+        u64 dispatch_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x50);
+        u64 img_base = reinterpret_cast<u64>(base_bytes);
+
+        static auto guard_check_nop = []() {};
+        static const u8 guard_dispatch_stub[] = { 0xff, 0xe0 }; // jmp *rax
+
+        if (check_fptr_va >= img_base && check_fptr_va + 8 <= img_base + size_of_image) {
+            *reinterpret_cast<void**>(check_fptr_va) = reinterpret_cast<void*>(&guard_check_nop);
+            log::info("PE_LOADER", "Patched GuardCFCheckFunctionPointer @ 0x{:X}", check_fptr_va);
+        }
+        if (dispatch_fptr_va >= img_base && dispatch_fptr_va + 8 <= img_base + size_of_image) {
+            *reinterpret_cast<void**>(dispatch_fptr_va) = const_cast<u8*>(guard_dispatch_stub);
+            log::info("PE_LOADER", "Patched GuardCFDispatchFunctionPointer @ 0x{:X}", dispatch_fptr_va);
+        }
+    }
+    return {};
+}
+
+void* PeLoader::resolve_guest_export(void* image_base, const std::string& symbol) {
+    if (!image_base) return nullptr;
+    u8* base = static_cast<u8*>(image_base);
+    const auto* dos = reinterpret_cast<const ImageDosHeader*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+
+    const auto* nth64 = reinterpret_cast<const ImageNtHeaders64*>(base + dos->e_lfanew);
+    const auto& exp_dir = nth64->optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (exp_dir.virtual_address == 0 || exp_dir.size == 0) return nullptr;
+
+    const auto* exp = reinterpret_cast<const ImageExportDirectory*>(base + exp_dir.virtual_address);
+    const u32* funcs = reinterpret_cast<const u32*>(base + exp->address_of_functions);
+    const u32* names = reinterpret_cast<const u32*>(base + exp->address_of_names);
+    const u16* ords  = reinterpret_cast<const u16*>(base + exp->address_of_name_ordinals);
+
+    for (u32 i = 0; i < exp->number_of_names; ++i) {
+        const char* name = reinterpret_cast<const char*>(base + names[i]);
+        if (symbol == name) {
+            u16 ord = ords[i];
+            u32 rva = funcs[ord];
+            return base + rva;
+        }
+    }
+    return nullptr;
 }
 
 void PeLoader::unload_image(LoadedPeImage& image) {
