@@ -13,7 +13,7 @@
 
 namespace papaya::win32 {
 
-static thread_local PeLoader* g_active_loader = nullptr;
+static PeLoader* g_active_loader = nullptr;
 
 PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
     : hle_(hle ? hle : std::make_shared<Win32ApiHle>()) {
@@ -21,7 +21,9 @@ PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
     g_active_loader = this;
 }
 
-PeLoader::~PeLoader() = default;
+PeLoader::~PeLoader() {
+    if (g_active_loader == this) g_active_loader = nullptr;
+}
 
 PeLoader* PeLoader::active() { return g_active_loader; }
 
@@ -74,6 +76,12 @@ bool PeLoader::parse_nt_headers(const u8* file_raw, size_t file_size, size_t nt_
 }
 
 Result<LoadedPeImage> PeLoader::load_from_file(const std::filesystem::path& file_path) {
+    if (base_dir_.empty()) {
+        base_dir_ = std::filesystem::absolute(file_path).parent_path();
+    }
+    if (file_path.extension() == ".exe") {
+        Win32ApiHle::set_game_path(file_path.string());
+    }
     std::ifstream file(file_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         log::error("PE_LOADER", "Failed to open PE file: '{}'", file_path.string());
@@ -434,6 +442,8 @@ Result<> PeLoader::apply_relocations(void* allocated_base, u64 size_of_image,
 // -------------------------------------------------------------
 // Import Resolution (handles PE32 4-byte thunks + PE32+ 8-byte thunks)
 // -------------------------------------------------------------
+static PAPAYA_MS_ABI u64 fallback_iat_stub() { return 0; }
+
 Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& nt) {
     const auto& import_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (import_dir.virtual_address == 0 || import_dir.size == 0) return {};
@@ -479,8 +489,12 @@ Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& 
             if (!fn_ptr) {
                 auto it = loaded_dlls_.find(dll_name);
                 if (it == loaded_dlls_.end()) {
-                    if (std::filesystem::exists(dll_name)) {
-                        auto load_res = load_from_file(dll_name);
+                    std::filesystem::path candidate = dll_name;
+                    if (!std::filesystem::exists(candidate) && !base_dir_.empty()) {
+                        candidate = base_dir_ / dll_name;
+                    }
+                    if (std::filesystem::exists(candidate)) {
+                        auto load_res = load_from_file(candidate);
                         if (load_res) {
                             loaded_dlls_[dll_name] = *load_res;
                             it = loaded_dlls_.find(dll_name);
@@ -492,15 +506,25 @@ Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& 
                 }
             }
 
-            if (!fn_ptr) ++failed;
-            else {
+            if (!fn_ptr) {
+                fn_ptr = hle_->resolve_symbol("", sym_name);
+            }
+            if (!fn_ptr) {
+                fn_ptr = hle_->hle_get_proc_address(nullptr, sym_name.c_str());
+            }
+
+            if (!fn_ptr) {
+                ++failed;
+                fn_ptr = reinterpret_cast<void*>(&fallback_iat_stub);
+            } else {
                 ++resolved;
-                if (stride == 8) {
-                    *reinterpret_cast<u64*>(base_bytes + iat_off) = reinterpret_cast<u64>(fn_ptr);
-                } else {
-                    *reinterpret_cast<u32*>(base_bytes + iat_off) = static_cast<u32>(
-                        reinterpret_cast<u64>(fn_ptr));
-                }
+            }
+
+            if (stride == 8) {
+                *reinterpret_cast<u64*>(base_bytes + iat_off) = reinterpret_cast<u64>(fn_ptr);
+            } else {
+                *reinterpret_cast<u32*>(base_bytes + iat_off) = static_cast<u32>(
+                    reinterpret_cast<u64>(fn_ptr));
             }
 
             lookup_off += stride;
@@ -570,15 +594,28 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         params->maximum_length = sizeof(RtlUserProcessParameters64);
         params->length = sizeof(RtlUserProcessParameters64);
 
-        static wchar_t static_cmdline[] = L"papaya_game.exe";
-        static wchar_t static_imgpath[] = L"C:\\papaya_game.exe";
-        params->command_line.buffer = static_cmdline;
-        params->command_line.length = sizeof(static_cmdline) - sizeof(wchar_t);
-        params->command_line.maximum_length = sizeof(static_cmdline);
+        static uint16_t dynamic_cmdline[260] = {0};
+        static uint16_t dynamic_imgpath[260] = {0};
+        const wchar_t* wcmd = Win32ApiHle::hle_get_command_line_w();
+        size_t len = 0;
+        if (wcmd) {
+            const uint16_t* src = reinterpret_cast<const uint16_t*>(wcmd);
+            while (src[len] && len + 1 < 260) {
+                dynamic_cmdline[len] = src[len];
+                dynamic_imgpath[len] = src[len];
+                len++;
+            }
+        }
+        dynamic_cmdline[len] = 0;
+        dynamic_imgpath[len] = 0;
 
-        params->image_path_name.buffer = static_imgpath;
-        params->image_path_name.length = sizeof(static_imgpath) - sizeof(wchar_t);
-        params->image_path_name.maximum_length = sizeof(static_imgpath);
+        params->command_line.buffer = reinterpret_cast<wchar_t*>(dynamic_cmdline);
+        params->command_line.length = len * sizeof(uint16_t);
+        params->command_line.maximum_length = (len + 1) * sizeof(uint16_t);
+
+        params->image_path_name.buffer = reinterpret_cast<wchar_t*>(dynamic_imgpath);
+        params->image_path_name.length = len * sizeof(uint16_t);
+        params->image_path_name.maximum_length = (len + 1) * sizeof(uint16_t);
 
         exe_entry->base_dll_name = params->command_line;
         exe_entry->full_dll_name = params->image_path_name;
@@ -610,15 +647,23 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         }
 
         // Wire __declspec(thread) storage: TLS index 0 -> per-process block.
-        if (tls_.enabled) teb_->tls_slots[0] = tls_.storage;
+        if (tls_.enabled) {
+            void** tls_vector = static_cast<void**>(std::calloc(64, sizeof(void*)));
+            tls_vector[0] = tls_.storage;
+            teb_->thread_local_storage_pointer = tls_vector;
+            teb_->tls_slots[0] = tls_.storage;
+        }
     }
 
     // -------------------------------------------------------------
     // KUSER_SHARED_DATA at fixed address 0x7FFE0000 (standard Windows NT)
     // -------------------------------------------------------------
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
     void* kuser = mmap(reinterpret_cast<void*>(0x7FFE0000), 4096,
                        PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (kuser != MAP_FAILED) {
         std::memset(kuser, 0, 4096);
         u8* kp = static_cast<u8*>(kuser);
@@ -690,27 +735,44 @@ Result<> PeLoader::setup_tls_directory(u8* base_bytes, u64 size_of_image,
 }
 
 void PeLoader::setup_thread_tls() {
-    if (!tls_.enabled) return;
-
-    // Fresh per-thread TLS block (copy template + zero-fill).
-    u64 block_size = tls_.template_size + tls_.zero_fill;
-    void* tls_block = std::calloc(1, block_size);
-    if (!tls_block) { log::warn("PE_LOADER", "thread TLS alloc failed"); return; }
-    if (tls_.template_va) std::memcpy(tls_block, tls_.template_va, tls_.template_size);
-
-    // Per-thread TEB.
     auto* teb = static_cast<WinTeb64*>(mmap(nullptr, sizeof(WinTeb64),
                                             PROT_READ | PROT_WRITE,
                                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (teb == MAP_FAILED) { std::free(tls_block); return; }
+    if (teb == MAP_FAILED) return;
     std::memset(teb, 0, sizeof(WinTeb64));
     teb->self = teb;
     teb->peb = peb_;                    // shared PEB
     teb->client_id_proc = getpid();
     teb->client_id_thread = static_cast<u64>(gettid());
-    teb->tls_slots[0] = tls_block;
 
-    // Set %gs to this thread's TEB (per-CPU-thread via arch_prctl).
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+        void* stack_addr = nullptr;
+        size_t stack_size = 0;
+        pthread_attr_getstack(&attr, &stack_addr, &stack_size);
+        pthread_attr_destroy(&attr);
+        teb->stack_limit = stack_addr;
+        teb->stack_base = static_cast<u8*>(stack_addr) + stack_size;
+    } else {
+        uintptr_t current_sp = reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+        teb->stack_limit = reinterpret_cast<void*>((current_sp - (8 * 1024 * 1024)) & ~0xFFFULL);
+        teb->stack_base = reinterpret_cast<void*>((current_sp + (1024 * 1024)) & ~0xFFFULL);
+    }
+
+    void** thread_tls_vector = static_cast<void**>(std::calloc(64, sizeof(void*)));
+    if (tls_.enabled) {
+        u64 block_size = tls_.template_size + tls_.zero_fill;
+        void* tls_block = std::calloc(1, block_size ? block_size : 4096);
+        if (tls_block) {
+            if (tls_.template_va && tls_.template_size) {
+                std::memcpy(tls_block, tls_.template_va, tls_.template_size);
+            }
+            thread_tls_vector[0] = tls_block;
+            teb->tls_slots[0] = tls_block;
+        }
+    }
+    teb->thread_local_storage_pointer = thread_tls_vector;
+
 #if defined(__x86_64__) || defined(_M_X64)
     syscall(SYS_arch_prctl, ARCH_SET_GS, teb);
 #endif
@@ -840,6 +902,21 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
         }
     }
 
+    // Invoke DllMain(DLL_PROCESS_ATTACH) for each loaded guest DLL (e.g. UnityPlayer.dll)
+    using DllMainFn = PAPAYA_MS_ABI BOOL (*)(void* hinstDLL, u32 fdwReason, void* lpReserved);
+    for (auto& [dll_name, dll_img] : loaded_dlls_) {
+        if (dll_img.entry_point) {
+            log::info("PE_LOADER", "Invoking DllMain(DLL_PROCESS_ATTACH) for '{}' @ 0x{:X}...",
+                      dll_name, reinterpret_cast<u64>(dll_img.entry_point));
+            auto dll_entry = reinterpret_cast<DllMainFn>(dll_img.entry_point);
+            try {
+                dll_entry(dll_img.image_base, 1 /* DLL_PROCESS_ATTACH */, nullptr);
+            } catch (...) {
+                log::warn("PE_LOADER", "Caught exception during DllMain for '{}'", dll_name);
+            }
+        }
+    }
+
     using WinMainFn = PAPAYA_MS_ABI int (*)(void* hInstance, void* hPrevInstance, const char* lpCmdLine, int nShowCmd);
     auto entry_fn = reinterpret_cast<WinMainFn>(image.entry_point);
 
@@ -865,32 +942,72 @@ Result<> PeLoader::process_load_config(u8* base_bytes, u64 size_of_image, const 
     if (lc_dir.virtual_address == 0 || lc_dir.size < 64) return {};
 
     u8* lc_ptr = base_bytes + lc_dir.virtual_address;
-    if (nt.is_64bit && lc_dir.size >= 0x58) {
-        u64 check_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x48);
-        u64 dispatch_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x50);
-        u64 img_base = reinterpret_cast<u64>(base_bytes);
+    u64 img_base = reinterpret_cast<u64>(base_bytes);
 
-        static void* g_guard_exec_page = nullptr;
-        if (!g_guard_exec_page) {
-            g_guard_exec_page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-            if (g_guard_exec_page != MAP_FAILED) {
-                u8* p = static_cast<u8*>(g_guard_exec_page);
-                p[0] = 0xC3;           // ret (for guard_check_icall)
-                p[16] = 0xFF; p[17] = 0xE0; // jmp *rax (for guard_dispatch_icall)
+    static void* g_guard_exec_page = nullptr;
+    if (!g_guard_exec_page) {
+        g_guard_exec_page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (g_guard_exec_page != MAP_FAILED) {
+            u8* p = static_cast<u8*>(g_guard_exec_page);
+            p[0] = 0xC3;                                   // ret (for guard_check_icall)
+            p[16] = 0x48; p[17] = 0x85; p[18] = 0xC0;      // test rax, rax
+            p[19] = 0x74; p[20] = 0x02;                    // je +2 (to ret)
+            p[21] = 0xFF; p[22] = 0xE0;                    // jmp *rax
+            p[23] = 0xC3;                                  // ret
+        }
+    }
+
+    void* check_stub = (g_guard_exec_page != MAP_FAILED) ? (static_cast<u8*>(g_guard_exec_page) + 0) : nullptr;
+    void* dispatch_stub = (g_guard_exec_page != MAP_FAILED) ? (static_cast<u8*>(g_guard_exec_page) + 16) : nullptr;
+
+    if (nt.is_64bit) {
+        if (lc_dir.size >= 0x60) {
+            u64 sec_cookie_va = *reinterpret_cast<u64*>(lc_ptr + 0x58);
+            if (sec_cookie_va >= img_base && sec_cookie_va + 8 <= img_base + size_of_image) {
+                u64* cookie_ptr = reinterpret_cast<u64*>(sec_cookie_va);
+                if (*cookie_ptr == 0 || *cookie_ptr == 0x2B992DDFA232ULL || *cookie_ptr == 0x2B992DD785DDULL) {
+                    *cookie_ptr = 0x2B992DD785DDULL;
+                    log::info("PE_LOADER", "Initialized 64-bit SecurityCookie @ 0x{:X} = 0x{:X}", sec_cookie_va, *cookie_ptr);
+                }
             }
         }
-
-        if (g_guard_exec_page && g_guard_exec_page != MAP_FAILED) {
-            void* check_stub = static_cast<u8*>(g_guard_exec_page) + 0;
-            void* dispatch_stub = static_cast<u8*>(g_guard_exec_page) + 16;
-
+        if (lc_dir.size >= 0x78 && check_stub) {
+            u64 check_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x70);
             if (check_fptr_va >= img_base && check_fptr_va + 8 <= img_base + size_of_image) {
                 *reinterpret_cast<void**>(check_fptr_va) = check_stub;
                 log::info("PE_LOADER", "Patched GuardCFCheckFunctionPointer @ 0x{:X} -> 0x{:X}", check_fptr_va, reinterpret_cast<u64>(check_stub));
             }
+        }
+        if (lc_dir.size >= 0x80 && dispatch_stub) {
+            u64 dispatch_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x78);
             if (dispatch_fptr_va >= img_base && dispatch_fptr_va + 8 <= img_base + size_of_image) {
                 *reinterpret_cast<void**>(dispatch_fptr_va) = dispatch_stub;
                 log::info("PE_LOADER", "Patched GuardCFDispatchFunctionPointer @ 0x{:X} -> 0x{:X}", dispatch_fptr_va, reinterpret_cast<u64>(dispatch_stub));
+            }
+        }
+    } else {
+        if (lc_dir.size >= 0x40) {
+            u32 sec_cookie_va = *reinterpret_cast<u32*>(lc_ptr + 0x3C);
+            if (sec_cookie_va >= img_base && sec_cookie_va + 4 <= img_base + size_of_image) {
+                u32* cookie_ptr = reinterpret_cast<u32*>(static_cast<uintptr_t>(sec_cookie_va));
+                if (*cookie_ptr == 0 || *cookie_ptr == 0xBB40E64E) {
+                    *cookie_ptr = 0xBB40E64F ^ static_cast<u32>(getpid());
+                    log::info("PE_LOADER", "Initialized 32-bit SecurityCookie @ 0x{:X} = 0x{:X}", sec_cookie_va, *cookie_ptr);
+                }
+            }
+        }
+        if (lc_dir.size >= 0x4C && check_stub) {
+            u32 check_fptr_va = *reinterpret_cast<u32*>(lc_ptr + 0x48);
+            if (check_fptr_va >= img_base && check_fptr_va + 4 <= img_base + size_of_image) {
+                *reinterpret_cast<u32*>(static_cast<uintptr_t>(check_fptr_va)) = static_cast<u32>(reinterpret_cast<uintptr_t>(check_stub));
+                log::info("PE_LOADER", "Patched 32-bit GuardCFCheckFunctionPointer @ 0x{:X}", check_fptr_va);
+            }
+        }
+        if (lc_dir.size >= 0x50 && dispatch_stub) {
+            u32 dispatch_fptr_va = *reinterpret_cast<u32*>(lc_ptr + 0x4C);
+            if (dispatch_fptr_va >= img_base && dispatch_fptr_va + 4 <= img_base + size_of_image) {
+                *reinterpret_cast<u32*>(static_cast<uintptr_t>(dispatch_fptr_va)) = static_cast<u32>(reinterpret_cast<uintptr_t>(dispatch_stub));
+                log::info("PE_LOADER", "Patched 32-bit GuardCFDispatchFunctionPointer @ 0x{:X}", dispatch_fptr_va);
             }
         }
     }
@@ -902,6 +1019,10 @@ void* PeLoader::resolve_guest_export(void* image_base, const std::string& symbol
     u8* base = static_cast<u8*>(image_base);
     const auto* dos = reinterpret_cast<const ImageDosHeader*>(base);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+    if (dos->e_lfanew <= 0 || dos->e_lfanew > 0x10000000) return nullptr;
+
+    const u32* sig = reinterpret_cast<const u32*>(base + dos->e_lfanew);
+    if (*sig != IMAGE_NT_SIGNATURE) return nullptr;
 
     const auto* nth64 = reinterpret_cast<const ImageNtHeaders64*>(base + dos->e_lfanew);
     const auto& exp_dir = nth64->optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_EXPORT];

@@ -119,13 +119,22 @@ static bool detect_godot_pck(const std::filesystem::path& path, std::string& out
         if (f.is_open()) {
             f.seekg(0, std::ios::end);
             auto sz = f.tellg();
-            if (sz > 64) {
-                // Check tail 1MB for GDPC magic (0x43504447)
-                size_t scan_size = std::min<size_t>(static_cast<size_t>(sz), 1024 * 1024);
-                f.seekg(-static_cast<std::streamoff>(scan_size), std::ios::end);
-                std::vector<char> buf(scan_size);
-                f.read(buf.data(), scan_size);
-                if (std::string_view(buf.data(), scan_size).find("GDPC") != std::string_view::npos) {
+            if (sz > 12) {
+                // Check last 12 bytes (Godot 4 embedded PCK marker: uint64 offset + 'GDPC' or 'GCPC')
+                f.seekg(-12, std::ios::end);
+                char tail[12];
+                f.read(tail, 12);
+                if (std::string_view(tail, 12).find("GDPC") != std::string_view::npos ||
+                    std::string_view(tail, 12).find("GCPC") != std::string_view::npos) {
+                    out_pck_path = path.string();
+                    return true;
+                }
+                // Scan first 64MB for GDPC header
+                size_t scan_head = std::min<size_t>(static_cast<size_t>(sz), 64 * 1024 * 1024);
+                f.seekg(0, std::ios::beg);
+                std::vector<char> buf(scan_head);
+                f.read(buf.data(), scan_head);
+                if (std::string_view(buf.data(), scan_head).find("GDPC") != std::string_view::npos) {
                     out_pck_path = path.string();
                     return true;
                 }
@@ -199,6 +208,10 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     // Load PE Image if relevant
     win32::LoadedPeImage loaded_img{};
     if (std::filesystem::exists(game_p) && game_p.extension() == ".exe") {
+        if (!game_p.parent_path().empty()) {
+            if (chdir(game_p.parent_path().c_str()) != 0) {}
+        }
+        win32::Win32ApiHle::set_game_path(game_p.string());
         auto pe_res = pe_loader_->load_from_file(game_p);
         if (pe_res.has_value()) {
             loaded_img = *pe_res;

@@ -51,6 +51,10 @@ public:
     // inside the new host pthread before the guest proc runs.
     void setup_thread_tls();
 
+    static void* resolve_guest_export(void* image_base, const std::string& symbol);
+    const std::unordered_map<std::string, LoadedPeImage>& loaded_dlls() const { return loaded_dlls_; }
+    void add_loaded_dll(const std::string& name, const LoadedPeImage& img) { loaded_dlls_[name] = img; }
+
 private:
     // Normalize either PE32 or PE32+ NT headers into a unified view
     static bool parse_nt_headers(const u8* file_raw, size_t file_size, size_t nt_offset,
@@ -73,7 +77,6 @@ private:
                                  const ImageTlsDirectory& tls, bool is_64bit);
 
     Result<> process_load_config(u8* base_bytes, u64 size_of_image, const ImageNtHeadersUnified& nt);
-    void* resolve_guest_export(void* image_base, const std::string& symbol);
 
     std::shared_ptr<Win32ApiHle> hle_;
     WinTeb64* teb_{nullptr};
@@ -81,6 +84,7 @@ private:
     // Per-process TLS block + a stable index (single-threaded for now).
     ImgTlsContext tls_;
     std::unordered_map<std::string, LoadedPeImage> loaded_dlls_;
+    std::filesystem::path base_dir_;
 };
 
 } // namespace papaya::win32
