@@ -385,9 +385,10 @@ struct ThreadParamBridge {
 struct GdiDc {
     u32 tag{0x47444943};   // "GDIC"
     int  w{0}, h{0};
-    u8*  fb{nullptr};
+    u8*  fb{nullptr};      // borrowed window fb (may be realloc'd) or owned
     u32  fb_size{0};
     bool window_backed{false};
+    void* hwnd{nullptr};   // owning native window (re-resolve fb via surface_buffer)
 };
 struct GdiBitmap {
     u32 tag{0x4744424D};   // "GDBM"
@@ -401,6 +402,15 @@ static GdiDc* gdi_dc_of(void* h) {
     if (addr < 0x10000 || addr >= 0x00007FFFFFFFFFFFULL) return nullptr;
     auto* d = static_cast<GdiDc*>(h);
     return (d->tag == 0x47444943) ? d : nullptr;
+}
+// Current framebuffer for a DC. Window-backed DCs don't cache the pointer
+// (surface_buffer can realloc it on resize), so re-resolve through the owner
+// window handle to avoid using a freed/dangling buffer.
+static u8* gdi_dc_fb(GdiDc* d) {
+    if (!d) return nullptr;
+    if (d->window_backed && d->hwnd)
+        return window_manager().surface_buffer(d->hwnd, d->w, d->h);
+    return d->fb;
 }
 static GdiBitmap* gdi_bmp_of(void* h) {
     if (!h) return nullptr;
@@ -1822,6 +1832,7 @@ void* Win32ApiHle::hle_get_dc(HWND hWnd) {
     d->w = w; d->h = h;
     d->fb = fb; d->fb_size = 0;   // owned by the window manager
     d->window_backed = true;
+    d->hwnd = hWnd;
     return d;
 }
 int Win32ApiHle::hle_release_dc(HWND hWnd, void* hDC) {
@@ -1829,6 +1840,45 @@ int Win32ApiHle::hle_release_dc(HWND hWnd, void* hDC) {
     if (d && d->window_backed) window_manager().surface_present(hWnd);
     delete d;
     return 1;
+}
+
+// ---- GDI painting (BeginPaint/EndPaint/InvalidateRect) ----------------------
+// PAINTSTRUCT: hdc(0), fErase(8), rcPaint(16, RECT=16 bytes), fRestore(32),
+// fIncUpdate(36), rgbReserved(40).
+// EndPaint must not trust the guest's PAINTSTRUCT (the guest can write it);
+// track the BeginPaint DC per-window instead.
+static std::unordered_map<void*, void*> g_paint_dc;
+
+void* Win32ApiHle::hle_begin_paint(HWND hWnd, void* ps) {
+    if (ps) std::memset(ps, 0, 64);
+    void* dc = hle_get_dc(hWnd);
+    if (ps && dc) {
+        auto* b = static_cast<u8*>(ps);
+        std::memcpy(b, &dc, sizeof(void*));               // hdc offset 0
+        b[8] = 0;                                          // fErase = FALSE
+        int r[4] = {0,0,0,0};
+        window_manager().get_client_rect(hWnd, r);
+        std::memcpy(b + 16, r, 16);                        // rcPaint RECT
+    }
+    g_paint_dc[hWnd] = dc;
+    return dc;
+}
+BOOL Win32ApiHle::hle_end_paint(HWND hWnd, const void* ps) {
+    (void)ps;
+    auto it = g_paint_dc.find(hWnd);
+    if (it != g_paint_dc.end()) {
+        auto* d = gdi_dc_of(it->second);
+        if (d && d->window_backed) window_manager().surface_present(hWnd);
+        delete d;
+        g_paint_dc.erase(it);
+    }
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_invalidate_rect(HWND hWnd, const void* lpRect, BOOL bErase) {
+    (void)lpRect; (void)bErase;
+    window_manager().surface_buffer(hWnd, 0, 0);
+    window_manager().invalidate(hWnd);
+    return TRUE_VAL;
 }
 
 // ---- Message pump ----
@@ -3024,8 +3074,9 @@ static void colorref_to_rgba(u32 cref, u8* out) {
 
 u32 Win32ApiHle::hle_set_pixel(void* hdc, int x, int y, u32 color) {
     auto* d = gdi_dc_of(hdc);
-    if (!d || !d->fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return -1;
-    u8* p = d->fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return -1;
+    u8* p = fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
     colorref_to_rgba(color, p);
     return color;
 }
@@ -3034,7 +3085,9 @@ BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
                               void* src_dc, int sx, int sy, u32 rop) {
     auto* dst = gdi_dc_of(dst_dc);
     auto* src = gdi_dc_of(src_dc);
-    if (!dst || !src || !dst->fb || !src->fb) return FALSE_VAL;
+    u8* dfb = gdi_dc_fb(dst);
+    u8* sfb = gdi_dc_fb(src);
+    if (!dst || !src || !dfb || !sfb) return FALSE_VAL;
     (void)rop;   // SRCCOPY (0x00CC0020) and normal copies only for now
     for (int r = 0; r < dh; ++r) {
         int syy = sy + r, dyy = dy + r;
@@ -3042,8 +3095,8 @@ BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
         for (int c = 0; c < dw; ++c) {
             int sxx = sx + c, dxx = dx + c;
             if (dxx < 0 || sxx < 0 || dxx >= dst->w || sxx >= src->w) continue;
-            const u8* s = src->fb + (static_cast<u32>(syy) * src->w + static_cast<u32>(sxx)) * 4;
-            u8* p = dst->fb + (static_cast<u32>(dyy) * dst->w + static_cast<u32>(dxx)) * 4;
+            const u8* s = sfb + (static_cast<u32>(syy) * src->w + static_cast<u32>(sxx)) * 4;
+            u8* p = dfb + (static_cast<u32>(dyy) * dst->w + static_cast<u32>(dxx)) * 4;
             p[0]=s[0]; p[1]=s[1]; p[2]=s[2]; p[3]=0xFF;
         }
     }
@@ -3052,8 +3105,9 @@ BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
 
 u32 Win32ApiHle::hle_get_pixel(void* hdc, int x, int y) {
     auto* d = gdi_dc_of(hdc);
-    if (!d || !d->fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return 0xFFFFFFFF;  // CLR_INVALID
-    const u8* p = d->fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return 0xFFFFFFFF;  // CLR_INVALID
+    const u8* p = fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
     // COLORREF is 0x00BBGGRR (BGR order), little-endian uint32.
     return static_cast<u32>(p[2]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[0]) << 16);
 }
@@ -4029,9 +4083,9 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "SendMessageA", reinterpret_cast<void*>(&hle_send_message_a));
     register_function("USER32.DLL", "GetDC", reinterpret_cast<void*>(&hle_get_dc));
     register_function("USER32.DLL", "ReleaseDC", reinterpret_cast<void*>(&hle_release_dc));
-    register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "EndPaint", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("USER32.DLL", "InvalidateRect", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&hle_begin_paint));
+    register_function("USER32.DLL", "EndPaint", reinterpret_cast<void*>(&hle_end_paint));
+    register_function("USER32.DLL", "InvalidateRect", reinterpret_cast<void*>(&hle_invalidate_rect));
     register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&hle_message_box_a));
     register_function("USER32.DLL", "MessageBoxW", reinterpret_cast<void*>(&hle_message_box_w));
 

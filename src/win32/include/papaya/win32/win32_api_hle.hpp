@@ -309,6 +309,9 @@ public:
     static PAPAYA_MS_ABI s64   hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI void* hle_get_dc(HWND hWnd);
     static PAPAYA_MS_ABI int   hle_release_dc(HWND hWnd, void* hDC);
+    static PAPAYA_MS_ABI void* hle_begin_paint(HWND hWnd, void* ps);
+    static PAPAYA_MS_ABI BOOL  hle_end_paint(HWND hWnd, const void* ps);
+    static PAPAYA_MS_ABI BOOL  hle_invalidate_rect(HWND hWnd, const void* lpRect, BOOL bErase);
 
     // XINPUT Emulation
     static PAPAYA_MS_ABI u32   hle_xinput_get_state(u32 dwUserIndex, void* pState);

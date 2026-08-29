@@ -154,7 +154,7 @@ void X11WindowManager::destroy_window(void* hwnd) {
     dispatch_message_impl(hwnd, WM_DESTROY, 0, 0);
     if (w->display && w->xid) XDestroyWindow(w->display, static_cast<Window>(w->xid));
     if (w->gc) XFreeGC(w->display, w->gc);
-    free(w->fb);
+    if (w->fb) { free(w->fb); w->fb = nullptr; w->fb_size = 0; }
     windows_.erase(hwnd);
 }
 
@@ -212,12 +212,18 @@ void X11WindowManager::surface_present(void* hwnd) {
     if (w <= 0 || h <= 0) return;
 
     XImage* img = XCreateImage(nw->display, DefaultVisual(nw->display, DefaultScreen(nw->display)),
-                               24, ZPixmap, 0, reinterpret_cast<char*>(nw->fb),
-                               static_cast<unsigned>(w), static_cast<unsigned>(h), 32, w * 4);
+                               24, ZPixmap, 0, nullptr,
+                               static_cast<unsigned>(w), static_cast<unsigned>(h), 32, 0);
     if (!img) return;
-    if (!(XPutImage(nw->display, static_cast<Drawable>(nw->xid), nw->gc ? nw->gc : DefaultGC(nw->display, DefaultScreen(nw->display)),
-                    img, 0, 0, 0, 0, static_cast<unsigned>(w), static_cast<unsigned>(h)))) {
-        // window not mapped yet; nothing to present
+    // XCreateImage with data=NULL allocates its own buffer (bytes_per_line*height)
+    // that XDestroyImage will free. We copy the window backbuffer into it so we
+    // never hand our owned nw->fb to X (XDestroyImage would free() it -> the
+    // later destroy_window free is a double-free / heap corruption).
+    if (img->data) {
+        std::memcpy(img->data, nw->fb, static_cast<size_t>(img->bytes_per_line) * static_cast<size_t>(h));
+        XPutImage(nw->display, static_cast<Drawable>(nw->xid),
+                  nw->gc ? nw->gc : DefaultGC(nw->display, DefaultScreen(nw->display)),
+                  img, 0, 0, 0, 0, static_cast<unsigned>(w), static_cast<unsigned>(h));
     }
     XDestroyImage(img);
     XFlush(nw->display);
@@ -361,6 +367,26 @@ bool X11WindowManager::pop_message(Win32Message& out) {
     return true;
 }
 
+void X11WindowManager::invalidate(void* hwnd) {
+    auto it = windows_.find(hwnd);
+    if (it != windows_.end()) it->second->paint_pending = true;
+}
+
+// If a window is marked paint_pending, synthesise one WM_PAINT (and clear the
+// flag). hwnd==0 means the first invalid window. Returns true if a message was
+// produced.
+bool X11WindowManager::synthesize_paint(void* hwnd, Win32Message& out) {
+    void* target = hwnd;
+    if (!target) for (auto& [h, w] : windows_)
+        if (w->paint_pending) { target = h; break; }
+    if (!target) return false;
+    auto it = windows_.find(target);
+    if (it == windows_.end() || !it->second->paint_pending) return false;
+    it->second->paint_pending = false;
+    out.hwnd = target; out.message = WM_PAINT; out.w_param = 0; out.l_param = 0;
+    return true;
+}
+
 int X11WindowManager::get_message(void* lpMsg, void* hwnd, u32 min, u32 max) {
     // get_message blocks until a message is available. Pump X11 then wait.
     for (;;) {
@@ -380,6 +406,12 @@ int X11WindowManager::get_message(void* lpMsg, void* hwnd, u32 min, u32 max) {
             if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
             return m.message == WM_QUIT ? 0 : 1;
         }
+        // No queued message: if a window needs a paint, deliver WM_PAINT when the
+        // queue drains (Windows InvalidateRect semantics). hwnd==0 = any window.
+        if (synthesize_paint(hwnd, m)) {
+            if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+            return 1;
+        }
         // No message yet: flush X and yield briefly.
         XFlush(display_);
         struct timespec ts{0, 2'000'000};
@@ -391,7 +423,15 @@ int X11WindowManager::peek_message(void* lpMsg, void* hwnd, u32 min, u32 max, u3
     pump_x11_events();
     Win32Message m;
     for (;;) {
-        if (!pop_message(m)) return 0; // PM_NOREMOVE would need false too
+        if (!pop_message(m)) {
+            // Queue empty: if a paint is pending, report it (Windows removes the
+            // update when WM_PAINT is retrieved; honor PM_REMOVE semantics).
+            if (synthesize_paint(hwnd, m)) {
+                if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+                return 1;
+            }
+            return 0;
+        }
         if (hwnd && m.hwnd != hwnd) { continue; }
         if (min || max) { if (m.message < min || m.message > max) continue; }
         if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;

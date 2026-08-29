@@ -70,6 +70,7 @@ struct NativeWindow {
     u32                fb_size{0};
     bool               fb_dirty{false};
     u32                fb_bpp{4};
+    bool               paint_pending{false};   // InvalidateRect set -> WM_PAINT due
 };
 
 // X11-backed Win32 window manager. Owns the display + per-window state + the
@@ -115,6 +116,9 @@ public:
     int   dispatch_message(const void* lpMsg);
     void  post_quit_message(int exit_code);
     int   post_message_a(void* hwnd, u32 msg, u64 wparam, s64 lparam);
+    // Marks a window's client area invalid so a WM_PAINT is delivered when the
+    // message queue drains (Windows InvalidateRect semantics).
+    void  invalidate(void* hwnd);
     int   send_message_a(void* hwnd, u32 msg, u64 wparam, s64 lparam);
 
     // DefWindowProc default handling
@@ -138,6 +142,8 @@ private:
         queue_.push_back(msg);
     } }
     bool pop_message(Win32Message& out);
+    // Deliver a pending WM_PAINT for a window if InvalidateRect marked it.
+    bool synthesize_paint(void* hwnd, Win32Message& out);
     // Directly invoke the guest WNDPROC for a message (no queue).
     s64 dispatch_message_impl(void* hwnd, u32 msg, u64 wparam, s64 lparam);
 
