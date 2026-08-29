@@ -1,82 +1,80 @@
-# Project Papaya (`papaya-emu`)
+# Project Papaya (papaya-ps)
 
-Next-Generation Xbox One & Xbox Series S/X Emulator targeting **Linux-first**, with future support for Windows (WHVP) and Android Handhelds (ARM64 JIT).
+**Papaya** is an open-source, high-performance, backwards-compatible **PlayStation 4 (Orbis OS)** and **PlayStation 5 (Prospero OS)** emulator and compatibility layer written in modern **C++23**.
 
 ---
 
 ## Architecture Overview
 
 ```
-+-------------------------------------------------------------------------+
-|                              Title OS / GDK                             |
-+-------------------------------------------------------------------------+
-       |                        |                       |
-       v                        v                       v
-+------------------+  +-------------------+  +--------------------+
-|   papaya-hle     |  |    papaya-gpu     |  |    papaya-audio    |
-| (Kernel/Syscalls)|  | (AMD GCN -> Vulkan|  |  (SHAPE DSP ->     |
-|                  |  |  1.3 / SPIR-V)    |  |   miniaudio/Cubeb) |
-+------------------+  +-------------------+  +--------------------+
-       |                        |                       |
-+-------------------------------------------------------------------------+
-|                               papaya-hv                                 |
-|            Hypervisor Abstraction Layer (HAL) / Memory Manager          |
-|    - Linux: KVM (/dev/kvm)                                              |
-|    - Windows: WHVP                                                      |
-|    - Android: ARM64 JIT / Dynamic Binary Translation (FEX-Emu / Box64)  |
-+-------------------------------------------------------------------------+
-                                |
-+-------------------------------------------------------------------------+
-|                             papaya-storage                              |
-|                XVD / XVC Container Parser & Virtual File System         |
-+-------------------------------------------------------------------------+
+                          +------------------------------------+
+                          |       Host OS (Linux x86-64)       |
+                          |   /dev/kvm  *  Vulkan  *  Audio    |
+                          +------------------+-----------------+
+                                             |
+                                             v
++------------------------------------------------------------------------------------+
+|                             Papaya PlayStation Core                                |
++------------------------------------------------------------------------------------+
+|                                                                                    |
+|  1. Binary Loader & Storage (papaya-storage)                                       |
+|     * 64-bit ELF (eboot.bin) & .prx dynamic library parser                         |
+|     * Automatic console detection: PS4 Orbis OS vs PS5 Prospero OS                |
+|     * param.sfo & param.json package metadata parsers                              |
+|     * PlayStation VFS mount hierarchy (/app0/, /savedata0/, /temp0/, /hostapp/)    |
+|     * Oodle Kraken & LZ4 high-speed hardware asset decompressor                    |
+|                                                                                    |
+|  2. Kernel Translation Layer (papaya-hle)                                          |
+|     * FreeBSD 9 & 12 syscall shims (sys_mmap, sys_thr_create, sys_umtx_op)         |
+|     * Unified Memory Manager: 8 GB GDDR5 (PS4) & 16 GB GDDR6 (PS5)                |
+|     * Direct Physical Memory Allocator: WB_ONION (coherent) & WC_GARLIC (GPU)     |
+|     * Sony NID Database: instant O(1) hash resolution for libkernel, libScePad,    |
+|       libSceAudioOut, libSceSaveData, libSceAgc, libSceGnmDriver, libSceFios2      |
+|                                                                                    |
+|  3. Video Core (papaya-gpu)                                                        |
+|     * AMD PM4 Command Processor (PS4 GCN & PS5 RDNA 2 AGC command rings)           |
+|     * Hardware Context State Machine (Render targets, blend modes, depth/stencil)  |
+|     * GCN 1.1 / RDNA 2 ISA shader disassembler & SPIR-V 1.3 translation engine     |
+|     * Vulkan 1.3 Dynamic Rendering backend with PSO disk caching                   |
+|                                                                                    |
+|  4. Audio Subsystem (papaya-audio)                                                 |
+|     * libSceAudioOut 48kHz PCM port routing                                        |
+|     * 3D Tempest Audio HRTF spatial software DSP mixer                             |
+|                                                                                    |
+|  5. Input Subsystem (papaya-input)                                                 |
+|     * DualShock 4 & DualSense controller state mapping                             |
+|     * Touchpad coordinates, 6-axis gyro/accelerometer, and adaptive trigger haptics|
+|                                                                                    |
+|  6. Execution & Frontend (papaya-frontend)                                         |
+|     * x86-64 Host: Direct Native Execution & KVM 64-bit Long Mode hypervisor       |
+|     * ARM64 Host: FEX-Emu / Box64 dynamic binary translation (Android handhelds)   |
+|     * WindowManager & EmulatorRuntime orchestration loop                           |
+|                                                                                    |
++------------------------------------------------------------------------------------+
 ```
-
----
-
-## Key Subsystems
-
-| Module | Description |
-| :--- | :--- |
-| [`papaya-common`](file:///home/jewboy420/papaya/src/common) | Base types, error codes (`Result<T>`), memory utilities, logging |
-| [`papaya-hv`](file:///home/jewboy420/papaya/src/hv) | Hardware virtualization engine (`/dev/kvm`), vCPU lifecycle, guest physical memory layout (8GB DDR3 + 32MB ESRAM / GDDR6 unified) |
-| [`papaya-storage`](file:///home/jewboy420/papaya/src/storage) | XVD / XVC container parser, chunk indexing, decryption hooks, VFS mounting |
-| [`papaya-hle`](file:///home/jewboy420/papaya/src/hle) | High-Level Emulation for Era OS / GDK syscalls, process context, hypercalls |
-| [`papaya-gpu`](file:///home/jewboy420/papaya/src/gpu) | AMD GCN PM4 command processor, ring buffer parsing, SPIR-V translation, Vulkan 1.3 |
-| [`papaya-audio`](file:///home/jewboy420/papaya/src/audio) | Scalable Hardware Audio Processing Engine (SHAPE) 256-voice DSP mixer |
-| [`papaya-input`](file:///home/jewboy420/papaya/src/input) | Xbox controller state mapping, impulse triggers, vibration management |
-| [`papaya-app`](file:///home/jewboy420/papaya/src/app) | Main CLI runner, subsystem coordinator, KVM diagnostics engine |
 
 ---
 
 ## Building and Running
 
-### Prerequisites (Ubuntu / Debian)
-```bash
-sudo apt install build-essential cmake ninja-build libvulkan-dev libzstd-dev libsdl2-dev
-```
-
-Ensure `/dev/kvm` read/write access:
-```bash
-sudo usermod -aG kvm $USER
-```
+### Prerequisites
+- Modern C++23 compiler (`clang-18+` or `gcc-14+`)
+- CMake 3.22+ & Ninja
+- Linux x86-64 with `/dev/kvm` access or Windows 11
+- Vulkan 1.3 capable GPU and drivers
 
 ### Build
 ```bash
-cd /home/jewboy420/papaya
-./scripts/build.sh Release
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
 
-### Run Tests & Diagnostics
+### Run Test Suite
 ```bash
-./scripts/test.sh
+ctest --test-dir build --output-on-failure
 ```
 
-### Run Emulator
+### Boot a Title
 ```bash
-# Run default self-test diagnostics & initialize all subsystems
-./build/src/app/papaya
-
-# Mount an XVD package and initialize
-./build/src/app/papaya --mount-xvd /path/to/game.xvd --target xboxone
+./build/src/app/papaya --target ps5 --boot /path/to/eboot.bin
 ```

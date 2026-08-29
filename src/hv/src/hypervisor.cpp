@@ -7,7 +7,8 @@ namespace papaya::hv {
 std::unique_ptr<IHypervisor> create_hypervisor(PlatformBackend backend) {
     switch (backend) {
         case PlatformBackend::Kvm:
-            log::info("HV", "Instantiating Linux KVM backend");
+        case PlatformBackend::DirectX64:
+            log::info("HV", "Instantiating Linux KVM hardware virtualization backend");
             return std::make_unique<kvm::KvmHypervisor>();
         case PlatformBackend::Whvp:
             log::warn("HV", "WHVP backend is not supported on Linux host");

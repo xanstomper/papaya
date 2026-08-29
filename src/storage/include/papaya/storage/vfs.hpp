@@ -31,7 +31,11 @@ public:
     ~VirtualFileSystem();
 
     Result<> mount(std::string_view mount_point, const std::filesystem::path& host_path);
-    Result<> mount_xvd(std::string_view mount_point, const std::filesystem::path& xvd_path);
+    Result<> setup_playstation_mounts(
+        const std::filesystem::path& app_dir,
+        const std::filesystem::path& save_dir = "./savedata0",
+        const std::filesystem::path& temp_dir = "./temp0"
+    );
     
     std::shared_ptr<IVfsNode> resolve(std::string_view virtual_path) const;
     bool exists(std::string_view virtual_path) const;

@@ -22,6 +22,12 @@ enum class ErrorCode {
     XvdInvalidSignature,
     XvdHeaderCorrupt,
     XvdKeyNotFound,
+    ElfInvalidMagic,
+    ElfUnsupportedClass,
+    ElfCorruptHeaders,
+    PrxRelocationFailed,
+    SceModuleNotFound,
+    SyscallNotImplemented,
     GpuInitFailed,
     VulkanDeviceLost,
     AudioInitFailed,
@@ -43,6 +49,12 @@ inline std::string_view error_to_string(ErrorCode code) {
         case ErrorCode::XvdInvalidSignature: return "XVD Container Invalid Signature";
         case ErrorCode::XvdHeaderCorrupt: return "XVD Header Corrupt";
         case ErrorCode::XvdKeyNotFound: return "XVD Decryption Key Not Found";
+        case ErrorCode::ElfInvalidMagic: return "ELF Binary Invalid Magic Signature";
+        case ErrorCode::ElfUnsupportedClass: return "ELF Binary Unsupported Class (Requires 64-bit AMD64)";
+        case ErrorCode::ElfCorruptHeaders: return "ELF Headers Corrupted";
+        case ErrorCode::PrxRelocationFailed: return "PRX Dynamic Relocation Failed";
+        case ErrorCode::SceModuleNotFound: return "Sony System Module (.prx) Not Found";
+        case ErrorCode::SyscallNotImplemented: return "FreeBSD / Sony Syscall Not Implemented";
         case ErrorCode::GpuInitFailed: return "GPU Core Initialization Failed";
         case ErrorCode::VulkanDeviceLost: return "Vulkan Device Lost";
         case ErrorCode::AudioInitFailed: return "Audio Subsystem Initialization Failed";
@@ -54,7 +66,6 @@ inline std::string_view error_to_string(ErrorCode code) {
 template <typename T = void>
 class Result;
 
-// Specialization for void (success/error status)
 template <>
 class Result<void> {
 public:
@@ -70,7 +81,6 @@ private:
     ErrorCode error_;
 };
 
-// General Result<T> for returned values or error
 template <typename T>
 class Result {
 public:

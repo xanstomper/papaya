@@ -14,26 +14,20 @@ EmulatorRuntime::~EmulatorRuntime() {
 }
 
 Result<> EmulatorRuntime::initialize() {
-    log::info("RUNTIME", "Initializing Papaya Console Emulator Core...");
+    log::info("RUNTIME", "Initializing Papaya PlayStation 4 & PlayStation 5 Emulator Core...");
 
     // 1. Virtual File System
     vfs_ = std::make_shared<storage::VirtualFileSystem>();
+    vfs_->setup_playstation_mounts("./app0");
 
-    // 2. Physical Memory Map (8GB System RAM + 32MB ESRAM)
+    // 2. Physical Memory Map (8GB Unified for PS4 / 16GB Unified for PS5)
     memory_map_ = std::make_unique<hv::MemoryMap>();
-    if (config_.target == ConsoleTarget::XboxOne) {
-        if (!memory_map_->initialize_xbox_one_layout()) {
-            log::error("RUNTIME", "Failed to setup Xbox One memory map");
-            return ErrorCode::MemoryMappingFailed;
-        }
-    } else {
-        if (!memory_map_->initialize_series_layout(config_.target == ConsoleTarget::XboxSeriesX)) {
-            log::error("RUNTIME", "Failed to setup Xbox Series memory map");
-            return ErrorCode::MemoryMappingFailed;
-        }
+    if (!memory_map_->initialize_playstation_layout(config_.target)) {
+        log::error("RUNTIME", "Failed to setup PlayStation unified memory map");
+        return ErrorCode::MemoryMappingFailed;
     }
 
-    // 3. Hardware Hypervisor (Linux KVM)
+    // 3. Hardware Hypervisor / Execution Context (Linux KVM)
     hv_ = hv::create_hypervisor(config_.backend);
     if (!hv_ || !hv_->initialize()) {
         log::error("RUNTIME", "Hypervisor initialization failed");
@@ -44,7 +38,7 @@ Result<> EmulatorRuntime::initialize() {
         return ErrorCode::MemoryMappingFailed;
     }
 
-    // 4. Identity Map 64-bit Long Mode Page Tables and Windows TEB/PEB
+    // 4. Identity Map 64-bit Long Mode Page Tables and TEB/PEB
     void* host_ram = memory_map_->get_host_pointer(0x0);
     u64 total_ram = memory_map_->get_total_ram_size();
     if (!hv::kvm::KvmLongMode::initialize_page_tables(host_ram, total_ram)) {
@@ -56,7 +50,7 @@ Result<> EmulatorRuntime::initialize() {
         return ErrorCode::HypervisorInitFailed;
     }
 
-    // 5. Audio Engine
+    // 5. Audio Engine (3D Tempest Audio & AudioOut)
     audio_ = std::make_unique<audio::AudioEngine>();
     if (!audio_->initialize()) {
         log::error("RUNTIME", "Audio engine initialization failed");
@@ -64,21 +58,21 @@ Result<> EmulatorRuntime::initialize() {
     }
     audio_->start_stream();
 
-    // 6. Input Subsystem
+    // 6. Input Subsystem (DualShock 4 & DualSense)
     input_ = std::make_unique<input::InputManager>();
     if (!input_->initialize()) {
         log::error("RUNTIME", "Input subsystem initialization failed");
         return ErrorCode::InvalidParameter;
     }
 
-    // 7. HLE Kernel
-    kernel_ = std::make_unique<hle::Kernel>(hv_, vfs_, input_.get(), audio_.get());
-    if (!kernel_->initialize()) {
-        log::error("RUNTIME", "HLE Kernel initialization failed");
+    // 7. PlayStation HLE Kernel (FreeBSD 9/12 + PRX shims)
+    kernel_ = std::make_unique<hle::Kernel>(hv_, vfs_, input_.get(), audio_.get(), config_.target);
+    if (!kernel_->initialize(host_ram, total_ram)) {
+        log::error("RUNTIME", "PlayStation HLE Kernel initialization failed");
         return ErrorCode::UnsupportedOperation;
     }
 
-    // 8. GPU Subsystem
+    // 8. GPU Subsystem (Vulkan 1.3 GCN/RDNA2 Dynamic Renderer)
     gpu_ = std::make_unique<gpu::GpuCore>();
     if (!gpu_->initialize()) {
         log::error("RUNTIME", "GPU core initialization failed");
@@ -87,7 +81,9 @@ Result<> EmulatorRuntime::initialize() {
 
     // 9. Window Manager
     WindowConfig win_cfg{
-        .title = "Project Papaya - Next-Gen Xbox Emulator",
+        .title = (config_.target == ConsoleTarget::PlayStation5)
+                 ? "Project Papaya - PlayStation 5 (Prospero OS) Emulator"
+                 : "Project Papaya - PlayStation 4 (Orbis OS) Emulator",
         .width = 1920,
         .height = 1080,
         .fullscreen = false,
@@ -100,11 +96,11 @@ Result<> EmulatorRuntime::initialize() {
         return ErrorCode::InvalidParameter;
     }
 
-    log::info("RUNTIME", "All Papaya subsystems successfully initialized!");
+    log::info("RUNTIME", "All Papaya PS4/PS5 subsystems successfully initialized!");
     return {};
 }
 
-Result<> EmulatorRuntime::boot_title(std::string_view exe_path) {
+Result<> EmulatorRuntime::boot_title(std::string_view eboot_path) {
     if (!kernel_ || !memory_map_ || !hv_) {
         return ErrorCode::InvalidParameter;
     }
@@ -112,14 +108,15 @@ Result<> EmulatorRuntime::boot_title(std::string_view exe_path) {
     void* host_ram = memory_map_->get_host_pointer(0x0);
     u64 total_ram = memory_map_->get_total_ram_size();
 
-    auto load_res = kernel_->load_title_executable(exe_path, host_ram, total_ram);
+    auto load_res = kernel_->load_title_executable(eboot_path, host_ram, total_ram);
     if (!load_res) {
-        log::error("RUNTIME", "Failed to load title executable: {}", exe_path);
+        log::error("RUNTIME", "Failed to load PlayStation ELF executable: {}", eboot_path);
         return load_res.error();
     }
 
-    log::info("RUNTIME", "Title loaded: Base=0x{:X}, Entry=0x{:X}, Imports={}",
-              load_res->loaded_base, load_res->entry_point, load_res->imports.size());
+    log::info("RUNTIME", "PlayStation ELF loaded: Base=0x{:X}, Entry=0x{:X}, Target={}",
+              load_res->base_address, load_res->entry_point,
+              load_res->is_ps5 ? "PlayStation 5" : "PlayStation 4");
 
     // Create and boot vCPU #0 in 64-bit Long Mode
     auto vcpu_res = hv_->create_vcpu(0);
@@ -136,7 +133,7 @@ Result<> EmulatorRuntime::boot_title(std::string_view exe_path) {
     }
 
     is_running_ = true;
-    log::info("RUNTIME", "Primary vCPU #0 booted in 64-bit Long Mode at 0x{:X}", load_res->entry_point);
+    log::info("RUNTIME", "Primary vCPU #0 booted at entry point 0x{:X}", load_res->entry_point);
     return {};
 }
 
@@ -168,7 +165,7 @@ void EmulatorRuntime::step_frame() {
             }
         } else if (exit.reason == hv::ExitReason::Halt) {
             is_running_ = false;
-            log::info("RUNTIME", "Title execution halted cleanly.");
+            log::info("RUNTIME", "PlayStation title execution halted cleanly.");
             break;
         }
     }

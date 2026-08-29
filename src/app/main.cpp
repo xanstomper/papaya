@@ -6,15 +6,15 @@
 #include <string_view>
 
 void print_banner() {
-    std::cout << "\033[38;5;208;1m"
+    std::cout << "\033[38;5;39;1m"
               << "  ____                                  \n"
               << " |  _ \\ __ _ _ __   __ _ _   _  __ _    \n"
               << " | |_) / _` | '_ \\ / _` | | | |/ _` |   \n"
               << " |  __/ (_| | |_) | (_| | |_| | (_| |   \n"
               << " |_|   \\__,_| .__/ \\__,_|\\__, |\\__,_|   \n"
               << "            |_|          |___/          \n"
-              << " Project Papaya - Next-Gen Xbox Emulator\n"
-              << " Version 0.1.0-dev (Linux x86-64 / KVM)  \n"
+              << " Project Papaya - PS4 & PS5 Emulator    \n"
+              << " Version 0.2.0-dev (Orbis & Prospero OS)\n"
               << "\033[0m\n";
 }
 
@@ -22,9 +22,10 @@ void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
               << "  --test-kvm            Run KVM hardware virtualization diagnostic\n"
-              << "  --target <target>     Target console: xboxone (default), seriess, seriesx\n"
+              << "  --target <target>     Target console: ps4 (default), ps4pro, ps5, ps5pro\n"
               << "  --headless            Run in headless CLI mode\n"
-              << "  --boot <exe>          Load and boot Title executable\n"
+              << "  --boot <eboot.bin>    Load and boot PlayStation ELF executable\n"
+              << "  --mount <vpath> <dir> Mount host folder into PlayStation VFS (/app0, etc.)\n"
               << "  --log-level <level>   trace, debug, info (default), warn, error\n"
               << "  --help                Show this help message\n";
 }
@@ -34,6 +35,7 @@ int main(int argc, char* argv[]) {
 
     bool run_test = false;
     papaya::frontend::EmulatorConfig config{};
+    config.target = papaya::ConsoleTarget::PlayStation4;
     std::string boot_path;
 
     for (int i = 1; i < argc; ++i) {
@@ -55,8 +57,10 @@ int main(int argc, char* argv[]) {
             boot_path = argv[++i];
         } else if (arg == "--target" && i + 1 < argc) {
             std::string_view tgt = argv[++i];
-            if (tgt == "seriess") config.target = papaya::ConsoleTarget::XboxSeriesS;
-            else if (tgt == "seriesx") config.target = papaya::ConsoleTarget::XboxSeriesX;
+            if (tgt == "ps4") config.target = papaya::ConsoleTarget::PlayStation4;
+            else if (tgt == "ps4pro") config.target = papaya::ConsoleTarget::PlayStation4Pro;
+            else if (tgt == "ps5") config.target = papaya::ConsoleTarget::PlayStation5;
+            else if (tgt == "ps5pro") config.target = papaya::ConsoleTarget::PlayStation5Pro;
         }
     }
 
@@ -80,7 +84,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (!boot_path.empty()) {
-        papaya::log::info("MAIN", "Booting title executable: {}", boot_path);
+        papaya::log::info("MAIN", "Booting PlayStation title: {}", boot_path);
         if (!runtime.boot_title(boot_path)) {
             papaya::log::error("MAIN", "Failed to boot Title");
             return 1;

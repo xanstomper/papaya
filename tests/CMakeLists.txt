@@ -16,37 +16,6 @@ target_link_libraries(test_gpu_pm4 PRIVATE
     papaya-gpu
 )
 
-add_executable(test_pe_loader
-    test_pe_loader.cpp
-)
-
-target_link_libraries(test_pe_loader PRIVATE
-    papaya-common
-    papaya-storage
-)
-
-add_executable(test_hle_thunk
-    test_hle_thunk.cpp
-)
-
-target_link_libraries(test_hle_thunk PRIVATE
-    papaya-common
-    papaya-storage
-    papaya-hle
-    papaya-hv
-)
-
-add_executable(test_long_mode_pe_boot
-    test_long_mode_pe_boot.cpp
-)
-
-target_link_libraries(test_long_mode_pe_boot PRIVATE
-    papaya-common
-    papaya-storage
-    papaya-hle
-    papaya-hv
-)
-
 add_executable(test_gcn_state
     test_gcn_state.cpp
 )
@@ -76,15 +45,6 @@ target_link_libraries(test_threading_sync PRIVATE
     papaya-hv
 )
 
-add_executable(test_xvd_crypto
-    test_xvd_crypto.cpp
-)
-
-target_link_libraries(test_xvd_crypto PRIVATE
-    papaya-common
-    papaya-storage
-)
-
 add_executable(test_audio_engine
     test_audio_engine.cpp
 )
@@ -103,6 +63,60 @@ target_link_libraries(test_emulator_runtime PRIVATE
     papaya-frontend
 )
 
+add_executable(test_elf_loader
+    test_elf_loader.cpp
+)
+
+target_link_libraries(test_elf_loader PRIVATE
+    papaya-common
+    papaya-storage
+)
+
+add_executable(test_param_parser
+    test_param_parser.cpp
+)
+
+target_link_libraries(test_param_parser PRIVATE
+    papaya-common
+    papaya-storage
+)
+
+add_executable(test_memory_manager
+    test_memory_manager.cpp
+)
+
+target_link_libraries(test_memory_manager PRIVATE
+    papaya-common
+    papaya-hle
+)
+
+add_executable(test_freebsd_syscalls
+    test_freebsd_syscalls.cpp
+)
+
+target_link_libraries(test_freebsd_syscalls PRIVATE
+    papaya-common
+    papaya-hle
+)
+
+add_executable(test_sony_nids
+    test_sony_nids.cpp
+)
+
+target_link_libraries(test_sony_nids PRIVATE
+    papaya-common
+    papaya-hle
+)
+
+add_executable(test_kraken
+    test_kraken.cpp
+)
+
+target_link_libraries(test_kraken PRIVATE
+    papaya-common
+    papaya-storage
+)
+
 add_executable(test_full_game_loop
     test_full_game_loop.cpp
 )
@@ -114,13 +128,15 @@ target_link_libraries(test_full_game_loop PRIVATE
 
 add_test(NAME KvmBootTest COMMAND test_kvm_boot)
 add_test(NAME GpuPm4Test COMMAND test_gpu_pm4)
-add_test(NAME PeLoaderTest COMMAND test_pe_loader)
-add_test(NAME HleThunkTest COMMAND test_hle_thunk)
-add_test(NAME LongModePeBootTest COMMAND test_long_mode_pe_boot)
 add_test(NAME GcnStateTest COMMAND test_gcn_state)
 add_test(NAME ShaderTranslatorTest COMMAND test_shader_translator)
 add_test(NAME ThreadingSyncTest COMMAND test_threading_sync)
-add_test(NAME XvdCryptoTest COMMAND test_xvd_crypto)
 add_test(NAME AudioEngineTest COMMAND test_audio_engine)
 add_test(NAME EmulatorRuntimeTest COMMAND test_emulator_runtime)
+add_test(NAME ElfLoaderTest COMMAND test_elf_loader)
+add_test(NAME ParamParserTest COMMAND test_param_parser)
+add_test(NAME MemoryManagerTest COMMAND test_memory_manager)
+add_test(NAME FreeBsdSyscallsTest COMMAND test_freebsd_syscalls)
+add_test(NAME SonyNidsTest COMMAND test_sony_nids)
+add_test(NAME KrakenTest COMMAND test_kraken)
 add_test(NAME FullGameLoopTest COMMAND test_full_game_loop)

@@ -22,23 +22,18 @@ public:
     MemoryMap() = default;
     ~MemoryMap();
 
-    Result<> initialize_xbox_one_layout();
-    Result<> initialize_series_layout(bool is_series_x);
-
+    Result<> initialize_playstation_layout(ConsoleTarget target = ConsoleTarget::PlayStation4);
     Result<> map_region(std::string_view name, GuestPhysAddr guest_base, u64 size, bool is_readonly = false);
     
     void* get_host_pointer(GuestPhysAddr gpa) const;
     const std::vector<MemoryRegion>& get_regions() const { return regions_; }
 
     void* get_ram_base() const { return ram_host_ptr_; }
-    void* get_esram_base() const { return esram_host_ptr_; }
-
     u64 get_total_ram_size() const { return total_ram_size_; }
 
 private:
     std::vector<MemoryRegion> regions_;
     void* ram_host_ptr_{nullptr};
-    void* esram_host_ptr_{nullptr};
     u64 total_ram_size_{0};
     u32 next_slot_id_{0};
 };

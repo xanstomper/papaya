@@ -10,7 +10,7 @@ int main() {
     log::info("TEST", "Running unit test: test_emulator_runtime");
 
     EmulatorConfig config{
-        .target = ConsoleTarget::XboxOne,
+        .target = ConsoleTarget::PlayStation4,
         .backend = PlatformBackend::Kvm,
         .headless = true,
         .target_fps = 60,

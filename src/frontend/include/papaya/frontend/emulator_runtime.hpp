@@ -17,7 +17,7 @@
 namespace papaya::frontend {
 
 struct EmulatorConfig {
-    ConsoleTarget target{ConsoleTarget::XboxOne};
+    ConsoleTarget target{ConsoleTarget::PlayStation4};
     PlatformBackend backend{PlatformBackend::Kvm};
     bool headless{false};
     u32 target_fps{60};
@@ -30,7 +30,7 @@ public:
     ~EmulatorRuntime();
 
     Result<> initialize();
-    Result<> boot_title(std::string_view exe_path);
+    Result<> boot_title(std::string_view eboot_path);
 
     void step_frame();
     void run();
