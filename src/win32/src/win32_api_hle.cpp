@@ -2,6 +2,7 @@
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_dsound.hpp"
 #include "papaya/win32/win32_dinput.hpp"
+#include "papaya/win32/win32_gl.hpp"
 #include "papaya/win32/win32_registry.hpp"
 #include "papaya/win32/win32_audio.hpp"
 #include "papaya/win32/win32_window.hpp"
@@ -3195,6 +3196,17 @@ void* Win32ApiHle::hle_wgl_get_proc_address(const char* lpszProc) {
     return reinterpret_cast<void*>(&generic_stub_success);
 }
 
+// ---- OpenGL wgl contexts (real, backed by Mesa GLX) --------------------------
+void* Win32ApiHle::hle_wgl_create_context(void* hdc) {
+    return wgl_create_context(hdc);
+}
+int Win32ApiHle::hle_wgl_make_current(void* hdc, void* hglrc) {
+    return wgl_make_current(hdc, hglrc);
+}
+int Win32ApiHle::hle_wgl_delete_context(void* hglrc) {
+    return wgl_delete_context(hglrc);
+}
+
 struct VkWin32SurfaceCreateInfoKHR_T {
     uint32_t sType;
     const void* pNext;
@@ -4072,10 +4084,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("IMM32.dll", "ImmAssociateContext", reinterpret_cast<void*>(&generic_stub_null));
 
     // OPENGL32.DLL
-    register_function("OPENGL32.dll", "wglCreateContext", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("OPENGL32.dll", "wglDeleteContext", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("OPENGL32.dll", "wglMakeCurrent", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("OPENGL32.dll", "wglCreateContext", reinterpret_cast<void*>(&hle_wgl_create_context));
+    register_function("OPENGL32.dll", "wglDeleteContext", reinterpret_cast<void*>(&hle_wgl_delete_context));
+    register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));
+    register_function("OPENGL32.dll", "wglMakeCurrent", reinterpret_cast<void*>(&hle_wgl_make_current));
 
     // WS2_32.DLL / WSOCK32.DLL
     register_function("WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&generic_stub_zero));
@@ -4345,8 +4357,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "SetForegroundWindow",reinterpret_cast<void*>(&hle_set_foreground_window));
     register_function("USER32.DLL", "GetActiveWindow",    reinterpret_cast<void*>(&hle_get_active_window));
     register_function("USER32.DLL", "SetActiveWindow",    reinterpret_cast<void*>(&hle_set_active_window));
-    register_function("USER32.DLL", "GetFocus",           reinterpret_cast<void*>(&hle_get_focus));
-    register_function("USER32.DLL", "SetFocus",           reinterpret_cast<void*>(&hle_set_focus));
+    register_function("USER32.DLL", "PeekMessageW",       reinterpret_cast<void*>(&hle_peek_message_a));
+    register_function("USER32.DLL", "GetMessageW",        reinterpret_cast<void*>(&hle_get_message_a));
+    register_function("USER32.DLL", "DispatchMessageW",   reinterpret_cast<void*>(&hle_dispatch_message_a));
+    register_function("USER32.DLL", "TranslateMessageW",  reinterpret_cast<void*>(&hle_translate_message));
     register_function("USER32.DLL", "GetCapture",         reinterpret_cast<void*>(&hle_get_capture));
     register_function("USER32.DLL", "SetCapture",         reinterpret_cast<void*>(&hle_set_capture));
     register_function("USER32.DLL", "ReleaseCapture",     reinterpret_cast<void*>(&hle_release_capture));

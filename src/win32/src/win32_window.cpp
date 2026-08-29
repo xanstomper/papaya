@@ -81,13 +81,25 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
 
     auto win = std::make_unique<NativeWindow>();
     win->cls = cls;
-    win->title = title ? title : class_name;
+    std::string final_title = (title && std::strlen(title) > 0) ? title : (class_name ? class_name : "Papaya Game");
+    win->title = final_title;
     win->display = display_;
     win->style = style;
-    win->width  = w > 0 ? w : 640;
-    win->height = h > 0 ? h : 480;
-    win->x = (x == 0 && w == 0) ? 0 : x;
-    win->y = (y == 0 && h == 0) ? 0 : y;
+
+    // Multi-monitor aware placement: place on primary screen (0..1920)
+    int scr_w = DisplayWidth(display_, DefaultScreen(display_));
+    int scr_h = DisplayHeight(display_, DefaultScreen(display_));
+    if (scr_w > 1920) scr_w = 1920; // Default bounds to primary display
+
+    int default_w = (w > 0 && w < 10000 && w != static_cast<int>(0x80000000)) ? w : 1280;
+    int default_h = (h > 0 && h < 10000 && h != static_cast<int>(0x80000000)) ? h : 720;
+    int default_x = (x >= 0 && x < scr_w && x != static_cast<int>(0x80000000)) ? x : std::max(0, (scr_w - default_w) / 2);
+    int default_y = (y >= 0 && y < scr_h && y != static_cast<int>(0x80000000)) ? y : std::max(0, (scr_h - default_h) / 2);
+
+    win->width  = default_w;
+    win->height = default_h;
+    win->x      = default_x;
+    win->y      = default_y;
 
     XSetWindowAttributes attrs{};
     attrs.border_pixel = 0;
@@ -103,9 +115,24 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
     if (!xw) { log::error("WINDOW", "XCreateWindow failed"); return nullptr; }
 
     XStoreName(display_, xw, win->title.c_str());
+    Atom utf8_string = XInternAtom(display_, "UTF8_STRING", False);
+    Atom net_wm_name = XInternAtom(display_, "_NET_WM_NAME", False);
+    XChangeProperty(display_, xw, net_wm_name, utf8_string, 8, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(win->title.c_str()), win->title.length());
+
+    XClassHint class_hint;
+    char res_name[] = "papaya";
+    char res_class[] = "Papaya";
+    class_hint.res_name = res_name;
+    class_hint.res_class = res_class;
+    XSetClassHint(display_, xw, &class_hint);
+
+    Atom wm_protocols = XInternAtom(display_, "WM_PROTOCOLS", False);
+    Atom wm_delete = XInternAtom(display_, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display_, xw, &wm_delete, 1);
+
     win->xid = static_cast<std::uint64_t>(xw);
     win->gc  = XCreateGC(display_, xw, 0, nullptr);
-    // HWND identity = the NativeWindow pointer.
     win->hwnd = win.get();
 
     void* hwnd = win.get();
@@ -124,7 +151,6 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
 void X11WindowManager::destroy_window(void* hwnd) {
     auto* w = window_from_hwnd(hwnd);
     if (!w) return;
-    // Let the app handle WM_DESTROY first.
     dispatch_message_impl(hwnd, WM_DESTROY, 0, 0);
     if (w->display && w->xid) XDestroyWindow(w->display, static_cast<Window>(w->xid));
     if (w->gc) XFreeGC(w->display, w->gc);
@@ -135,7 +161,23 @@ void X11WindowManager::destroy_window(void* hwnd) {
 void X11WindowManager::show_window(void* hwnd, int /*cmd_show*/) {
     auto* w = window_from_hwnd(hwnd);
     if (!w || !w->display || !w->xid) return;
-    XMapRaised(w->display, static_cast<Window>(w->xid));
+    Window xw = static_cast<Window>(w->xid);
+    XMapRaised(w->display, xw);
+
+    Atom net_active = XInternAtom(w->display, "_NET_ACTIVE_WINDOW", False);
+    XEvent xev{};
+    xev.xclient.type = ClientMessage;
+    xev.xclient.serial = 0;
+    xev.xclient.send_event = True;
+    xev.xclient.window = xw;
+    xev.xclient.message_type = net_active;
+    xev.xclient.format = 32;
+    xev.xclient.data.l[0] = 1;
+    xev.xclient.data.l[1] = CurrentTime;
+    xev.xclient.data.l[2] = 0;
+    XSendEvent(w->display, DefaultRootWindow(w->display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
+
     XFlush(w->display);
     w->visible = true;
 }
@@ -186,6 +228,11 @@ void* X11WindowManager::first_window() {
     return windows_.empty() ? nullptr : windows_.begin()->first;
 }
 
+std::uint64_t X11WindowManager::xwindow_of(void* hwnd) {
+    auto it = windows_.find(hwnd);
+    return (it != windows_.end()) ? it->second->xid : 0;
+}
+
 void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
     auto* w = window_from_hwnd(hwnd);
     if (!w || !lpRect) return;
@@ -209,16 +256,25 @@ void X11WindowManager::get_client_rect(void* hwnd, void* lpRect) {
 // ---------------------------------------------------------------------------
 // Message pump
 // ---------------------------------------------------------------------------
-static void XTranslateKey(KeySym ks, bool& down, u32& vk) {
-    down = (ks & 0xffff) != 0;
+static void XTranslateKey(KeySym ks, bool down, u32& vk) {
+    (void)down;
     switch (ks) {
         case XK_Return: vk = 0x0D; break;
         case XK_Escape: vk = 0x1B; break;
         case XK_space:  vk = 0x20; break;
         case XK_BackSpace: vk = 0x08; break;
         case XK_Tab:    vk = 0x09; break;
+        case XK_Left:   vk = 0x25; break;
+        case XK_Up:     vk = 0x26; break;
+        case XK_Right:  vk = 0x27; break;
+        case XK_Down:   vk = 0x28; break;
+        case XK_Shift_L:
+        case XK_Shift_R: vk = 0x10; break;
+        case XK_Control_L:
+        case XK_Control_R: vk = 0x11; break;
         default:
             if (ks >= XK_a && ks <= XK_z) vk = 0x41 + (ks - XK_a);
+            else if (ks >= XK_A && ks <= XK_Z) vk = 0x41 + (ks - XK_A);
             else if (ks >= XK_0 && ks <= XK_9) vk = 0x30 + (ks - XK_0);
             else vk = 0x00;
     }
@@ -257,7 +313,8 @@ void X11WindowManager::pump_x11_events() {
             case KeyPress:
             case KeyRelease: {
                 KeySym ks = XLookupKeysym(&ev.xkey, 0);
-                bool down; u32 vk;
+                bool down = (ev.type == KeyPress);
+                u32 vk = 0;
                 XTranslateKey(ks, down, vk);
                 msg.message = down ? WM_KEYDOWN : WM_KEYUP;
                 msg.w_param = vk; msg.l_param = 0;

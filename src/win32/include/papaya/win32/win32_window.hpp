@@ -84,6 +84,8 @@ public:
     void shutdown();
     // Access to the X display (for reading keyboard/mouse state etc.)
     _XDisplay* display() { return display_; }
+    // X11 Window id for a HWND (NativeWindow*), or 0 if none.
+    std::uint64_t xwindow_of(void* hwnd);
 
     // Window classes
     void* register_class(const char* name, void* wndproc, void* hinstance);

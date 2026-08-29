@@ -555,6 +555,9 @@ public:
 
     // OpenGL & Vulkan dynamic loaders
     static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);
+    static PAPAYA_MS_ABI void* hle_wgl_create_context(void* hdc);
+    static PAPAYA_MS_ABI int   hle_wgl_make_current(void* hdc, void* hglrc);
+    static PAPAYA_MS_ABI int   hle_wgl_delete_context(void* hglrc);
     static PAPAYA_MS_ABI void* hle_vk_get_instance_proc_addr(void* instance, const char* pName);
 
     // Windows Version & Time

@@ -7,6 +7,7 @@ add_library(papaya-win32 STATIC
     src/win32_dsound.cpp
     src/win32_registry.cpp
     src/win32_dinput.cpp
+    src/win32_gl.cpp
     src/pe_loader.cpp
 )
 
@@ -19,6 +20,7 @@ target_link_libraries(papaya-win32 PUBLIC
     papaya-steam
     papaya-input
     X11
+    GL GLX
 )
 
 target_compile_features(papaya-win32 PUBLIC cxx_std_23)
