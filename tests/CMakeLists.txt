@@ -1,0 +1,100 @@
+add_executable(test_steam_stub
+    test_steam_stub.cpp
+)
+target_link_libraries(test_steam_stub PRIVATE
+    papaya-common
+    papaya-steam
+)
+
+add_executable(test_cpu_pages
+    test_cpu_pages.cpp
+)
+target_link_libraries(test_cpu_pages PRIVATE
+    papaya-common
+    papaya-cpu
+)
+
+add_executable(test_potato_gpu
+    test_potato_gpu.cpp
+)
+target_link_libraries(test_potato_gpu PRIVATE
+    papaya-common
+    papaya-gpu
+)
+
+add_executable(test_shader_stripping
+    test_shader_stripping.cpp
+)
+target_link_libraries(test_shader_stripping PRIVATE
+    papaya-common
+    papaya-gpu
+)
+
+add_executable(test_swapchain_upscaler
+    test_swapchain_upscaler.cpp
+)
+target_link_libraries(test_swapchain_upscaler PRIVATE
+    papaya-common
+    papaya-gpu
+)
+
+add_executable(test_hardware_spoofer
+    test_hardware_spoofer.cpp
+)
+target_link_libraries(test_hardware_spoofer PRIVATE
+    papaya-common
+    papaya-profile
+)
+
+add_executable(test_auto_configurator
+    test_auto_configurator.cpp
+)
+target_link_libraries(test_auto_configurator PRIVATE
+    papaya-common
+    papaya-profile
+)
+
+add_executable(test_memory_watchdog
+    test_memory_watchdog.cpp
+)
+target_link_libraries(test_memory_watchdog PRIVATE
+    papaya-common
+    papaya-profile
+)
+
+add_executable(test_ntsync_iouring
+    test_ntsync_iouring.cpp
+)
+target_link_libraries(test_ntsync_iouring PRIVATE
+    papaya-common
+    papaya-kernel
+)
+
+add_executable(test_audio_input
+    test_audio_input.cpp
+)
+target_link_libraries(test_audio_input PRIVATE
+    papaya-common
+    papaya-audio
+    papaya-input
+)
+
+add_executable(test_full_runtime_stack
+    test_full_runtime_stack.cpp
+)
+target_link_libraries(test_full_runtime_stack PRIVATE
+    papaya-common
+    papaya-frontend
+)
+
+add_test(NAME SteamStubTest COMMAND test_steam_stub)
+add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
+add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)
+add_test(NAME ShaderStrippingTest COMMAND test_shader_stripping)
+add_test(NAME SwapchainUpscalerTest COMMAND test_swapchain_upscaler)
+add_test(NAME HardwareSpooferTest COMMAND test_hardware_spoofer)
+add_test(NAME AutoConfiguratorTest COMMAND test_auto_configurator)
+add_test(NAME MemoryWatchdogTest COMMAND test_memory_watchdog)
+add_test(NAME NtSyncIoUringTest COMMAND test_ntsync_iouring)
+add_test(NAME AudioInputTest COMMAND test_audio_input)
+add_test(NAME FullRuntimeStackTest COMMAND test_full_runtime_stack)

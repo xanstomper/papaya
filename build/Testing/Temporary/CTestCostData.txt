@@ -1,0 +1,12 @@
+SteamStubTest 4 0.00370184
+CpuPagesTest 4 0.00573912
+PotatoGpuTest 3 0.00704256
+ShaderStrippingTest 4 0.00227047
+SwapchainUpscalerTest 4 0.0153077
+HardwareSpooferTest 4 0.00270247
+AutoConfiguratorTest 4 0.00283782
+MemoryWatchdogTest 4 0.00191249
+NtSyncIoUringTest 3 0.00342006
+AudioInputTest 4 0.00230194
+FullRuntimeStackTest 2 0.00672419
+---
