@@ -444,6 +444,14 @@ BOOL Win32ApiHle::hle_init_critical_section_and_spin_count(Win32CriticalSection*
     return TRUE_VAL;
 }
 
+BOOL Win32ApiHle::hle_init_critical_section_ex(Win32CriticalSection* lpSection, u32 dwSpinCount, u32 flags) {
+    (void)dwSpinCount;
+    (void)flags;
+    hle_init_critical_section(lpSection);
+    if (lpSection) lpSection->SpinCount = dwSpinCount;
+    return TRUE_VAL;
+}
+
 void Win32ApiHle::hle_enter_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection || !lpSection->DebugInfo) return;
     auto* mtx = static_cast<std::recursive_mutex*>(lpSection->DebugInfo);
@@ -745,7 +753,8 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
     if (symbol_name == "FlsFree") return reinterpret_cast<void*>(&hle_fls_free);
     if (symbol_name == "FlsGetValue") return reinterpret_cast<void*>(&hle_fls_get_value);
     if (symbol_name == "FlsSetValue") return reinterpret_cast<void*>(&hle_fls_set_value);
-    if (symbol_name == "InitializeCriticalSectionEx" || symbol_name == "InitializeCriticalSection") return reinterpret_cast<void*>(&hle_init_critical_section);
+    if (symbol_name == "InitializeCriticalSectionEx") return reinterpret_cast<void*>(&hle_init_critical_section_ex);
+    if (symbol_name == "InitializeCriticalSection") return reinterpret_cast<void*>(&hle_init_critical_section);
     if (symbol_name == "InitializeCriticalSectionAndSpinCount") return reinterpret_cast<void*>(&hle_init_critical_section_and_spin_count);
     if (symbol_name == "CreateEventExA" || symbol_name == "CreateEventA") return reinterpret_cast<void*>(&hle_create_event_a);
     if (symbol_name == "CreateEventExW" || symbol_name == "CreateEventW") return reinterpret_cast<void*>(&hle_create_event_w);
@@ -1771,8 +1780,42 @@ BOOL Win32ApiHle::hle_get_user_name_a(char* lpBuffer, u32* lpnSize) {
     return FALSE_VAL;
 }
 
+// ---- USER32 window-state (real: first-window active + capture tracking) -----
+static void* s_active_hwnd = nullptr;   // set on focus calls
+static void* s_capture_hwnd = nullptr;
+
+void* Win32ApiHle::hle_set_cursor(void* hCursor) {
+    (void)hCursor;
+    return nullptr;
+}
+void* Win32ApiHle::hle_get_foreground_window() { return s_active_hwnd ? s_active_hwnd : window_manager().first_window(); }
+BOOL  Win32ApiHle::hle_set_foreground_window(void* hwnd) { s_active_hwnd = hwnd; return TRUE_VAL; }
+void* Win32ApiHle::hle_get_active_window()   { return s_active_hwnd ? s_active_hwnd : window_manager().first_window(); }
+void* Win32ApiHle::hle_set_active_window(void* hwnd) { s_active_hwnd = hwnd; return hwnd; }
+void* Win32ApiHle::hle_get_focus() { return s_active_hwnd ? s_active_hwnd : window_manager().first_window(); }
+void* Win32ApiHle::hle_set_focus(void* hwnd) { s_active_hwnd = hwnd; return hwnd; }
+void* Win32ApiHle::hle_get_capture() { return s_capture_hwnd; }
+void* Win32ApiHle::hle_set_capture(void* hwnd) { s_capture_hwnd = hwnd; return hwnd; }
+BOOL  Win32ApiHle::hle_release_capture() { s_capture_hwnd = nullptr; return TRUE_VAL; }
+
+int Win32ApiHle::hle_message_box_a(void* hwnd, const char* text, const char* caption, u32 type) {
+    (void)hwnd;
+    static const int MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40;
+    const char* icon = "";
+    if (type & MB_ICONERROR) icon = "[ERROR]";
+    else if (type & MB_ICONWARNING) icon = "[WARN]";
+    else if (type & MB_ICONINFORMATION) icon = "[INFO]";
+    std::fprintf(stderr, "%s %s: %s\n", icon, caption ? caption : "Message", text ? text : "");
+    return 1;   // MessageBoxA returns IDOK (1) for MB_OK
+}
+int Win32ApiHle::hle_message_box_w(void* hwnd, const wchar_t* text, const wchar_t* caption, u32 type) {
+    std::string t = text ? wchar_to_utf8(text) : std::string();
+    std::string c = caption ? wchar_to_utf8(caption) : std::string();
+    return hle_message_box_a(hwnd, t.c_str(), c.c_str(), type);
+}
+
 void* Win32ApiHle::hle_get_environment_strings() {
-    // Return a fake environment block with a double-null terminator
+    // Return an environment block with a double-null terminator
     static char env_block[] = "PAPAYA=1\0";
     return static_cast<void*>(env_block);
 }
@@ -2509,6 +2552,24 @@ int Win32ApiHle::hle_select(u32 nfds, void* rfds, void* wfds, void* efds, void* 
                     static_cast<fd_set*>(efds), static_cast<struct timeval*>(timeout));
 }
 
+int Win32ApiHle::hle_getaddrinfo(const char* nodename, const char* servname, const void* hints, void** res) {
+    int r = ::getaddrinfo(nodename, servname, static_cast<const struct addrinfo*>(hints),
+                          reinterpret_cast<struct addrinfo**>(res));
+    // Host EAI codes are used; games check for 0 (success) vs nonzero (name not found).
+    return r;
+}
+void Win32ApiHle::hle_freeaddrinfo(void* res) {
+    if (res) ::freeaddrinfo(static_cast<struct addrinfo*>(res));
+}
+int Win32ApiHle::hle_getnameinfo(const void* sa, u32 salen, char* host, u32 hostlen, char* serv, u32 servlen, u32 flags) {
+    return ::getnameinfo(static_cast<const struct sockaddr*>(sa), salen, host, hostlen, serv, servlen,
+                         static_cast<int>(flags));
+}
+int Win32ApiHle::hle_inet_pton(int af, const char* src, void* dst) {
+    int r = ::inet_pton(af, src, dst);
+    return r == 1 ? 1 : (r == 0 ? 0 : -1);   // 1 valid, 0 not valid, -1 af not supported
+}
+
 // -------------------------------------------------------------
 // USER32 Input & Window Additions
 // -------------------------------------------------------------
@@ -2656,6 +2717,7 @@ Result<> Win32ApiHle::initialize() {
 
     register_function("KERNEL32.DLL", "InitializeCriticalSection", reinterpret_cast<void*>(&hle_init_critical_section));
     register_function("KERNEL32.DLL", "InitializeCriticalSectionAndSpinCount", reinterpret_cast<void*>(&hle_init_critical_section_and_spin_count));
+    register_function("KERNEL32.DLL", "InitializeCriticalSectionEx", reinterpret_cast<void*>(&hle_init_critical_section_ex));
     register_function("KERNEL32.DLL", "EnterCriticalSection", reinterpret_cast<void*>(&hle_enter_critical_section));
     register_function("KERNEL32.DLL", "TryEnterCriticalSection", reinterpret_cast<void*>(&hle_try_enter_critical_section));
     register_function("KERNEL32.DLL", "LeaveCriticalSection", reinterpret_cast<void*>(&hle_leave_critical_section));
@@ -2808,7 +2870,8 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&generic_stub_null));
     register_function("USER32.DLL", "EndPaint", reinterpret_cast<void*>(&generic_stub_success));
     register_function("USER32.DLL", "InvalidateRect", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&hle_message_box_a));
+    register_function("USER32.DLL", "MessageBoxW", reinterpret_cast<void*>(&hle_message_box_w));
 
     register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("GDI32.DLL", "GetDIBits", reinterpret_cast<void*>(&generic_stub_zero));
@@ -2865,10 +2928,10 @@ Result<> Win32ApiHle::initialize() {
 
     // WS2_32.DLL / WSOCK32.DLL
     register_function("WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("WS2_32.dll", "getaddrinfo", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("WS2_32.dll", "freeaddrinfo", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("WS2_32.dll", "getnameinfo", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("WS2_32.dll", "inet_pton", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("WS2_32.dll", "getaddrinfo", reinterpret_cast<void*>(&hle_getaddrinfo));
+    register_function("WS2_32.dll", "freeaddrinfo", reinterpret_cast<void*>(&hle_freeaddrinfo));
+    register_function("WS2_32.dll", "getnameinfo", reinterpret_cast<void*>(&hle_getnameinfo));
+    register_function("WS2_32.dll", "inet_pton", reinterpret_cast<void*>(&hle_inet_pton));
 
     // XINPUT1_4.DLL / XINPUT9_1_0.DLL
     register_function("XINPUT1_4.DLL", "XInputGetState", reinterpret_cast<void*>(&hle_xinput_get_state));
@@ -3126,16 +3189,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "RegisterClassExW",   reinterpret_cast<void*>(&hle_register_class_w));
     register_function("USER32.DLL", "PostMessageW",       reinterpret_cast<void*>(&hle_post_message_w));
     register_function("USER32.DLL", "SendMessageW",       reinterpret_cast<void*>(&hle_send_message_w));
-    register_function("USER32.DLL", "SetCursor",          reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "GetForegroundWindow",reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "SetForegroundWindow",reinterpret_cast<void*>(&generic_stub_success));
-    register_function("USER32.DLL", "GetActiveWindow",    reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "SetActiveWindow",    reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "GetFocus",           reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "SetFocus",           reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "GetCapture",         reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "SetCapture",         reinterpret_cast<void*>(&generic_stub_null));
-    register_function("USER32.DLL", "ReleaseCapture",     reinterpret_cast<void*>(&generic_stub_success));
+    register_function("USER32.DLL", "SetCursor",          reinterpret_cast<void*>(&hle_set_cursor));
+    register_function("USER32.DLL", "GetForegroundWindow",reinterpret_cast<void*>(&hle_get_foreground_window));
+    register_function("USER32.DLL", "SetForegroundWindow",reinterpret_cast<void*>(&hle_set_foreground_window));
+    register_function("USER32.DLL", "GetActiveWindow",    reinterpret_cast<void*>(&hle_get_active_window));
+    register_function("USER32.DLL", "SetActiveWindow",    reinterpret_cast<void*>(&hle_set_active_window));
+    register_function("USER32.DLL", "GetFocus",           reinterpret_cast<void*>(&hle_get_focus));
+    register_function("USER32.DLL", "SetFocus",           reinterpret_cast<void*>(&hle_set_focus));
+    register_function("USER32.DLL", "GetCapture",         reinterpret_cast<void*>(&hle_get_capture));
+    register_function("USER32.DLL", "SetCapture",         reinterpret_cast<void*>(&hle_set_capture));
+    register_function("USER32.DLL", "ReleaseCapture",     reinterpret_cast<void*>(&hle_release_capture));
 
     // DXGI.DLL & D3D11.DLL & DINPUT8.DLL
     register_function("DXGI.DLL", "CreateDXGIFactory",    reinterpret_cast<void*>(&hle_create_dxgi_factory));
@@ -3164,16 +3227,43 @@ void Win32ApiHle::register_function(std::string_view dll_name, std::string_view 
 void* Win32ApiHle::resolve_symbol(std::string_view dll_name, std::string_view function_name) {
     std::string upper_dll(dll_name);
     for (auto& c : upper_dll) c = static_cast<char>(std::toupper(c));
+    std::string func_str(function_name);
 
+    // 1. Direct DLL match
     auto dll_it = export_table_.find(upper_dll);
     if (dll_it != export_table_.end()) {
-        auto func_it = dll_it->second.find(std::string(function_name));
+        auto func_it = dll_it->second.find(func_str);
         if (func_it != dll_it->second.end()) {
             return func_it->second;
         }
     }
 
-    // Return nullptr so PE loader can resolve from guest DLLs (e.g. UnityPlayer.dll)
+    // 2. ApiSet schema & Core forwarding (api-ms-*, ext-ms-*, etc.)
+    static const char* kCoreDlls[] = {
+        "KERNEL32.DLL", "NTDLL.DLL", "USER32.DLL", "ADVAPI32.DLL",
+        "OLE32.DLL", "GDI32.DLL", "SHELL32.DLL", "MSVCRT.DLL",
+        "WS2_32.DLL", "WINMM.DLL", "OPENGL32.DLL", "D3D11.DLL",
+        "DXGI.DLL", "DINPUT8.DLL", "XINPUT1_3.DLL", "IMM32.DLL",
+        "CRYPT32.DLL", "BCRYPT.DLL", "DWMAPI.DLL", "AVRT.DLL"
+    };
+    for (const char* core_dll : kCoreDlls) {
+        auto cit = export_table_.find(core_dll);
+        if (cit != export_table_.end()) {
+            auto fit = cit->second.find(func_str);
+            if (fit != cit->second.end()) {
+                return fit->second;
+            }
+        }
+    }
+
+    // 3. Global fallback across any registered HLE table
+    for (const auto& [d, funcs] : export_table_) {
+        auto it = funcs.find(func_str);
+        if (it != funcs.end()) {
+            return it->second;
+        }
+    }
+
     return nullptr;
 }
 

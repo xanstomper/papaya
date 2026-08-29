@@ -114,6 +114,7 @@ public:
     // KERNEL32: Synchronization
     static PAPAYA_MS_ABI void  hle_init_critical_section(Win32CriticalSection* lpSection);
     static PAPAYA_MS_ABI BOOL  hle_init_critical_section_and_spin_count(Win32CriticalSection* lpSection, u32 dwSpinCount);
+    static PAPAYA_MS_ABI BOOL  hle_init_critical_section_ex(Win32CriticalSection* lpSection, u32 dwSpinCount, u32 flags);
     static PAPAYA_MS_ABI void  hle_enter_critical_section(Win32CriticalSection* lpSection);
     static PAPAYA_MS_ABI BOOL  hle_try_enter_critical_section(Win32CriticalSection* lpSection);
     static PAPAYA_MS_ABI void  hle_leave_critical_section(Win32CriticalSection* lpSection);
@@ -342,6 +343,19 @@ public:
     static PAPAYA_MS_ABI u32   hle_get_system_directory_a(char* lpBuffer, u32 uSize);
     static PAPAYA_MS_ABI BOOL  hle_get_computer_name_a(char* lpBuffer, u32* lpnSize);
     static PAPAYA_MS_ABI BOOL  hle_get_user_name_a(char* lpBuffer, u32* lpnSize);
+    // USER32 window-state helpers
+    static PAPAYA_MS_ABI void* hle_set_cursor(void* hCursor);
+    static PAPAYA_MS_ABI void* hle_get_foreground_window();
+    static PAPAYA_MS_ABI BOOL  hle_set_foreground_window(void* hwnd);
+    static PAPAYA_MS_ABI void* hle_get_active_window();
+    static PAPAYA_MS_ABI void* hle_set_active_window(void* hwnd);
+    static PAPAYA_MS_ABI void* hle_get_focus();
+    static PAPAYA_MS_ABI void* hle_set_focus(void* hwnd);
+    static PAPAYA_MS_ABI void* hle_get_capture();
+    static PAPAYA_MS_ABI void* hle_set_capture(void* hwnd);
+    static PAPAYA_MS_ABI BOOL  hle_release_capture();
+    static PAPAYA_MS_ABI int   hle_message_box_a(void* hwnd, const char* text, const char* caption, u32 type);
+    static PAPAYA_MS_ABI int   hle_message_box_w(void* hwnd, const wchar_t* text, const wchar_t* caption, u32 type);
     static PAPAYA_MS_ABI void* hle_get_environment_strings();
     static PAPAYA_MS_ABI BOOL  hle_free_environment_strings_a(void* lpszEnvironmentBlock);
     // ADVAPI32 Registry
@@ -464,6 +478,10 @@ public:
     static PAPAYA_MS_ABI u32   hle_inet_addr(const char* cp);
     static PAPAYA_MS_ABI const char* hle_inet_ntoa(void* in_addr_ptr);
     static PAPAYA_MS_ABI int   hle_select(u32 nfds, void* rfds, void* wfds, void* efds, void* timeout);
+    static PAPAYA_MS_ABI int   hle_getaddrinfo(const char* nodename, const char* servname, const void* hints, void** res);
+    static PAPAYA_MS_ABI void  hle_freeaddrinfo(void* res);
+    static PAPAYA_MS_ABI int   hle_getnameinfo(const void* sa, u32 salen, char* host, u32 hostlen, char* serv, u32 servlen, u32 flags);
+    static PAPAYA_MS_ABI int   hle_inet_pton(int af, const char* src, void* dst);
 
     // USER32 Input & Window Additions
     static PAPAYA_MS_ABI BOOL  hle_get_cursor_pos(void* lpPoint);
