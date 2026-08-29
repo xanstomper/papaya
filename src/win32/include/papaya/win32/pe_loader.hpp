@@ -24,7 +24,6 @@ class PeLoader {
 public:
     explicit PeLoader(std::shared_ptr<Win32ApiHle> hle = nullptr);
     ~PeLoader();
-
     // Loads PE from file path
     Result<LoadedPeImage> load_from_file(const std::filesystem::path& file_path);
 
@@ -39,6 +38,18 @@ public:
 
     // Unmaps and frees loaded image
     void unload_image(LoadedPeImage& image);
+
+    // TLS template/index for the loaded image (used to init per-thread TLS).
+    const ImgTlsContext* tls_context() const { return &tls_; }
+
+    // Global accessor so the HLE (CreateThread) can clone per-thread TLS + GS.
+    static PeLoader* active();
+
+    // On the current (new guest) thread: allocate a fresh per-thread TLS block
+    // from the template, create a per-thread TEB wired to it, and set %gs so
+    // __declspec(thread) accesses resolve to the new block. Safe to call only
+    // inside the new host pthread before the guest proc runs.
+    void setup_thread_tls();
 
 private:
     // Normalize either PE32 or PE32+ NT headers into a unified view

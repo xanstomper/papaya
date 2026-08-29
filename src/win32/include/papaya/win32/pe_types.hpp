@@ -243,69 +243,158 @@ struct ImageBaseRelocation {
     u32 size_of_block;
 };
 
+struct UnicodeString64 {
+    u16 length{0};
+    u16 maximum_length{0};
+    u32 pad{0};
+    wchar_t* buffer{nullptr};
+};
+
+struct ListEntry64 {
+    ListEntry64* flink{nullptr};
+    ListEntry64* blink{nullptr};
+};
+
+struct PebLdrData64 {
+    u32 length{sizeof(PebLdrData64)};
+    u8  initialized{1};
+    u8  pad[3]{0};
+    void* ss_handle{nullptr};
+    ListEntry64 in_load_order_module_list;
+    ListEntry64 in_memory_order_module_list;
+    ListEntry64 in_initialization_order_module_list;
+    void* entry_in_progress{nullptr};
+    u8 shutdown_in_progress{0};
+    u8 pad2[7]{0};
+    void* shutdown_thread_id{nullptr};
+};
+
+struct LdrDataTableEntry64 {
+    ListEntry64 in_load_order_links;
+    ListEntry64 in_memory_order_links;
+    ListEntry64 in_initialization_order_links;
+    void* dll_base{nullptr};
+    void* entry_point{nullptr};
+    u32 size_of_image{0};
+    u32 pad0{0};
+    UnicodeString64 full_dll_name;
+    UnicodeString64 base_dll_name;
+    u32 flags{0};
+    u16 obsolete_load_count{0};
+    u16 tls_index{0};
+    ListEntry64 hash_links;
+    u32 time_date_stamp{0};
+};
+
+struct RtlUserProcessParameters64 {
+    u32 maximum_length{sizeof(RtlUserProcessParameters64)};
+    u32 length{sizeof(RtlUserProcessParameters64)};
+    u32 flags{0};
+    u32 debug_flags{0};
+    void* console_handle{nullptr};
+    u32 console_flags{0};
+    u32 pad0{0};
+    void* standard_input{nullptr};
+    void* standard_output{nullptr};
+    void* standard_error{nullptr};
+    UnicodeString64 current_directory_path;
+    void* current_directory_handle{nullptr};
+    UnicodeString64 dll_path;
+    UnicodeString64 image_path_name;
+    UnicodeString64 command_line;
+    void* environment{nullptr};
+    u32 starting_x{0};
+    u32 starting_y{0};
+    u32 count_x{0};
+    u32 count_y{0};
+    u32 count_chars_x{0};
+    u32 count_chars_y{0};
+    u32 fill_attribute{0};
+    u32 window_flags{0};
+    u32 show_window_flags{1};
+    u32 pad1{0};
+    UnicodeString64 window_title;
+    UnicodeString64 desktop_info;
+    UnicodeString64 shell_info;
+    UnicodeString64 runtime_data;
+};
+
 struct WinPeb64 {
-    u8    inherited_address_space;
-    u8    read_image_file_exec_options;
-    u8    being_debugged;
-    u8    spare_bool;
-    u32   pad0;
-    void* mutant;
-    void* image_base_address;
-    void* ldr;
-    void* process_parameters;
-    void* sub_system_data;
-    void* process_heap;
-    void* fast_peb_lock;
-    void* atl_thunk_slist_ptr;
-    void* ifeo_key;
-    u32   cross_process_flags;
-    u32   pad1;
-    void* user_shared_info_ptr;
-    u32   system_reserved;
-    u32   atl_thunk_slist_ptr32;
-    void* api_set_map;
-    u32   tls_expansion_counter;
-    u32   pad2;
-    void* tls_bitmap;
-    u32   tls_bitmap_bits[2];
-    void* read_only_shared_memory_base;
-    void* shared_data;
-    void* read_only_static_server_data;
-    void* ansi_code_page_data;
-    void* oem_code_page_data;
-    void* unicode_case_table_data;
-    u32   number_of_processors;
-    u32   nt_global_flag;
+    u8    inherited_address_space{0};
+    u8    read_image_file_exec_options{0};
+    u8    being_debugged{0};
+    u8    spare_bool{0};
+    u32   pad0{0};
+    void* mutant{nullptr};
+    void* image_base_address{nullptr};
+    PebLdrData64* ldr{nullptr};
+    RtlUserProcessParameters64* process_parameters{nullptr};
+    void* sub_system_data{nullptr};
+    void* process_heap{nullptr};
+    void* fast_peb_lock{nullptr};
+    void* atl_thunk_slist_ptr{nullptr};
+    void* ifeo_key{nullptr};
+    u32   cross_process_flags{0};
+    u32   pad1{0};
+    void* user_shared_info_ptr{nullptr};
+    u32   system_reserved{0};
+    u32   atl_thunk_slist_ptr32{0};
+    void* api_set_map{nullptr};
+    u32   tls_expansion_counter{0};
+    u32   pad2{0};
+    void* tls_bitmap{nullptr};
+    u32   tls_bitmap_bits[2]{0, 0};
+    void* read_only_shared_memory_base{nullptr};
+    void* shared_data{nullptr};
+    void* read_only_static_server_data{nullptr};
+    void* ansi_code_page_data{nullptr};
+    void* oem_code_page_data{nullptr};
+    void* unicode_case_table_data{nullptr};
+    u32   number_of_processors{8};
+    u32   nt_global_flag{0};
 };
 
 struct WinTeb64 {
-    void* exception_list;           // 0x00
-    void* stack_base;               // 0x08
-    void* stack_limit;              // 0x10
-    void* sub_system_tib;           // 0x18
-    void* fiber_data;               // 0x20
-    void* arbitrary_user_pointer;   // 0x28
-    WinTeb64* self;                 // 0x30 (%gs:0x30 points to TEB itself)
-    void* environment_pointer;      // 0x38
-    u64   client_id_proc;           // 0x40
-    u64   client_id_thread;         // 0x48
-    void* rpc_handle;               // 0x50
-    void* tls_slots[64];            // 0x58 (%gs:0x58.. TLS array)
-    WinPeb64* peb;                  // 0x60 (%gs:0x60 points to PEB)
-    u32   last_error_value;         // 0x68
-    u32   count_of_owned_critical_sections; // 0x6C
-    void* csr_client_thread;        // 0x70
-    void* win32_thread_info;        // 0x78
-    u32   user32_reserved[26];      // 0x80
-    u32   user_reserved[5];         // 0xE8
-    void* wow32_reserved;           // 0x100
-    u32   current_locale;           // 0x108
-    u32   fp_software_status_register; // 0x10C
-    void* reserved_for_debugger[54];// 0x110
-    s32   exception_code;           // 0x2C0
-    u32   pad;
-    void* activation_context_stack_pointer; // 0x2C8
+    void* exception_list{nullptr};           // 0x00
+    void* stack_base{nullptr};               // 0x08
+    void* stack_limit{nullptr};              // 0x10
+    void* sub_system_tib{nullptr};           // 0x18
+    void* fiber_data{nullptr};               // 0x20
+    void* arbitrary_user_pointer{nullptr};   // 0x28
+    WinTeb64* self{nullptr};                 // 0x30 (%gs:0x30 points to TEB itself)
+    void* environment_pointer{nullptr};      // 0x38
+    u64   client_id_proc{0};                 // 0x40
+    u64   client_id_thread{0};               // 0x48
+    void* rpc_handle{nullptr};               // 0x50
+    void* thread_local_storage_pointer{nullptr}; // 0x58 (%gs:0x58 points to TLS vector)
+    WinPeb64* peb{nullptr};                  // 0x60 (%gs:0x60 points to PEB)
+    u32   last_error_value{0};               // 0x68
+    u32   count_of_owned_critical_sections{0}; // 0x6C
+    void* csr_client_thread{nullptr};        // 0x70
+    void* win32_thread_info{nullptr};        // 0x78
+    u32   user32_reserved[26]{0};            // 0x80
+    u32   user_reserved[5]{0};               // 0xE8
+    u32   pad_user{0};                       // 0xFC
+    void* wow32_reserved{nullptr};           // 0x100
+    u32   current_locale{0};                 // 0x108
+    u32   fp_software_status_register{0};    // 0x10C
+    void* reserved_for_debugger[54]{nullptr};// 0x110
+    s32   exception_code{0};                 // 0x2C0
+    u32   pad1{0};                           // 0x2C4
+    void* activation_context_stack_pointer{nullptr}; // 0x2C8
+    u8    pad_to_tls[0x1480 - 0x2D0]{0};     // Padding to reach standard TlsSlots at 0x1480
+    void* tls_slots[64]{nullptr};            // 0x1480 (%gs:0x1480.. TLS array)
+    void* tls_expansion_slots{nullptr};      // 0x1680
 };
 #pragma pack(pop)
+
+static_assert(offsetof(WinTeb64, self) == 0x30, "TEB.self offset mismatch");
+static_assert(offsetof(WinTeb64, thread_local_storage_pointer) == 0x58, "TEB.tls_ptr offset mismatch");
+static_assert(offsetof(WinTeb64, peb) == 0x60, "TEB.peb offset mismatch");
+static_assert(offsetof(WinTeb64, last_error_value) == 0x68, "TEB.last_error offset mismatch");
+static_assert(offsetof(WinTeb64, tls_slots) == 0x1480, "TEB.tls_slots offset mismatch");
+static_assert(offsetof(WinPeb64, image_base_address) == 0x10, "PEB.image_base offset mismatch");
+static_assert(offsetof(WinPeb64, ldr) == 0x18, "PEB.ldr offset mismatch");
+static_assert(offsetof(WinPeb64, process_parameters) == 0x20, "PEB.process_parameters offset mismatch");
 
 } // namespace papaya::win32

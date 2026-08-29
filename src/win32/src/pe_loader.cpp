@@ -12,12 +12,17 @@
 
 namespace papaya::win32 {
 
+static thread_local PeLoader* g_active_loader = nullptr;
+
 PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
     : hle_(hle ? hle : std::make_shared<Win32ApiHle>()) {
     hle_->initialize();
+    g_active_loader = this;
 }
 
 PeLoader::~PeLoader() = default;
+
+PeLoader* PeLoader::active() { return g_active_loader; }
 
 // -------------------------------------------------------------
 // Header Parsing: supports both PE32+ (0x020B) and PE32 (0x010B)
@@ -479,15 +484,70 @@ Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& 
 // -------------------------------------------------------------
 Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) {
     if (!peb_) {
-        peb_ = static_cast<WinPeb64*>(mmap(nullptr, sizeof(WinPeb64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        if (peb_ == MAP_FAILED) {
+        const size_t peb_alloc_size = sizeof(WinPeb64) + sizeof(PebLdrData64) + sizeof(LdrDataTableEntry64) * 4 + sizeof(RtlUserProcessParameters64) + 4096;
+        void* mem = mmap(nullptr, peb_alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mem == MAP_FAILED) {
             peb_ = nullptr;
             return ErrorCode::MemoryMappingFailed;
         }
-        std::memset(peb_, 0, sizeof(WinPeb64));
+        std::memset(mem, 0, peb_alloc_size);
+        peb_ = static_cast<WinPeb64*>(mem);
+
         peb_->image_base_address = image.image_base;
         peb_->process_heap = Win32ApiHle::hle_get_process_heap();
         peb_->number_of_processors = static_cast<u32>(sysconf(_SC_NPROCESSORS_ONLN));
+
+        u8* cursor = reinterpret_cast<u8*>(peb_) + sizeof(WinPeb64);
+
+        // 1. Setup PebLdrData64
+        auto* ldr = reinterpret_cast<PebLdrData64*>(cursor);
+        cursor += sizeof(PebLdrData64);
+        ldr->length = sizeof(PebLdrData64);
+        ldr->initialized = 1;
+
+        auto* exe_entry = reinterpret_cast<LdrDataTableEntry64*>(cursor);
+        cursor += sizeof(LdrDataTableEntry64);
+        exe_entry->dll_base = image.image_base;
+        exe_entry->entry_point = image.entry_point;
+        exe_entry->size_of_image = static_cast<u32>(image.size_of_image);
+
+        ldr->in_load_order_module_list.flink = &exe_entry->in_load_order_links;
+        ldr->in_load_order_module_list.blink = &exe_entry->in_load_order_links;
+        exe_entry->in_load_order_links.flink = &ldr->in_load_order_module_list;
+        exe_entry->in_load_order_links.blink = &ldr->in_load_order_module_list;
+
+        ldr->in_memory_order_module_list.flink = &exe_entry->in_memory_order_links;
+        ldr->in_memory_order_module_list.blink = &exe_entry->in_memory_order_links;
+        exe_entry->in_memory_order_links.flink = &ldr->in_memory_order_module_list;
+        exe_entry->in_memory_order_links.blink = &ldr->in_memory_order_module_list;
+
+        ldr->in_initialization_order_module_list.flink = &exe_entry->in_initialization_order_links;
+        ldr->in_initialization_order_module_list.blink = &exe_entry->in_initialization_order_links;
+        exe_entry->in_initialization_order_links.flink = &ldr->in_initialization_order_module_list;
+        exe_entry->in_initialization_order_links.blink = &ldr->in_initialization_order_module_list;
+
+        peb_->ldr = ldr;
+
+        // 2. Setup RtlUserProcessParameters64
+        auto* params = reinterpret_cast<RtlUserProcessParameters64*>(cursor);
+        cursor += sizeof(RtlUserProcessParameters64);
+        params->maximum_length = sizeof(RtlUserProcessParameters64);
+        params->length = sizeof(RtlUserProcessParameters64);
+
+        static wchar_t static_cmdline[] = L"papaya_game.exe";
+        static wchar_t static_imgpath[] = L"C:\\papaya_game.exe";
+        params->command_line.buffer = static_cmdline;
+        params->command_line.length = sizeof(static_cmdline) - sizeof(wchar_t);
+        params->command_line.maximum_length = sizeof(static_cmdline);
+
+        params->image_path_name.buffer = static_imgpath;
+        params->image_path_name.length = sizeof(static_imgpath) - sizeof(wchar_t);
+        params->image_path_name.maximum_length = sizeof(static_imgpath);
+
+        exe_entry->base_dll_name = params->command_line;
+        exe_entry->full_dll_name = params->image_path_name;
+
+        peb_->process_parameters = params;
     }
 
     if (!teb_) {
@@ -501,6 +561,7 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         teb_->peb = peb_;
         teb_->client_id_proc = getpid();
         teb_->client_id_thread = getpid();
+        teb_->thread_local_storage_pointer = &teb_->tls_slots[0];
         // Wire __declspec(thread) storage: TLS index 0 -> per-process block.
         if (tls_.enabled) teb_->tls_slots[0] = tls_.storage;
     }
@@ -561,6 +622,33 @@ Result<> PeLoader::setup_tls_directory(u8* base_bytes, u64 size_of_image,
     log::info("PE_LOADER", "TLS directory: {} bytes template + {} zero-fill -> block {} (index=0)",
               template_size, tls.size_of_zero_fill, reinterpret_cast<u64>(tls_block));
     return {};
+}
+
+void PeLoader::setup_thread_tls() {
+    if (!tls_.enabled) return;
+
+    // Fresh per-thread TLS block (copy template + zero-fill).
+    u64 block_size = tls_.template_size + tls_.zero_fill;
+    void* tls_block = std::calloc(1, block_size);
+    if (!tls_block) { log::warn("PE_LOADER", "thread TLS alloc failed"); return; }
+    if (tls_.template_va) std::memcpy(tls_block, tls_.template_va, tls_.template_size);
+
+    // Per-thread TEB.
+    auto* teb = static_cast<WinTeb64*>(mmap(nullptr, sizeof(WinTeb64),
+                                            PROT_READ | PROT_WRITE,
+                                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    if (teb == MAP_FAILED) { std::free(tls_block); return; }
+    std::memset(teb, 0, sizeof(WinTeb64));
+    teb->self = teb;
+    teb->peb = peb_;                    // shared PEB
+    teb->client_id_proc = getpid();
+    teb->client_id_thread = static_cast<u64>(gettid());
+    teb->tls_slots[0] = tls_block;
+
+    // Set %gs to this thread's TEB (per-CPU-thread via arch_prctl).
+#if defined(__x86_64__) || defined(_M_X64)
+    syscall(SYS_arch_prctl, ARCH_SET_GS, teb);
+#endif
 }
 
 // -------------------------------------------------------------
@@ -670,6 +758,23 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
 #else
         return ErrorCode::UnsupportedOperation;
 #endif
+    }
+
+    // -------------------------------------------------------------
+    // TLS Callbacks (e.g. static initializers, CRT setup)
+    // -------------------------------------------------------------
+    if (tls_.callbacks) {
+        using TlsCallbackFn = PAPAYA_MS_ABI void (*)(void* DllHandle, u32 Reason, void* Reserved);
+        auto** cb_array = reinterpret_cast<TlsCallbackFn*>(tls_.callbacks);
+        while (cb_array && *cb_array) {
+            log::info("PE_LOADER", "Executing TLS Callback @ 0x{:X}...", reinterpret_cast<u64>(*cb_array));
+            try {
+                (*cb_array)(image.image_base, 1 /* DLL_PROCESS_ATTACH */, nullptr);
+            } catch (...) {
+                log::warn("PE_LOADER", "Caught exception during TLS callback execution");
+            }
+            cb_array++;
+        }
     }
 
     using WinMainFn = PAPAYA_MS_ABI int (*)(void* hInstance, void* hPrevInstance, const char* lpCmdLine, int nShowCmd);
