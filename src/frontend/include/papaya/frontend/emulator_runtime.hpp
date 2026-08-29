@@ -17,6 +17,7 @@
 #include <memory>
 #include <atomic>
 #include <filesystem>
+#include <sys/types.h>
 
 namespace papaya::frontend {
 
@@ -45,6 +46,7 @@ public:
     bool is_running() const { return is_running_.load(); }
     u64 get_frame_count() const { return frame_count_.load(); }
     f64 get_current_fps() const { return current_fps_.load(); }
+    pid_t get_child_pid() const { return child_pid_; }
 
     steam::SteamApiStub& get_steam() { return *steam_stub_; }
     cpu::CpuTranslator& get_cpu() { return *cpu_translator_; }
@@ -63,6 +65,7 @@ private:
     std::atomic<bool> is_running_{false};
     std::atomic<u64> frame_count_{0};
     std::atomic<f64> current_fps_{0.0};
+    pid_t child_pid_{-1};
 
     std::unique_ptr<steam::SteamApiStub> steam_stub_;
     std::unique_ptr<cpu::CpuTranslator> cpu_translator_;

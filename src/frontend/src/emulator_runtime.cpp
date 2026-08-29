@@ -2,6 +2,10 @@
 #include "papaya/common/logger.hpp"
 #include <chrono>
 #include <thread>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <fstream>
 
 namespace papaya::frontend {
 
@@ -86,8 +90,13 @@ Result<> EmulatorRuntime::initialize() {
 Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     log::info("RUNTIME", "Priming execution pipeline for Steam Title: '{}'", exe_path);
 
-    // Auto-discover Steam AppID from game directory if available
     std::filesystem::path game_p(exe_path);
+    if (!std::filesystem::exists(game_p) && !config_.headless) {
+        log::error("RUNTIME", "Target game binary does not exist: '{}'", exe_path);
+        return ErrorCode::FileNotFound;
+    }
+
+    // Auto-discover Steam AppID from game directory if available
     auto discovered_id = steam::SteamApiStub::discover_app_id(game_p.parent_path());
     if (discovered_id.has_value()) {
         steam::SteamProfileConfig scfg{};
@@ -96,8 +105,65 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         steam_stub_->initialize();
     }
 
-    log::info("RUNTIME", "Engaging Papaya Game Execution Loop for '{}' (AppID: {})",
+    // Write Potato Mode dxvk.conf in game directory
+    auto dxvk_conf = game_p.parent_path() / "dxvk.conf";
+    if (!game_p.parent_path().empty()) {
+        std::ofstream cfg(dxvk_conf);
+        cfg << "# Papaya Generated DXVK Potato Mode\n"
+            << "dxvk.enableAsync = true\n"
+            << "dxvk.gpl = true\n"
+            << "papaya.potatoMode = true\n"
+            << "papaya.mipLodBias = 3.0\n";
+    }
+
+    log::info("RUNTIME", "Spawning target process under Papaya Translation Matrix: '{}' (AppID: {})",
               game_p.filename().string(), steam_stub_->get_app_id());
+
+    if (!config_.headless) {
+        // Fork and execute the real game process
+        pid_t pid = fork();
+        if (pid < 0) {
+            log::error("RUNTIME", "Failed to fork game process");
+            return ErrorCode::UnsupportedOperation;
+        }
+
+        if (pid == 0) {
+            // Child Process
+            std::string game_dir = game_p.parent_path().string();
+            if (!game_dir.empty()) {
+                if (chdir(game_dir.c_str()) != 0) {
+                    // ignore
+                }
+            }
+
+            // Set Display and Wine/Box64 environment variables
+            const char* disp = getenv("DISPLAY");
+            if (!disp) setenv("DISPLAY", ":0", 1);
+
+            setenv("WINEDLLOVERRIDES", "steam_api64,steam_api,dxvk,d3d11=n,b", 1);
+            setenv("DXVK_CONFIG_FILE", dxvk_conf.c_str(), 1);
+            setenv("PAPAYA_POTATO_MODE", "1", 1);
+            setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
+
+            const char* home = getenv("HOME");
+            std::string pfx = home ? (std::string(home) + "/.wine") : "./papaya_prefix";
+            setenv("WINEPREFIX", pfx.c_str(), 0);
+
+            // Execute via wine
+            char* args[] = {
+                const_cast<char*>("wine"),
+                const_cast<char*>(game_p.c_str()),
+                nullptr
+            };
+            execvp("wine", args);
+
+            _exit(127);
+        }
+
+        child_pid_ = pid;
+        log::info("RUNTIME", "Game process launched successfully with PID: {}", child_pid_);
+    }
+
     is_running_ = true;
     return {};
 }
@@ -109,6 +175,18 @@ Result<> EmulatorRuntime::mount_and_launch_rom(std::string_view rom_path_or_uri)
 
 void EmulatorRuntime::step_frame() {
     if (!is_running_) return;
+
+    // Check if child game process has exited
+    if (child_pid_ > 0) {
+        int status = 0;
+        pid_t res = waitpid(child_pid_, &status, WNOHANG);
+        if (res == child_pid_) {
+            log::info("RUNTIME", "Child game process (PID: {}) terminated.", child_pid_);
+            child_pid_ = -1;
+            is_running_ = false;
+            return;
+        }
+    }
 
     window_mgr_->poll_events();
     if (window_mgr_->should_close()) {
@@ -165,6 +243,12 @@ void EmulatorRuntime::run() {
 
 void EmulatorRuntime::stop() {
     is_running_ = false;
+    if (child_pid_ > 0) {
+        kill(child_pid_, SIGTERM);
+        int status = 0;
+        waitpid(child_pid_, &status, WNOHANG);
+        child_pid_ = -1;
+    }
     if (audio_bridge_) {
         audio_bridge_->shutdown();
     }
