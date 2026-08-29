@@ -1,0 +1,104 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-08-29",
+  "default_profile": {
+    "strip_textures": false,
+    "mip_lod_bias": 2.0,
+    "force_fsr_upscaling": true,
+    "internal_width": 960,
+    "internal_height": 540,
+    "fps_limit": 60,
+    "anisotropy_clamp": 2,
+    "disable_raytracing": true,
+    "dxvk_state_cache": true,
+    "dxvk_async_pipe": true,
+    "dxvk_overrides": {
+      "dxvk.enableAsync": "true",
+      "dxvk.gpl": "true",
+      "dxvk.allowMemoryOvercommit": "true"
+    }
+  },
+  "titles": {
+    "1245620": {
+      "name": "Elden Ring",
+      "strip_textures": false,
+      "mip_lod_bias": 1.0,
+      "force_fsr_upscaling": true,
+      "internal_width": 960,
+      "internal_height": 540,
+      "fps_limit": 30,
+      "anisotropy_clamp": 4,
+      "disable_raytracing": true,
+      "dxvk_overrides": {
+        "dxvk.enableAsync": "true",
+        "dxvk.gpl": "true",
+        "d3d11.maxTessFactor": "8"
+      },
+      "notes": "Do not strip textures; force swapchain FSR 540p and cap at 30 FPS for flawless frame pacing on handhelds."
+    },
+    "1091500": {
+      "name": "Cyberpunk 2077",
+      "strip_textures": true,
+      "mip_lod_bias": 2.5,
+      "force_fsr_upscaling": true,
+      "internal_width": 854,
+      "internal_height": 480,
+      "fps_limit": 30,
+      "anisotropy_clamp": 2,
+      "disable_raytracing": true,
+      "dxvk_overrides": {
+        "dxvk.enableAsync": "true",
+        "dxvk.gpl": "true",
+        "dxgi.customVendorId": "8086",
+        "dxgi.customDeviceId": "0166"
+      },
+      "notes": "Ultra-low VRAM profile: spoof Intel HD 4000 to drop internal geometry budgets, clamp LOD bias to +2.5."
+    },
+    "1086940": {
+      "name": "Baldur's Gate 3",
+      "strip_textures": false,
+      "mip_lod_bias": 1.5,
+      "force_fsr_upscaling": true,
+      "internal_width": 960,
+      "internal_height": 540,
+      "fps_limit": 30,
+      "anisotropy_clamp": 2,
+      "disable_raytracing": true,
+      "dxvk_overrides": {
+        "dxvk.enableAsync": "true",
+        "dxvk.gpl": "true"
+      },
+      "notes": "DirectX 11 backend preferred over Vulkan on mobile drivers."
+    },
+    "SLUS-20946": {
+      "name": "Grand Theft Auto: San Andreas (PS2/PC)",
+      "strip_textures": false,
+      "mip_lod_bias": 0.0,
+      "force_fsr_upscaling": false,
+      "internal_width": 1920,
+      "internal_height": 1080,
+      "fps_limit": 60,
+      "anisotropy_clamp": 8,
+      "disable_raytracing": true,
+      "dxvk_overrides": {
+        "dxvk.enableAsync": "true"
+      },
+      "notes": "Native 1080p 60FPS profile on all handheld tiers."
+    },
+    "SLUS-20062": {
+      "name": "Gran Turismo 3 A-Spec",
+      "strip_textures": false,
+      "mip_lod_bias": 0.0,
+      "force_fsr_upscaling": true,
+      "internal_width": 1280,
+      "internal_height": 720,
+      "fps_limit": 60,
+      "anisotropy_clamp": 4,
+      "disable_raytracing": true,
+      "dxvk_overrides": {
+        "dxvk.enableAsync": "true"
+      },
+      "notes": "Upscaled 720p 60FPS lock."
+    }
+  }
+}

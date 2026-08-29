@@ -1,57 +1,52 @@
-# Project Papaya - ARM Steam & ROM Translation Layer
+# Project Papaya - Autonomous ARM Steam & ROM Gaming Runtime
 
-**Papaya** is a high-performance compatibility runtime, ROM translation layer, and optimization stack written in **C++23** designed to emulate and run **Windows Steam games, Disc Images (ISO 9660, UDF, CHD, CSO, BIN/CUE), and ROM packages on ARM Android handhelds (Snapdragon 8 Gen 2/3, AYN Odin 2, Retroid Pocket), single-board computers (Raspberry Pi 5 / BCM2712), and Linux devices (Steam Deck, Ubuntu, Arch)**.
+**Papaya** is a high-performance compatibility runtime, ROM translation layer, and autonomous orchestration daemon written in **C++23 & Python** designed to deliver a **zero-friction "drag-and-drop" console experience** on **ARM Android handhelds (Snapdragon 8 Gen 2/3, AYN Odin 2, Retroid Pocket 5), single-board computers (Raspberry Pi 5 / BCM2712), and Linux handhelds (Steam Deck, Ubuntu, Arch)**.
 
 ---
 
-## The 5-Layer Translation & Optimization Stack
+## The Complete Papaya Autonomous Architecture
 
 ```
-                                  +---------------------------------------+
-                                  |         Host OS / Target Device       |
-                                  |   Linux ARM64 / Android / Linux x86   |
-                                  +-------------------+-------------------+
-                                                      |
-                                                      v
+                    +-------------------------------------------------------------+
+                    |    User Drops File (ISO / ROM / ZIP / RAR / 7Z / EXE)      |
+                    |             into ~/Papaya/Games/ Drop Folder                |
+                    +------------------------------+------------------------------+
+                                                   |
+                                                   v
 +---------------------------------------------------------------------------------------------------------+
-|                                    Papaya ARM Steam & ROM Translation Layer                             |
+|                                Papaya Orchestration Daemon Pipeline                                     |
 +---------------------------------------------------------------------------------------------------------+
 |                                                                                                         |
-|  1. ROM / Disc Image & Storage Subsystem (papaya-rom)                                                   |
-|     * Universal ISO / CSO / CHD / BIN+CUE disc image parser and Logical Block Address (LBA) streamer    |
-|     * ROM-to-Steam Bridge: Generates deterministic Virtual Steam AppIDs & Steam shortcuts for any ROM   |
-|     * Android Storage Access Framework (SAF) & NDK JNI bridge (org.papaya.emulator.PapayaNativeBridge) |
+|  Phase 1: The Ingestion Engine (Auto-Unpack & Staging)                                                  |
+|     * inotify file watcher detects incoming game files immediately                                      |
+|     * Automatically unpacks multi-part ZIP/TAR/7Z archives and mounts ISO/CSO/CHD images                |
 |                                                                                                         |
-|  2. Steamworks API Stub & DRM Bypass (papaya-steam)                                                     |
-|     * Clean-room Goldberg-style Steam emulator stub bypassing heavy Chromium / CEF Steam client         |
-|     * Emulates ISteamUser, ISteamFriends, ISteamUtils, ISteamUserStats, ISteamApps, ISteamInput         |
-|     * Local achievement unlocking, offline stat persistence, and automatic AppID discovery              |
+|  Phase 2: The Prefix Sandbox Builder                                                                    |
+|     * Generates isolated Wine sandboxes: ~/Papaya/Prefixes/prefix_<GameID>/                             |
+|     * Zero cross-game contamination: each title receives its own pristine Windows registry              |
 |                                                                                                         |
-|  3. CPU Dynamic Recompiler & 16KB Page Bridge (papaya-cpu)                                              |
-|     * Dynamic JIT Translation interface (Box64 / FEX-Emu) for x86/x64 to ARM64 instructions             |
-|     * Android 15+ 16KB Kernel Page Size Compatibility Layer: Sub-page translation for 4KB PC binaries   |
-|     * Direct native execution mode on x86-64 Linux host (Steam Deck / Desktop PC)                       |
+|  Phase 3: The Brain (Game Compatibility Database) & Hardware Profiler                                   |
+|     * Cross-references game against compatibility_db.json (Elden Ring, Cyberpunk 2077, GTA, BG3)      |
+|     * Injects custom dxvk.conf: Adaptive LOD bias (+2.5), 1x1 flat textures, forced FSR 540p upscaling  |
+|     * Hardware Spoofing: Injects registry keys spoofing low-end GPUs (Intel HD 4000) to force fallbacks |
 |                                                                                                         |
-|  4. Potato Mode Graphics Interceptor (papaya-gpu)                                                       |
-|     * Mipmap LOD Bias Clamping: Intercepts sampler states, forcing +3.0/+4.0 LOD bias for tiny mips     |
-|     * "Potato Mode" Texture Stripping: Replaces heavy 4K textures with 1x1 flat RGBA buffers in VRAM    |
-|     * Heavy Post-Processing Shader Stripping: Detects and replaces compute/SSAO/fog with no-ops        |
-|     * Swapchain Resolution Scaling & Spatial Upscaler: Forces 540p render targets upscaled to 1080p     |
-|     * Asynchronous GPL Pipeline Compilation: Eliminates shader compilation stutter                      |
+|  Phase 4: DRM Stubbing (Goldberg & Offline Decoupling)                                                  |
+|     * Locates and deletes official steam_api64.dll / steam_api.dll DRM libraries                        |
+|     * Injects Goldberg Steamworks API Stub & generates steam_appid.txt for 100% offline gameplay        |
 |                                                                                                         |
-|  5. Hardware Profiler, Spoofing & Memory Watchdog (papaya-profile)                                      |
-|     * GPU Hardware Spoofing: Reports Intel HD 4000 (1GB VRAM) to trigger lowest game preset fallbacks   |
-|     * Auto-Configurator: Auto-detects Raspberry Pi 5, Snapdragon, Steam Deck, or Desktop PC             |
-|     * Memory Watchdog: Monitors RAM pressure on unified mobile chips and flushes caches at 85% load     |
+|  Phase 5: The Vault (Centralized Save Manager)                                                          |
+|     * Symlinks in-prefix save folders (AppData/Local, AppData/Roaming, My Games) to host                |
+|     * Preserves all save files safely at ~/Papaya/Saves/<GameID>/ even if prefixes are deleted          |
 |                                                                                                         |
-|  6. OS Bridge, NTSync & io_uring Direct I/O (papaya-kernel)                                            |
-|     * NTSync Kernel Synchronization: Driver client (/dev/ntsync) eliminating user-space futex overhead  |
-|     * io_uring Direct I/O: Asynchronous file read streaming bypassing POSIX blocking file APIs          |
-|     * Wine Prefix & PRoot Container Sandbox: Manages Windows C:\ drive, AppData, and user paths         |
+|  Phase 6: Decentralized Shader Sync                                                                     |
+|     * Injects pre-compiled .dxvk-cache state files into prefix, eliminating first-time shader stutters |
 |                                                                                                         |
-|  7. Audio & Input Subsystems (papaya-audio & papaya-input)                                              |
-|     * Audio Bridge: Low-latency WASAPI / DirectSound translation to PulseAudio / AAudio                 |
-|     * Virtual XInput Daemon: Maps Android touch & handheld buttons (AYN Odin 2) to Xbox 360 gamepads    |
+|  Phase 7: Native UI & Micro-HUD Integration                                                             |
+|     * Generates native Linux .desktop launchers and Steam Big Picture shortcuts                         |
+|     * Configures MangoHud overlay with gamepad combo (Select + R2) to toggle Potato Mode on the fly     |
+|                                                                                                         |
+|  Phase 8: Papaya Net (P2P Multiplayer LAN Tunnel)                                                       |
+|     * Translates Goldberg LAN broadcast packets into WireGuard P2P tunnels using 6-digit room codes     |
 |                                                                                                         |
 +---------------------------------------------------------------------------------------------------------+
 ```
@@ -63,6 +58,7 @@
 ### Requirements
 - C++23 compliant compiler (`clang-18+` or `gcc-14+`)
 - CMake 3.22+ & Ninja
+- Python 3.10+
 
 ### Compile
 ```bash
@@ -70,19 +66,24 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-### Run Test Suites (15 / 15 Passing)
+### Run All 17 Test Suites
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-### Launch Options
+---
 
-#### 1. Play a ROM/ISO through Steam Layer:
+## Running the Autonomous Daemon
+
+Start the background daemon to watch your games folder:
 ```bash
-./build/src/app/papaya --rom /path/to/game.iso --potato --tier high
+python3 src/orchestrator/python/papaya_daemon.py --watch ~/Papaya/Games
 ```
 
-#### 2. Play a Windows Steam Game:
-```bash
-./build/src/app/papaya --game /path/to/game.exe --potato --tier low
-```
+When you drag any ISO or game ZIP into `~/Papaya/Games/`, Papaya will automatically:
+1. Ingest & extract the game.
+2. Build an isolated Wine prefix sandbox.
+3. Apply game-specific performance hacks from `compatibility_db.json`.
+4. Decouple Steam DRM with the Goldberg stub.
+5. Symlink saves to the Save Vault.
+6. Generate a 1-click launcher in `~/Papaya/Shortcuts/`.

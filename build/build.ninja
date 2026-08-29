@@ -878,6 +878,78 @@ build src/rom/rebuild_cache: phony src/rom/CMakeFiles/rebuild_cache.util
 # =============================================================================
 
 # =============================================================================
+# Object build statements for STATIC_LIBRARY target papaya-orchestrator
+
+
+#############################################
+# Order-only phony target for papaya-orchestrator
+
+build cmake_object_order_depends_target_papaya-orchestrator: phony || cmake_object_order_depends_target_papaya-audio cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-cpu cmake_object_order_depends_target_papaya-frontend cmake_object_order_depends_target_papaya-gpu cmake_object_order_depends_target_papaya-input cmake_object_order_depends_target_papaya-kernel cmake_object_order_depends_target_papaya-profile cmake_object_order_depends_target_papaya-rom cmake_object_order_depends_target_papaya-steam
+
+build src/orchestrator/CMakeFiles/papaya-orchestrator.dir/src/orchestrator_service.cpp.o: CXX_COMPILER__papaya-orchestrator_unscanned_Release /home/jewboy420/papaya/src/orchestrator/src/orchestrator_service.cpp || cmake_object_order_depends_target_papaya-orchestrator
+  DEP_FILE = src/orchestrator/CMakeFiles/papaya-orchestrator.dir/src/orchestrator_service.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wno-unused-parameter -pthread -O3
+  INCLUDES = -I/home/jewboy420/papaya/src/orchestrator/include -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/steam/include -I/home/jewboy420/papaya/src/rom/include -I/home/jewboy420/papaya/src/frontend/include -I/home/jewboy420/papaya/src/cpu/include -I/home/jewboy420/papaya/src/gpu/include -I/home/jewboy420/papaya/src/profile/include -I/home/jewboy420/papaya/src/kernel/include -I/home/jewboy420/papaya/src/audio/include -I/home/jewboy420/papaya/src/input/include
+  OBJECT_DIR = src/orchestrator/CMakeFiles/papaya-orchestrator.dir
+  OBJECT_FILE_DIR = src/orchestrator/CMakeFiles/papaya-orchestrator.dir/src
+
+
+# =============================================================================
+# Link build statements for STATIC_LIBRARY target papaya-orchestrator
+
+
+#############################################
+# Link the static library src/orchestrator/libpapaya-orchestrator.a
+
+build src/orchestrator/libpapaya-orchestrator.a: CXX_STATIC_LIBRARY_LINKER__papaya-orchestrator_Release src/orchestrator/CMakeFiles/papaya-orchestrator.dir/src/orchestrator_service.cpp.o || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a
+  LANGUAGE_COMPILE_FLAGS = -O3 -DNDEBUG
+  OBJECT_DIR = src/orchestrator/CMakeFiles/papaya-orchestrator.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = src/orchestrator/libpapaya-orchestrator.a
+  TARGET_PDB = papaya-orchestrator.a.dbg
+
+
+#############################################
+# Utility command for test
+
+build src/orchestrator/CMakeFiles/test.util: CUSTOM_COMMAND
+  COMMAND = cd /home/jewboy420/papaya/build/src/orchestrator && /usr/bin/ctest --force-new-ctest-process
+  DESC = Running tests...
+  pool = console
+  restat = 1
+
+build src/orchestrator/test: phony src/orchestrator/CMakeFiles/test.util
+
+
+#############################################
+# Utility command for edit_cache
+
+build src/orchestrator/CMakeFiles/edit_cache.util: CUSTOM_COMMAND
+  COMMAND = cd /home/jewboy420/papaya/build/src/orchestrator && /usr/bin/cmake -E echo No\ interactive\ CMake\ dialog\ available.
+  DESC = No interactive CMake dialog available...
+  restat = 1
+
+build src/orchestrator/edit_cache: phony src/orchestrator/CMakeFiles/edit_cache.util
+
+
+#############################################
+# Utility command for rebuild_cache
+
+build src/orchestrator/CMakeFiles/rebuild_cache.util: CUSTOM_COMMAND
+  COMMAND = cd /home/jewboy420/papaya/build/src/orchestrator && /usr/bin/cmake --regenerate-during-build -S/home/jewboy420/papaya -B/home/jewboy420/papaya/build
+  DESC = Running CMake to regenerate build system...
+  pool = console
+  restat = 1
+
+build src/orchestrator/rebuild_cache: phony src/orchestrator/CMakeFiles/rebuild_cache.util
+
+# =============================================================================
+# Write statements declared in CMakeLists.txt:
+# /home/jewboy420/papaya/CMakeLists.txt
+# =============================================================================
+
+# =============================================================================
 # Object build statements for EXECUTABLE target papaya
 
 
@@ -1445,6 +1517,39 @@ build tests/test_rom_game_loop: CXX_EXECUTABLE_LINKER__test_rom_game_loop_Releas
   TARGET_FILE = tests/test_rom_game_loop
   TARGET_PDB = test_rom_game_loop.dbg
 
+# =============================================================================
+# Object build statements for EXECUTABLE target test_orchestrator
+
+
+#############################################
+# Order-only phony target for test_orchestrator
+
+build cmake_object_order_depends_target_test_orchestrator: phony || cmake_object_order_depends_target_papaya-audio cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-cpu cmake_object_order_depends_target_papaya-frontend cmake_object_order_depends_target_papaya-gpu cmake_object_order_depends_target_papaya-input cmake_object_order_depends_target_papaya-kernel cmake_object_order_depends_target_papaya-orchestrator cmake_object_order_depends_target_papaya-profile cmake_object_order_depends_target_papaya-rom cmake_object_order_depends_target_papaya-steam
+
+build tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o: CXX_COMPILER__test_orchestrator_unscanned_Release /home/jewboy420/papaya/tests/test_orchestrator.cpp || cmake_object_order_depends_target_test_orchestrator
+  DEP_FILE = tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o.d
+  FLAGS = -O3 -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wno-unused-parameter -pthread -O3
+  INCLUDES = -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/orchestrator/include -I/home/jewboy420/papaya/src/steam/include -I/home/jewboy420/papaya/src/rom/include -I/home/jewboy420/papaya/src/frontend/include -I/home/jewboy420/papaya/src/cpu/include -I/home/jewboy420/papaya/src/gpu/include -I/home/jewboy420/papaya/src/profile/include -I/home/jewboy420/papaya/src/kernel/include -I/home/jewboy420/papaya/src/audio/include -I/home/jewboy420/papaya/src/input/include
+  OBJECT_DIR = tests/CMakeFiles/test_orchestrator.dir
+  OBJECT_FILE_DIR = tests/CMakeFiles/test_orchestrator.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target test_orchestrator
+
+
+#############################################
+# Link the executable tests/test_orchestrator
+
+build tests/test_orchestrator: CXX_EXECUTABLE_LINKER__test_orchestrator_Release tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o | src/common/libpapaya-common.a src/orchestrator/libpapaya-orchestrator.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/steam/libpapaya-steam.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/orchestrator/libpapaya-orchestrator.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a
+  FLAGS = -O3 -DNDEBUG
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/orchestrator/libpapaya-orchestrator.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/steam/libpapaya-steam.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
+  OBJECT_DIR = tests/CMakeFiles/test_orchestrator.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tests/test_orchestrator
+  TARGET_PDB = test_orchestrator.dbg
+
 
 #############################################
 # Utility command for test
@@ -1497,6 +1602,8 @@ build libpapaya-input.a: phony src/input/libpapaya-input.a
 
 build libpapaya-kernel.a: phony src/kernel/libpapaya-kernel.a
 
+build libpapaya-orchestrator.a: phony src/orchestrator/libpapaya-orchestrator.a
+
 build libpapaya-profile.a: phony src/profile/libpapaya-profile.a
 
 build libpapaya-rom.a: phony src/rom/libpapaya-rom.a
@@ -1518,6 +1625,8 @@ build papaya-gpu: phony src/gpu/libpapaya-gpu.a
 build papaya-input: phony src/input/libpapaya-input.a
 
 build papaya-kernel: phony src/kernel/libpapaya-kernel.a
+
+build papaya-orchestrator: phony src/orchestrator/libpapaya-orchestrator.a
 
 build papaya-profile: phony src/profile/libpapaya-profile.a
 
@@ -1541,6 +1650,8 @@ build test_memory_watchdog: phony tests/test_memory_watchdog
 
 build test_ntsync_iouring: phony tests/test_ntsync_iouring
 
+build test_orchestrator: phony tests/test_orchestrator
+
 build test_potato_gpu: phony tests/test_potato_gpu
 
 build test_rom_game_loop: phony tests/test_rom_game_loop
@@ -1563,7 +1674,7 @@ build test_swapchain_upscaler: phony tests/test_swapchain_upscaler
 #############################################
 # Folder: /home/jewboy420/papaya/build
 
-build all: phony src/common/all src/steam/all src/cpu/all src/gpu/all src/profile/all src/kernel/all src/audio/all src/input/all src/frontend/all src/rom/all src/app/all tests/all
+build all: phony src/common/all src/steam/all src/cpu/all src/gpu/all src/profile/all src/kernel/all src/audio/all src/input/all src/frontend/all src/rom/all src/orchestrator/all src/app/all tests/all
 
 # =============================================================================
 
@@ -1624,6 +1735,13 @@ build src/kernel/all: phony src/kernel/libpapaya-kernel.a
 # =============================================================================
 
 #############################################
+# Folder: /home/jewboy420/papaya/build/src/orchestrator
+
+build src/orchestrator/all: phony src/orchestrator/libpapaya-orchestrator.a
+
+# =============================================================================
+
+#############################################
 # Folder: /home/jewboy420/papaya/build/src/profile
 
 build src/profile/all: phony src/profile/libpapaya-profile.a
@@ -1647,7 +1765,7 @@ build src/steam/all: phony src/steam/libpapaya-steam.a
 #############################################
 # Folder: /home/jewboy420/papaya/build/tests
 
-build tests/all: phony tests/test_steam_stub tests/test_cpu_pages tests/test_potato_gpu tests/test_shader_stripping tests/test_swapchain_upscaler tests/test_hardware_spoofer tests/test_auto_configurator tests/test_memory_watchdog tests/test_ntsync_iouring tests/test_audio_input tests/test_full_runtime_stack tests/test_rom_loader tests/test_steam_rom_bridge tests/test_android_storage_bridge tests/test_rom_game_loop
+build tests/all: phony tests/test_steam_stub tests/test_cpu_pages tests/test_potato_gpu tests/test_shader_stripping tests/test_swapchain_upscaler tests/test_hardware_spoofer tests/test_auto_configurator tests/test_memory_watchdog tests/test_ntsync_iouring tests/test_audio_input tests/test_full_runtime_stack tests/test_rom_loader tests/test_steam_rom_bridge tests/test_android_storage_bridge tests/test_rom_game_loop tests/test_orchestrator
 
 # =============================================================================
 # Built-in targets
@@ -1656,14 +1774,14 @@ build tests/all: phony tests/test_steam_stub tests/test_cpu_pages tests/test_pot
 #############################################
 # Re-run CMake if any of its inputs changed.
 
-build build.ninja: RERUN_CMAKE | /home/jewboy420/papaya/CMakeLists.txt /home/jewboy420/papaya/src/app/CMakeLists.txt /home/jewboy420/papaya/src/audio/CMakeLists.txt /home/jewboy420/papaya/src/common/CMakeLists.txt /home/jewboy420/papaya/src/cpu/CMakeLists.txt /home/jewboy420/papaya/src/frontend/CMakeLists.txt /home/jewboy420/papaya/src/gpu/CMakeLists.txt /home/jewboy420/papaya/src/input/CMakeLists.txt /home/jewboy420/papaya/src/kernel/CMakeLists.txt /home/jewboy420/papaya/src/profile/CMakeLists.txt /home/jewboy420/papaya/src/rom/CMakeLists.txt /home/jewboy420/papaya/src/steam/CMakeLists.txt /home/jewboy420/papaya/tests/CMakeLists.txt /usr/share/cmake-3.28/Modules/CMakeCInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCXXInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCommonLanguageInclude.cmake /usr/share/cmake-3.28/Modules/CMakeGenericSystem.cmake /usr/share/cmake-3.28/Modules/CMakeInitializeConfigs.cmake /usr/share/cmake-3.28/Modules/CMakeLanguageInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInitialize.cmake /usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake /usr/share/cmake-3.28/Modules/CheckIncludeFile.cmake /usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake /usr/share/cmake-3.28/Modules/Compiler/CMakeCommonCompilerMacros.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-C.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU.cmake /usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake /usr/share/cmake-3.28/Modules/FindPackageMessage.cmake /usr/share/cmake-3.28/Modules/FindPkgConfig.cmake /usr/share/cmake-3.28/Modules/FindThreads.cmake /usr/share/cmake-3.28/Modules/FindVulkan.cmake /usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-C.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-Initialize.cmake /usr/share/cmake-3.28/Modules/Platform/Linux.cmake /usr/share/cmake-3.28/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/3.28.3/CMakeCCompiler.cmake CMakeFiles/3.28.3/CMakeCXXCompiler.cmake CMakeFiles/3.28.3/CMakeSystem.cmake
+build build.ninja: RERUN_CMAKE | /home/jewboy420/papaya/CMakeLists.txt /home/jewboy420/papaya/src/app/CMakeLists.txt /home/jewboy420/papaya/src/audio/CMakeLists.txt /home/jewboy420/papaya/src/common/CMakeLists.txt /home/jewboy420/papaya/src/cpu/CMakeLists.txt /home/jewboy420/papaya/src/frontend/CMakeLists.txt /home/jewboy420/papaya/src/gpu/CMakeLists.txt /home/jewboy420/papaya/src/input/CMakeLists.txt /home/jewboy420/papaya/src/kernel/CMakeLists.txt /home/jewboy420/papaya/src/orchestrator/CMakeLists.txt /home/jewboy420/papaya/src/profile/CMakeLists.txt /home/jewboy420/papaya/src/rom/CMakeLists.txt /home/jewboy420/papaya/src/steam/CMakeLists.txt /home/jewboy420/papaya/tests/CMakeLists.txt /usr/share/cmake-3.28/Modules/CMakeCInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCXXInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCommonLanguageInclude.cmake /usr/share/cmake-3.28/Modules/CMakeGenericSystem.cmake /usr/share/cmake-3.28/Modules/CMakeInitializeConfigs.cmake /usr/share/cmake-3.28/Modules/CMakeLanguageInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInitialize.cmake /usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake /usr/share/cmake-3.28/Modules/CheckIncludeFile.cmake /usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake /usr/share/cmake-3.28/Modules/Compiler/CMakeCommonCompilerMacros.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-C.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU.cmake /usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake /usr/share/cmake-3.28/Modules/FindPackageMessage.cmake /usr/share/cmake-3.28/Modules/FindPkgConfig.cmake /usr/share/cmake-3.28/Modules/FindThreads.cmake /usr/share/cmake-3.28/Modules/FindVulkan.cmake /usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-C.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-Initialize.cmake /usr/share/cmake-3.28/Modules/Platform/Linux.cmake /usr/share/cmake-3.28/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/3.28.3/CMakeCCompiler.cmake CMakeFiles/3.28.3/CMakeCXXCompiler.cmake CMakeFiles/3.28.3/CMakeSystem.cmake
   pool = console
 
 
 #############################################
 # A missing CMake input file is not an error.
 
-build /home/jewboy420/papaya/CMakeLists.txt /home/jewboy420/papaya/src/app/CMakeLists.txt /home/jewboy420/papaya/src/audio/CMakeLists.txt /home/jewboy420/papaya/src/common/CMakeLists.txt /home/jewboy420/papaya/src/cpu/CMakeLists.txt /home/jewboy420/papaya/src/frontend/CMakeLists.txt /home/jewboy420/papaya/src/gpu/CMakeLists.txt /home/jewboy420/papaya/src/input/CMakeLists.txt /home/jewboy420/papaya/src/kernel/CMakeLists.txt /home/jewboy420/papaya/src/profile/CMakeLists.txt /home/jewboy420/papaya/src/rom/CMakeLists.txt /home/jewboy420/papaya/src/steam/CMakeLists.txt /home/jewboy420/papaya/tests/CMakeLists.txt /usr/share/cmake-3.28/Modules/CMakeCInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCXXInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCommonLanguageInclude.cmake /usr/share/cmake-3.28/Modules/CMakeGenericSystem.cmake /usr/share/cmake-3.28/Modules/CMakeInitializeConfigs.cmake /usr/share/cmake-3.28/Modules/CMakeLanguageInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInitialize.cmake /usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake /usr/share/cmake-3.28/Modules/CheckIncludeFile.cmake /usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake /usr/share/cmake-3.28/Modules/Compiler/CMakeCommonCompilerMacros.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-C.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU.cmake /usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake /usr/share/cmake-3.28/Modules/FindPackageMessage.cmake /usr/share/cmake-3.28/Modules/FindPkgConfig.cmake /usr/share/cmake-3.28/Modules/FindThreads.cmake /usr/share/cmake-3.28/Modules/FindVulkan.cmake /usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-C.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-Initialize.cmake /usr/share/cmake-3.28/Modules/Platform/Linux.cmake /usr/share/cmake-3.28/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/3.28.3/CMakeCCompiler.cmake CMakeFiles/3.28.3/CMakeCXXCompiler.cmake CMakeFiles/3.28.3/CMakeSystem.cmake: phony
+build /home/jewboy420/papaya/CMakeLists.txt /home/jewboy420/papaya/src/app/CMakeLists.txt /home/jewboy420/papaya/src/audio/CMakeLists.txt /home/jewboy420/papaya/src/common/CMakeLists.txt /home/jewboy420/papaya/src/cpu/CMakeLists.txt /home/jewboy420/papaya/src/frontend/CMakeLists.txt /home/jewboy420/papaya/src/gpu/CMakeLists.txt /home/jewboy420/papaya/src/input/CMakeLists.txt /home/jewboy420/papaya/src/kernel/CMakeLists.txt /home/jewboy420/papaya/src/orchestrator/CMakeLists.txt /home/jewboy420/papaya/src/profile/CMakeLists.txt /home/jewboy420/papaya/src/rom/CMakeLists.txt /home/jewboy420/papaya/src/steam/CMakeLists.txt /home/jewboy420/papaya/tests/CMakeLists.txt /usr/share/cmake-3.28/Modules/CMakeCInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCXXInformation.cmake /usr/share/cmake-3.28/Modules/CMakeCommonLanguageInclude.cmake /usr/share/cmake-3.28/Modules/CMakeGenericSystem.cmake /usr/share/cmake-3.28/Modules/CMakeInitializeConfigs.cmake /usr/share/cmake-3.28/Modules/CMakeLanguageInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInformation.cmake /usr/share/cmake-3.28/Modules/CMakeSystemSpecificInitialize.cmake /usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake /usr/share/cmake-3.28/Modules/CheckIncludeFile.cmake /usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake /usr/share/cmake-3.28/Modules/Compiler/CMakeCommonCompilerMacros.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-C.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Compiler/GNU.cmake /usr/share/cmake-3.28/Modules/FindPackageHandleStandardArgs.cmake /usr/share/cmake-3.28/Modules/FindPackageMessage.cmake /usr/share/cmake-3.28/Modules/FindPkgConfig.cmake /usr/share/cmake-3.28/Modules/FindThreads.cmake /usr/share/cmake-3.28/Modules/FindVulkan.cmake /usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-C.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU-CXX.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-GNU.cmake /usr/share/cmake-3.28/Modules/Platform/Linux-Initialize.cmake /usr/share/cmake-3.28/Modules/Platform/Linux.cmake /usr/share/cmake-3.28/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/3.28.3/CMakeCCompiler.cmake CMakeFiles/3.28.3/CMakeCXXCompiler.cmake CMakeFiles/3.28.3/CMakeSystem.cmake: phony
 
 
 #############################################

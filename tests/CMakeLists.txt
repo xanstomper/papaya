@@ -120,6 +120,14 @@ target_link_libraries(test_rom_game_loop PRIVATE
     papaya-frontend
 )
 
+add_executable(test_orchestrator
+    test_orchestrator.cpp
+)
+target_link_libraries(test_orchestrator PRIVATE
+    papaya-common
+    papaya-orchestrator
+)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)
@@ -135,3 +143,5 @@ add_test(NAME RomLoaderTest COMMAND test_rom_loader)
 add_test(NAME SteamRomBridgeTest COMMAND test_steam_rom_bridge)
 add_test(NAME AndroidStorageBridgeTest COMMAND test_android_storage_bridge)
 add_test(NAME RomGameLoopTest COMMAND test_rom_game_loop)
+add_test(NAME OrchestratorTest COMMAND test_orchestrator)
+add_test(NAME PythonDaemonTest COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon.py)
