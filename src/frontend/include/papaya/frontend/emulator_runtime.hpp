@@ -13,6 +13,8 @@
 #include "papaya/kernel/wine_prefix.hpp"
 #include "papaya/audio/audio_bridge.hpp"
 #include "papaya/input/virtual_xinput.hpp"
+#include "papaya/win32/win32_api_hle.hpp"
+#include "papaya/win32/pe_loader.hpp"
 #include "papaya/frontend/window_manager.hpp"
 #include <memory>
 #include <atomic>
@@ -58,6 +60,8 @@ public:
     kernel::WinePrefixManager& get_prefix() { return *prefix_mgr_; }
     audio::AudioBridge& get_audio() { return *audio_bridge_; }
     input::VirtualXInputManager& get_input() { return *input_mgr_; }
+    win32::Win32ApiHle& get_win32_hle() { return *win32_hle_; }
+    win32::PeLoader& get_pe_loader() { return *pe_loader_; }
     WindowManager& get_window() { return *window_mgr_; }
 
 private:
@@ -67,7 +71,11 @@ private:
     std::atomic<f64> current_fps_{0.0};
     pid_t child_pid_{-1};
 
-    std::unique_ptr<steam::SteamApiStub> steam_stub_;
+    std::shared_ptr<steam::SteamApiStub> steam_stub_;
+    std::shared_ptr<input::VirtualXInputManager> input_mgr_;
+    std::shared_ptr<win32::Win32ApiHle> win32_hle_;
+    std::unique_ptr<win32::PeLoader> pe_loader_;
+
     std::unique_ptr<cpu::CpuTranslator> cpu_translator_;
     std::shared_ptr<gpu::PotatoInterceptor> potato_interceptor_;
     std::shared_ptr<gpu::ShaderStripper> shader_stripper_;
@@ -80,7 +88,6 @@ private:
     std::unique_ptr<kernel::IoUringStreamer> io_uring_;
     std::unique_ptr<kernel::WinePrefixManager> prefix_mgr_;
     std::unique_ptr<audio::AudioBridge> audio_bridge_;
-    std::unique_ptr<input::VirtualXInputManager> input_mgr_;
     std::unique_ptr<WindowManager> window_mgr_;
 };
 

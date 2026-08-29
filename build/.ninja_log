@@ -83,3 +83,17 @@
 12609	13321	1787986391675993904	tests/test_android_storage_bridge	5ea9ba9bce07b317
 12610	13407	1787986391676993964	tests/test_rom_game_loop	d7db42a282536af
 12602	13457	1787986391669934633	tests/test_full_runtime_stack	17c804cdbd2b2319
+12	21652	1787986444252774402	src/app/CMakeFiles/papaya.dir/main.cpp.o	3caf99754c819415
+14	21705	1787986444253139058	tests/CMakeFiles/test_full_runtime_stack.dir/test_full_runtime_stack.cpp.o	57294a6520fc64de
+11	23444	1787986444250138879	src/frontend/CMakeFiles/papaya-frontend.dir/src/emulator_runtime.cpp.o	7d6a9d08221821ca
+23444	23585	1787986467683539426	src/frontend/libpapaya-frontend.a	209933638441f2a1
+12	24611	1787986444251138938	src/rom/CMakeFiles/papaya-rom.dir/src/android_jni.cpp.o	caafd846a8dcb56
+23585	24666	1787986467824547852	tests/test_full_runtime_stack	17c804cdbd2b2319
+24611	24704	1787986468851609220	src/rom/libpapaya-rom.a	6a8aecf44a8cc3c0
+24705	24995	1787986468944614777	src/app/papaya	8e4ebaf54d98cb4
+24718	25361	1787986468957615554	tests/test_orchestrator	62aa2bd38152cae8
+24707	25586	1787986468946614897	tests/test_rom_loader	edc6c5875a8746d2
+24708	25653	1787986468947614956	tests/test_steam_rom_bridge	4432730af77523b2
+24715	25667	1787986468954615374	tests/test_android_storage_bridge	5ea9ba9bce07b317
+21	27550	1787986444260139476	tests/CMakeFiles/test_rom_game_loop.dir/test_rom_game_loop.cpp.o	ff53bd04010f5b01
+27552	27773	1787986471791784890	tests/test_rom_game_loop	d7db42a282536af

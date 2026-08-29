@@ -43,35 +43,40 @@ Result<> EmulatorRuntime::initialize() {
         log::warn("RUNTIME", "Memory watchdog triggered: flushing texture caches");
     });
 
-    // 4. Steamworks API Stub
+    // 4. Steamworks API Stub & Virtual Input
     steam::SteamProfileConfig steam_cfg{};
     steam_cfg.app_id = (config_.steam_app_id > 0) ? config_.steam_app_id : 480;
-    steam_stub_ = std::make_unique<steam::SteamApiStub>(steam_cfg);
+    steam_stub_ = std::make_shared<steam::SteamApiStub>(steam_cfg);
     steam_stub_->initialize();
 
-    // 5. CPU Translator & 16KB Page Alignment Manager
+    input_mgr_ = std::make_shared<input::VirtualXInputManager>();
+    input_mgr_->initialize();
+
+    // 5. Native Win32 HLE & PE Binary Loader Subsystem
+    win32_hle_ = std::make_shared<win32::Win32ApiHle>(steam_stub_, input_mgr_);
+    win32_hle_->initialize();
+    pe_loader_ = std::make_unique<win32::PeLoader>(win32_hle_);
+
+    // 6. CPU Translator & 16KB Page Alignment Manager
     cpu_translator_ = std::make_unique<cpu::CpuTranslator>();
     cpu_translator_->initialize();
 
-    // 6. Kernel Sync (NTSync) & io_uring Direct I/O
+    // 7. Kernel Sync (NTSync) & io_uring Direct I/O
     ntsync_ = std::make_unique<kernel::NtSyncManager>();
     ntsync_->initialize();
 
     io_uring_ = std::make_unique<kernel::IoUringStreamer>(256);
     io_uring_->initialize();
 
-    // 7. Wine Prefix Manager
+    // 8. Wine Prefix Manager (Legacy compatibility)
     prefix_mgr_ = std::make_unique<kernel::WinePrefixManager>();
     prefix_mgr_->initialize_prefix();
 
-    // 8. Audio & Input Subsystems
+    // 9. Audio Subsystem
     audio_bridge_ = std::make_unique<audio::AudioBridge>();
     audio_bridge_->initialize();
 
-    input_mgr_ = std::make_unique<input::VirtualXInputManager>();
-    input_mgr_->initialize();
-
-    // 9. Window & Display Server
+    // 10. Window & Display Server
     WindowConfig win_cfg{
         .title = "Project Papaya - Steam ARM Runtime",
         .width = auto_cfg.swapchain_config.display_width,
@@ -101,8 +106,18 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     if (discovered_id.has_value()) {
         steam::SteamProfileConfig scfg{};
         scfg.app_id = *discovered_id;
-        steam_stub_ = std::make_unique<steam::SteamApiStub>(scfg);
+        steam_stub_ = std::make_shared<steam::SteamApiStub>(scfg);
         steam_stub_->initialize();
+    }
+
+    // Load PE Image using Papaya's native PE Loader
+    if (std::filesystem::exists(game_p)) {
+        auto pe_res = pe_loader_->load_from_file(game_p);
+        if (pe_res.has_value()) {
+            log::info("RUNTIME", "Papaya Native PE Mapper verified image [Base: 0x{:X}, EntryPoint: 0x{:X}]",
+                      reinterpret_cast<u64>(pe_res->image_base),
+                      reinterpret_cast<u64>(pe_res->entry_point));
+        }
     }
 
     // Write Potato Mode dxvk.conf in game directory
@@ -136,7 +151,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
                 }
             }
 
-            // Set Display and Wine/Box64 environment variables
+            // Set Display and environment variables
             const char* disp = getenv("DISPLAY");
             if (!disp) setenv("DISPLAY", ":0", 1);
 
@@ -149,7 +164,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             std::string pfx = home ? (std::string(home) + "/.wine") : "./papaya_prefix";
             setenv("WINEPREFIX", pfx.c_str(), 0);
 
-            // Execute via wine
+            // Execute via runner
             char* args[] = {
                 const_cast<char*>("wine"),
                 const_cast<char*>(game_p.c_str()),
