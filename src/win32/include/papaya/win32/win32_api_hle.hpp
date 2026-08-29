@@ -226,7 +226,7 @@ public:
     static PAPAYA_MS_ABI int   hle_msvcrt__initterm(void*, void*);
     static PAPAYA_MS_ABI void  hle_msvcrt__set_app_type(int);
     static PAPAYA_MS_ABI void  hle_msvcrt__amsg_exit(int);
-    static PAPAYA_MS_ABI int   hle_msvcrt__onexit(void*);
+    static PAPAYA_MS_ABI void* hle_msvcrt__onexit(void* fn);
     static PAPAYA_MS_ABI int   hle_msvcrt__ismbblead(u32);
     static PAPAYA_MS_ABI void  hle_msvcrt__getmainargs(int*, char***, char***, int, int*);
     static PAPAYA_MS_ABI void  hle_msvcrt__setusermatherr(void*);
@@ -331,6 +331,73 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_free_environment_strings_a(void* lpszEnvironmentBlock);
     static PAPAYA_MS_ABI u32   hle_set_error_mode(u32 uMode);
     static PAPAYA_MS_ABI void  hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args);
+
+    // WINMM
+    static PAPAYA_MS_ABI u32   hle_time_get_time();
+    static PAPAYA_MS_ABI u32   hle_time_begin_period(u32 uPeriod);
+    static PAPAYA_MS_ABI u32   hle_time_end_period(u32 uPeriod);
+
+    // SHELL32
+    static PAPAYA_MS_ABI s32   hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath);
+    static PAPAYA_MS_ABI s32   hle_sh_get_folder_path_w(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, wchar_t* pszPath);
+    static PAPAYA_MS_ABI s32   hle_sh_get_known_folder_path(const void* rfid, u32 dwFlags, HANDLE hToken, wchar_t** ppszPath);
+    static PAPAYA_MS_ABI wchar_t** hle_command_line_to_argv_w(const wchar_t* lpCmdLine, int* pNumArgs);
+
+    // OLE32 / OLEAUT32
+    static PAPAYA_MS_ABI s32   hle_co_initialize(void* pvReserved);
+    static PAPAYA_MS_ABI s32   hle_co_initialize_ex(void* pvReserved, u32 dwCoInit);
+    static PAPAYA_MS_ABI void  hle_co_uninitialize();
+    static PAPAYA_MS_ABI s32   hle_co_create_instance(const void* rclsid, void* pUnkOuter, u32 dwClsContext, const void* riid, void** ppv);
+    static PAPAYA_MS_ABI void* hle_co_task_mem_alloc(size_t cb);
+    static PAPAYA_MS_ABI void  hle_co_task_mem_free(void* pv);
+
+    // GDI32
+    static PAPAYA_MS_ABI int   hle_choose_pixel_format(void* hdc, const void* ppfd);
+    static PAPAYA_MS_ABI BOOL  hle_set_pixel_format(void* hdc, int format, const void* ppfd);
+    static PAPAYA_MS_ABI int   hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd);
+    static PAPAYA_MS_ABI BOOL  hle_swap_buffers(void* hdc);
+
+    // OpenGL & Vulkan dynamic loaders
+    static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);
+    static PAPAYA_MS_ABI void* hle_vk_get_instance_proc_addr(void* instance, const char* pName);
+
+    // Windows Version & Time
+    static PAPAYA_MS_ABI u32   hle_get_version();
+    static PAPAYA_MS_ABI BOOL  hle_get_version_ex_a(void* lpVersionInfo);
+    static PAPAYA_MS_ABI BOOL  hle_get_version_ex_w(void* lpVersionInfo);
+    static PAPAYA_MS_ABI void  hle_get_system_time_as_file_time(void* lpSystemTimeAsFileTime);
+    static PAPAYA_MS_ABI void* hle_load_library_ex_a(const char* lpLibFileName, HANDLE hFile, u32 dwFlags);
+    static PAPAYA_MS_ABI void* hle_load_library_ex_w(const wchar_t* lpLibFileName, HANDLE hFile, u32 dwFlags);
+    static PAPAYA_MS_ABI u32   hle_get_module_file_name_w(void* hModule, wchar_t* lpFilename, u32 nSize);
+
+    // Winsock (WS2_32)
+    static PAPAYA_MS_ABI int   hle_wsa_startup(u16 wVersionRequested, void* lpWSAData);
+    static PAPAYA_MS_ABI int   hle_wsa_cleanup();
+    static PAPAYA_MS_ABI int   hle_wsa_get_last_error();
+    static PAPAYA_MS_ABI u64   hle_socket(int af, int type, int protocol);
+    static PAPAYA_MS_ABI int   hle_closesocket(u64 s);
+    static PAPAYA_MS_ABI int   hle_connect(u64 s, const void* name, int namelen);
+    static PAPAYA_MS_ABI int   hle_send(u64 s, const char* buf, int len, int flags);
+    static PAPAYA_MS_ABI int   hle_recv(u64 s, char* buf, int len, int flags);
+    static PAPAYA_MS_ABI u16   hle_htons(u16 hostshort);
+    static PAPAYA_MS_ABI u32   hle_htonl(u32 hostlong);
+    static PAPAYA_MS_ABI u16   hle_ntohs(u16 netshort);
+    static PAPAYA_MS_ABI u32   hle_ntohl(u32 netlong);
+
+    // USER32 Input & Window Additions
+    static PAPAYA_MS_ABI BOOL  hle_get_cursor_pos(void* lpPoint);
+    static PAPAYA_MS_ABI BOOL  hle_set_cursor_pos(int X, int Y);
+    static PAPAYA_MS_ABI int   hle_show_cursor(BOOL bShow);
+    static PAPAYA_MS_ABI s16   hle_get_async_key_state(int vKey);
+    static PAPAYA_MS_ABI s16   hle_get_key_state(int vKey);
+    static PAPAYA_MS_ABI BOOL  hle_get_keyboard_state(u8* lpKeyState);
+    static PAPAYA_MS_ABI BOOL  hle_set_window_text_a(HWND hWnd, const char* lpString);
+    static PAPAYA_MS_ABI BOOL  hle_set_window_text_w(HWND hWnd, const wchar_t* lpString);
+    static PAPAYA_MS_ABI int   hle_get_window_text_a(HWND hWnd, char* lpString, int nMaxCount);
+    static PAPAYA_MS_ABI int   hle_get_window_text_w(HWND hWnd, wchar_t* lpString, int nMaxCount);
+    static PAPAYA_MS_ABI BOOL  hle_adjust_window_rect(void* lpRect, u32 dwStyle, BOOL bMenu);
+    static PAPAYA_MS_ABI BOOL  hle_adjust_window_rect_ex(void* lpRect, u32 dwStyle, BOOL bMenu, u32 dwExStyle);
+    static PAPAYA_MS_ABI BOOL  hle_set_window_pos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, u32 uFlags);
 
 private:
     std::shared_ptr<steam::SteamApiStub> steam_stub_;

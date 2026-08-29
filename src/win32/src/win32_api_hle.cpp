@@ -923,7 +923,7 @@ void Win32ApiHle::hle_msvcrt__cexit()                { /* flush+return; guest co
 int  Win32ApiHle::hle_msvcrt__initterm(void*, void*) { return 0; } // static-init table walked as no-op
 void Win32ApiHle::hle_msvcrt__set_app_type(int)      { /* app type (GUI/console) ignored */ }
 void Win32ApiHle::hle_msvcrt__amsg_exit(int)         { /* _amsg_exit prints to stderr on fatal error */ }
-int  Win32ApiHle::hle_msvcrt__onexit(void*)          { return 0; }
+void* Win32ApiHle::hle_msvcrt__onexit(void* fn)       { return fn; }
 int  Win32ApiHle::hle_msvcrt__ismbblead(u32)         { return 0; }
 void Win32ApiHle::hle_msvcrt__setusermatherr(void*)  { /* matherr override ignored */ }
 void Win32ApiHle::hle_msvcrt__commode(int)           { /* file translation mode ignored */ }
