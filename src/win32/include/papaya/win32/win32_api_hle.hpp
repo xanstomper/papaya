@@ -435,6 +435,16 @@ public:
     static PAPAYA_MS_ABI u32   hle_htonl(u32 hostlong);
     static PAPAYA_MS_ABI u16   hle_ntohs(u16 netshort);
     static PAPAYA_MS_ABI u32   hle_ntohl(u32 netlong);
+    static PAPAYA_MS_ABI int   hle_bind(u64 s, const void* addr, int addrlen);
+    static PAPAYA_MS_ABI int   hle_listen(u64 s, int backlog);
+    static PAPAYA_MS_ABI u64   hle_accept(u64 s, void* addr, void* addrlen_ptr);
+    static PAPAYA_MS_ABI int   hle_getsockname(u64 s, void* name, void* namelen_ptr);
+    static PAPAYA_MS_ABI int   hle_getpeername(u64 s, void* name, void* namelen_ptr);
+    static PAPAYA_MS_ABI int   hle_setsockopt(u64 s, int level, int optname, const void* optval, int optlen);
+    static PAPAYA_MS_ABI int   hle_shutdown(u64 s, int how);
+    static PAPAYA_MS_ABI u32   hle_inet_addr(const char* cp);
+    static PAPAYA_MS_ABI const char* hle_inet_ntoa(void* in_addr_ptr);
+    static PAPAYA_MS_ABI int   hle_select(u32 nfds, void* rfds, void* wfds, void* efds, void* timeout);
 
     // USER32 Input & Window Additions
     static PAPAYA_MS_ABI BOOL  hle_get_cursor_pos(void* lpPoint);

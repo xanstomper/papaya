@@ -27,6 +27,9 @@
 #include <sys/random.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/select.h>
 #include <X11/Xlib.h>
 #include <errno.h>
 #include <dlfcn.h>
@@ -2301,6 +2304,55 @@ u32 Win32ApiHle::hle_ntohl(u32 netlong) {
     return ntohl(netlong);
 }
 
+// ---- Winsock server + addressing (real host-socket wrappers) -----------------
+int Win32ApiHle::hle_bind(u64 s, const void* addr, int addrlen) {
+    return ::bind(static_cast<int>(s), static_cast<const struct sockaddr*>(addr), static_cast<socklen_t>(addrlen));
+}
+int Win32ApiHle::hle_listen(u64 s, int backlog) {
+    return ::listen(static_cast<int>(s), backlog);
+}
+u64 Win32ApiHle::hle_accept(u64 s, void* addr, void* addrlen_ptr) {
+    socklen_t alen = 0;
+    int c = ::accept(static_cast<int>(s), static_cast<struct sockaddr*>(addr), addrlen_ptr ? &alen : nullptr);
+    if (addrlen_ptr && addr) *static_cast<int*>(addrlen_ptr) = (int)alen;
+    return (c >= 0) ? static_cast<u64>(c) : 0xFFFFFFFFFFFFFFFFULL;
+}
+int Win32ApiHle::hle_getsockname(u64 s, void* name, void* namelen_ptr) {
+    socklen_t alen = 0;
+    int r = ::getsockname(static_cast<int>(s), static_cast<struct sockaddr*>(name), &alen);
+    if (namelen_ptr) *static_cast<int*>(namelen_ptr) = (int)alen;
+    return r;
+}
+int Win32ApiHle::hle_getpeername(u64 s, void* name, void* namelen_ptr) {
+    socklen_t alen = 0;
+    int r = ::getpeername(static_cast<int>(s), static_cast<struct sockaddr*>(name), &alen);
+    if (namelen_ptr) *static_cast<int*>(namelen_ptr) = (int)alen;
+    return r;
+}
+int Win32ApiHle::hle_setsockopt(u64 s, int level, int optname, const void* optval, int optlen) {
+    return ::setsockopt(static_cast<int>(s), level, optname, optval, static_cast<socklen_t>(optlen));
+}
+int Win32ApiHle::hle_shutdown(u64 s, int how) {
+    return ::shutdown(static_cast<int>(s), how);
+}
+u32 Win32ApiHle::hle_inet_addr(const char* cp) {
+    if (!cp) return 0xFFFFFFFF;   // INADDR_NONE on error
+    struct in_addr a{};
+    if (inet_pton(AF_INET, cp, &a) != 1) return 0xFFFFFFFF;
+    return static_cast<u32>(a.s_addr);
+}
+const char* Win32ApiHle::hle_inet_ntoa(void* in_addr_ptr) {
+    static thread_local char buf[INET_ADDRSTRLEN];
+    if (!in_addr_ptr) return "0.0.0.0";
+    struct in_addr a{}; a.s_addr = *static_cast<u32*>(in_addr_ptr);
+    const char* r = inet_ntop(AF_INET, &a, buf, sizeof(buf));
+    return r ? r : "0.0.0.0";
+}
+int Win32ApiHle::hle_select(u32 nfds, void* rfds, void* wfds, void* efds, void* timeout) {
+    return ::select(static_cast<int>(nfds), static_cast<fd_set*>(rfds), static_cast<fd_set*>(wfds),
+                    static_cast<fd_set*>(efds), static_cast<struct timeval*>(timeout));
+}
+
 // -------------------------------------------------------------
 // USER32 Input & Window Additions
 // -------------------------------------------------------------
@@ -2861,6 +2913,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("WS2_32.dll", "htonl",              reinterpret_cast<void*>(&hle_htonl));
     register_function("WS2_32.dll", "ntohs",              reinterpret_cast<void*>(&hle_ntohs));
     register_function("WS2_32.dll", "ntohl",              reinterpret_cast<void*>(&hle_ntohl));
+    register_function("WS2_32.dll", "bind",               reinterpret_cast<void*>(&hle_bind));
+    register_function("WS2_32.dll", "listen",             reinterpret_cast<void*>(&hle_listen));
+    register_function("WS2_32.dll", "accept",             reinterpret_cast<void*>(&hle_accept));
+    register_function("WS2_32.dll", "getsockname",        reinterpret_cast<void*>(&hle_getsockname));
+    register_function("WS2_32.dll", "getpeername",        reinterpret_cast<void*>(&hle_getpeername));
+    register_function("WS2_32.dll", "setsockopt",         reinterpret_cast<void*>(&hle_setsockopt));
+    register_function("WS2_32.dll", "shutdown",           reinterpret_cast<void*>(&hle_shutdown));
+    register_function("WS2_32.dll", "inet_addr",          reinterpret_cast<void*>(&hle_inet_addr));
+    register_function("WS2_32.dll", "inet_ntoa",          reinterpret_cast<void*>(&hle_inet_ntoa));
+    register_function("WS2_32.dll", "select",             reinterpret_cast<void*>(&hle_select));
 
     // USER32.DLL additions
     register_function("USER32.DLL", "GetCursorPos",       reinterpret_cast<void*>(&hle_get_cursor_pos));
