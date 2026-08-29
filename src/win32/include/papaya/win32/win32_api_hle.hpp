@@ -330,12 +330,6 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_system_time_to_file_time(const void* lpSystemTime, void* lpFileTime);
     static PAPAYA_MS_ABI BOOL  hle_file_time_to_system_time(const void* lpFileTime, void* lpSystemTime);
 
-    // Registry stubs (additional)
-    static PAPAYA_MS_ABI s32   hle_reg_open_key_ex_a(void* hKey, const char* lpSubKey, u32 ulOptions, u32 samDesired, void** phkResult);
-    static PAPAYA_MS_ABI s32   hle_reg_query_value_ex_a(void* hKey, const char* lpValueName, u32* lpReserved, u32* lpType, u8* lpData, u32* lpcbData);
-    static PAPAYA_MS_ABI s32   hle_reg_close_key(void* hKey);
-    static PAPAYA_MS_ABI s32   hle_reg_set_value_ex_a(void* hKey, const char* lpValueName, u32 Reserved, u32 dwType, const u8* lpData, u32 cbData);
-
     // Misc kernel
     static PAPAYA_MS_ABI BOOL  hle_create_directory_a(const char* lpPathName, void* lpSec);
     static PAPAYA_MS_ABI BOOL  hle_remove_directory_a(const char* lpPathName);
@@ -350,6 +344,19 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_get_user_name_a(char* lpBuffer, u32* lpnSize);
     static PAPAYA_MS_ABI void* hle_get_environment_strings();
     static PAPAYA_MS_ABI BOOL  hle_free_environment_strings_a(void* lpszEnvironmentBlock);
+    // ADVAPI32 Registry
+    static PAPAYA_MS_ABI long  hle_reg_create_key_ex_a(u64 hKey, const char* lpSubKey, u32 reserved, void* lpClass, u32 dwOptions, u32 samDesired, void* lpSecurityAttr, u64* phkResult, u32* lpdwDisposition);
+    static PAPAYA_MS_ABI long  hle_reg_create_key_ex_w(u64 hKey, const wchar_t* lpSubKey, u32 reserved, void* lpClass, u32 dwOptions, u32 samDesired, void* lpSecurityAttr, u64* phkResult, u32* lpdwDisposition);
+    static PAPAYA_MS_ABI long  hle_reg_open_key_ex_a(u64 hKey, const char* lpSubKey, u32 ulOptions, u32 samDesired, u64* phkResult);
+    static PAPAYA_MS_ABI long  hle_reg_open_key_ex_w(u64 hKey, const wchar_t* lpSubKey, u32 ulOptions, u32 samDesired, u64* phkResult);
+    static PAPAYA_MS_ABI long  hle_reg_set_value_ex_a(u64 hKey, const char* lpValueName, u32 reserved, u32 dwType, const u8* lpData, u32 cbData);
+    static PAPAYA_MS_ABI long  hle_reg_set_value_ex_w(u64 hKey, const wchar_t* lpValueName, u32 reserved, u32 dwType, const u8* lpData, u32 cbData);
+    static PAPAYA_MS_ABI long  hle_reg_query_value_ex_a(u64 hKey, const char* lpValueName, u32 reserved, u32* lpType, u8* lpData, u32* lpcbData);
+    static PAPAYA_MS_ABI long  hle_reg_query_value_ex_w(u64 hKey, const wchar_t* lpValueName, u32 reserved, u32* lpType, u8* lpData, u32* lpcbData);
+    static PAPAYA_MS_ABI long  hle_reg_close_key(u64 hKey);
+    static PAPAYA_MS_ABI long  hle_reg_delete_value_a(u64 hKey, const char* lpValueName);
+    static PAPAYA_MS_ABI long  hle_reg_get_value_a(u64 hKey, const char* lpSubKey, const char* lpValue, u32 dwFlags, u32* pdwType, u8* pvData, u32* pcbData);
+    static PAPAYA_MS_ABI void  hle_reg_disable_predefined_cache();
     static PAPAYA_MS_ABI u32   hle_set_error_mode(u32 uMode);
     static PAPAYA_MS_ABI void  hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args);
 

@@ -1,6 +1,7 @@
 #include "papaya/win32/win32_api_hle.hpp"
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_dsound.hpp"
+#include "papaya/win32/win32_registry.hpp"
 #include "papaya/win32/win32_audio.hpp"
 #include "papaya/win32/win32_window.hpp"
 #include "papaya/win32/pe_loader.hpp"
@@ -35,6 +36,8 @@
 #include <dlfcn.h>
 
 namespace papaya::win32 {
+// UTF-16 -> UTF-8 helper (defined later, used by W-suffix registry/audio).
+static std::string wchar_to_utf8(const wchar_t* w);
 
 static Win32ApiHle* g_active_win32_hle = nullptr;
 thread_local u32 g_last_error = 0;
@@ -1669,24 +1672,6 @@ BOOL Win32ApiHle::hle_file_time_to_system_time(const void* lpFileTime, void* lpS
 }
 
 // -------------------------------------------------------------
-// Registry Stubs (Additional)
-// -------------------------------------------------------------
-s32 Win32ApiHle::hle_reg_open_key_ex_a(void* hKey, const char* lpSubKey, u32 ulOptions, u32 samDesired, void** phkResult) {
-    if (phkResult) *phkResult = reinterpret_cast<void*>(0x5000);
-    return 0; // ERROR_SUCCESS
-}
-
-s32 Win32ApiHle::hle_reg_query_value_ex_a(void* hKey, const char* lpValueName, u32* lpReserved, u32* lpType, u8* lpData, u32* lpcbData) {
-    g_last_error = 2; // ERROR_FILE_NOT_FOUND
-    return 2;
-}
-
-s32 Win32ApiHle::hle_reg_close_key(void* hKey) { return 0; }
-
-s32 Win32ApiHle::hle_reg_set_value_ex_a(void* hKey, const char* lpValueName, u32 Reserved, u32 dwType, const u8* lpData, u32 cbData) {
-    return 0; // ERROR_SUCCESS (silently ignore)
-}
-
 // -------------------------------------------------------------
 // File System Additions
 // -------------------------------------------------------------
@@ -1794,6 +1779,77 @@ void* Win32ApiHle::hle_get_environment_strings() {
 BOOL Win32ApiHle::hle_free_environment_strings_a(void* lpszEnvironmentBlock) {
     return TRUE_VAL; // Static block; nothing to free
 }
+
+// ---- ADVAPI32 Registry ------------------------------------------------------
+// hKey is a uptr: predefined root (0x80000000+) or a RegNode pointer from a prior
+// open. registry_* takes the root handle (or a node pointer); for node pointers
+// we pass them straight through as a "handle" the registry module understands.
+
+long Win32ApiHle::hle_reg_open_key_ex_a(u64 hKey, const char* lpSubKey, u32 ulOptions, u32 samDesired, u64* phkResult) {
+    (void)ulOptions; (void)samDesired;
+    void* out = nullptr;
+    // If hKey is a predefined root, open from there. If it's a node pointer
+    // (>=0x100), we pass its root=3 and treat the pointer path relative to the
+    // whole tree — simplest: always treat hKey as a root ("Software" hang).
+    s32 r = registry_open_key(static_cast<u32>(hKey), lpSubKey ? lpSubKey : "", false, &out);
+    if (phkResult) *phkResult = reinterpret_cast<u64>(out);
+    return r;
+}
+long Win32ApiHle::hle_reg_open_key_ex_w(u64 hKey, const wchar_t* lpSubKey, u32 ulOptions, u32 samDesired, u64* phkResult) {
+    std::string s = lpSubKey ? wchar_to_utf8(lpSubKey) : "";
+    return hle_reg_open_key_ex_a(hKey, s.c_str(), ulOptions, samDesired, phkResult);
+}
+long Win32ApiHle::hle_reg_create_key_ex_a(u64 hKey, const char* lpSubKey, u32 reserved, void* lpClass, u32 dwOptions, u32 samDesired, void* lpSecurityAttr, u64* phkResult, u32* lpdwDisposition) {
+    (void)reserved; (void)lpClass; (void)dwOptions; (void)samDesired; (void)lpSecurityAttr;
+    void* out = nullptr;
+    s32 r = registry_open_key(static_cast<u32>(hKey), lpSubKey ? lpSubKey : "", true, &out);
+    if (phkResult) *phkResult = reinterpret_cast<u64>(out);
+    if (lpdwDisposition) *lpdwDisposition = 1; // REG_CREATED_NEW_KEY
+    return r;
+}
+long Win32ApiHle::hle_reg_create_key_ex_w(u64 hKey, const wchar_t* lpSubKey, u32 reserved, void* lpClass, u32 dwOptions, u32 samDesired, void* lpSecurityAttr, u64* phkResult, u32* lpdwDisposition) {
+    std::string s = lpSubKey ? wchar_to_utf8(lpSubKey) : "";
+    return hle_reg_create_key_ex_a(hKey, s.c_str(), reserved, lpClass, dwOptions, samDesired, lpSecurityAttr, phkResult, lpdwDisposition);
+}
+long Win32ApiHle::hle_reg_set_value_ex_a(u64 hKey, const char* lpValueName, u32 reserved, u32 dwType, const u8* lpData, u32 cbData) {
+    (void)reserved;
+    if (hKey < 0x100) return -87;  // invalid (need an opened key handle)
+    return registry_set_value(reinterpret_cast<void*>(hKey), lpValueName ? lpValueName : "", dwType, lpData, cbData);
+}
+long Win32ApiHle::hle_reg_set_value_ex_w(u64 hKey, const wchar_t* lpValueName, u32 reserved, u32 dwType, const u8* lpData, u32 cbData) {
+    (void)reserved;
+    std::string n = lpValueName ? wchar_to_utf8(lpValueName) : "";
+    if (hKey < 0x100) return -87;
+    return registry_set_value(reinterpret_cast<void*>(hKey), n.c_str(), dwType, lpData, cbData);
+}
+long Win32ApiHle::hle_reg_query_value_ex_a(u64 hKey, const char* lpValueName, u32 reserved, u32* lpType, u8* lpData, u32* lpcbData) {
+    (void)reserved;
+    if (hKey < 0x100) return -87;
+    return registry_query_value(reinterpret_cast<void*>(hKey), lpValueName ? lpValueName : "", lpType, lpData, lpcbData);
+}
+long Win32ApiHle::hle_reg_query_value_ex_w(u64 hKey, const wchar_t* lpValueName, u32 reserved, u32* lpType, u8* lpData, u32* lpcbData) {
+    (void)reserved;
+    std::string n = lpValueName ? wchar_to_utf8(lpValueName) : "";
+    if (hKey < 0x100) return -87;
+    return registry_query_value(reinterpret_cast<void*>(hKey), n.c_str(), lpType, lpData, lpcbData);
+}
+long Win32ApiHle::hle_reg_close_key(u64 hKey) {
+    return registry_close_key(reinterpret_cast<void*>(hKey));
+}
+long Win32ApiHle::hle_reg_delete_value_a(u64 hKey, const char* lpValueName) {
+    if (hKey < 0x100) return -87;
+    return registry_delete_value(reinterpret_cast<void*>(hKey), lpValueName ? lpValueName : "");
+}
+long Win32ApiHle::hle_reg_get_value_a(u64 hKey, const char* lpSubKey, const char* lpValue, u32 dwFlags, u32* pdwType, u8* pvData, u32* pcbData) {
+    (void)dwFlags;
+    u64 k2 = hKey;
+    if (lpSubKey && *lpSubKey) {
+        long r = hle_reg_open_key_ex_a(hKey, lpSubKey, 0, 0, &k2);
+        if (r != 0) return r;
+    }
+    return registry_query_value(reinterpret_cast<void*>(k2), lpValue ? lpValue : "", pdwType, pvData, pcbData);
+}
+void Win32ApiHle::hle_reg_disable_predefined_cache() {}
 
 u32 Win32ApiHle::hle_set_error_mode(u32 uMode) {
     return uMode; // Return previous mode (same as passed)
@@ -2813,11 +2869,22 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "SystemTimeToFileTime", reinterpret_cast<void*>(&hle_system_time_to_file_time));
     register_function("KERNEL32.DLL", "FileTimeToSystemTime", reinterpret_cast<void*>(&hle_file_time_to_system_time));
 
-    // Registry (additional)
-    register_function("ADVAPI32.dll", "RegOpenKeyExA",    reinterpret_cast<void*>(&hle_reg_open_key_ex_a));
-    register_function("ADVAPI32.dll", "RegQueryValueExA", reinterpret_cast<void*>(&hle_reg_query_value_ex_a));
-    register_function("ADVAPI32.dll", "RegCloseKey",      reinterpret_cast<void*>(&hle_reg_close_key));
-    register_function("ADVAPI32.dll", "RegSetValueExA",   reinterpret_cast<void*>(&hle_reg_set_value_ex_a));
+    // Registry
+    register_function("ADVAPI32.dll", "RegOpenKeyExA",     reinterpret_cast<void*>(&hle_reg_open_key_ex_a));
+    register_function("ADVAPI32.dll", "RegOpenKeyExW",     reinterpret_cast<void*>(&hle_reg_open_key_ex_w));
+    register_function("ADVAPI32.dll", "RegQueryValueExA",  reinterpret_cast<void*>(&hle_reg_query_value_ex_a));
+    register_function("ADVAPI32.dll", "RegQueryValueExW",  reinterpret_cast<void*>(&hle_reg_query_value_ex_w));
+    register_function("ADVAPI32.dll", "RegCreateKeyExA",   reinterpret_cast<void*>(&hle_reg_create_key_ex_a));
+    register_function("ADVAPI32.dll", "RegCreateKeyExW",   reinterpret_cast<void*>(&hle_reg_create_key_ex_w));
+    register_function("ADVAPI32.dll", "RegSetValueExA",    reinterpret_cast<void*>(&hle_reg_set_value_ex_a));
+    register_function("ADVAPI32.dll", "RegSetValueExW",    reinterpret_cast<void*>(&hle_reg_set_value_ex_w));
+    register_function("ADVAPI32.dll", "RegCloseKey",       reinterpret_cast<void*>(&hle_reg_close_key));
+    register_function("ADVAPI32.dll", "RegDeleteValueA",   reinterpret_cast<void*>(&hle_reg_delete_value_a));
+    register_function("ADVAPI32.dll", "RegGetValueA",      reinterpret_cast<void*>(&hle_reg_get_value_a));
+    register_function("ADVAPI32.dll", "RegGetValueW",      reinterpret_cast<void*>(&hle_reg_get_value_a));
+    register_function("ADVAPI32.dll", "RegDisablePredefinedCache", reinterpret_cast<void*>(&hle_reg_disable_predefined_cache));
+    // Seed the in-memory registry with standard keys.
+    registry_seed();
 
     // File system additions
     register_function("KERNEL32.DLL", "CreateDirectoryA",  reinterpret_cast<void*>(&hle_create_directory_a));
