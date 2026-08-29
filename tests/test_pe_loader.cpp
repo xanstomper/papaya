@@ -117,6 +117,30 @@ int main() {
 
     loader.unload_image(img);
 
+    // 8. Test Real Windows 64-bit PE Executable Execution (if sample binary exists)
+    const std::string sample_exe = "/home/jewboy420/papaya/samples/native_game_x64.exe";
+    if (std::filesystem::exists(sample_exe)) {
+        log::info("TEST", "Testing Real Windows 64-bit PE Binary Loading & Native Execution: '{}'", sample_exe);
+        auto pe_res = loader.load_from_file(sample_exe);
+        TEST_CHECK(pe_res.has_value());
+        auto& sample_img = *pe_res;
+        TEST_CHECK(sample_img.is_64bit == true);
+        TEST_CHECK(sample_img.entry_point != nullptr);
+
+        // Remove old save file if present
+        std::remove("papaya_game_save.dat");
+
+        // Execute natively in-process
+        auto exec_res = loader.execute_native(sample_img);
+        TEST_CHECK(exec_res.has_value());
+        TEST_CHECK(*exec_res == 0);
+
+        // Verify that the guest PE successfully invoked Win32 APIs and wrote save data
+        TEST_CHECK(std::filesystem::exists("papaya_game_save.dat"));
+        loader.unload_image(sample_img);
+        log::info("TEST", "Real Windows PE in-process execution verified successfully!");
+    }
+
     log::info("TEST", ">>> test_pe_loader PASSED ALL CHECKS! <<<");
     return 0;
 }

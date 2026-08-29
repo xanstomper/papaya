@@ -287,6 +287,10 @@ Result<> PeLoader::map_sections(const u8* file_raw, const ImageNtHeadersUnified&
 
     u8* base_bytes = reinterpret_cast<u8*>(allocated_base);
 
+    // Copy DOS Header + NT Headers + Section Table into the image base (RVA 0)
+    size_t hdr_copy_size = std::min<size_t>(nt.size_of_headers > 0 ? nt.size_of_headers : 4096, nt.size_of_image);
+    std::memcpy(base_bytes, file_raw, hdr_copy_size);
+
     for (u16 i = 0; i < fh2->number_of_sections; ++i) {
         const auto& sec = section_hdrs[i];
         char sec_name[9] = {0};
@@ -707,6 +711,15 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
         //   So instead we rely on the far-return INTO 32-bit and let the callee
         //   run to ExitProcess. This is the stable path used by Wine's wow64.
 
+        // Prepare stdcall arguments on the 32-bit stack:
+        // [esp+0] = ret_addr, [esp+4] = hInstance, [esp+8] = hPrevInstance, [esp+12] = lpCmdLine, [esp+16] = nShowCmd
+        u32* s32_args = reinterpret_cast<u32*>(reinterpret_cast<u8*>(stack32) + stack_size - 64);
+        s32_args[0] = 0;                          // dummy return address
+        s32_args[1] = static_cast<u32>(base);     // hInstance
+        s32_args[2] = 0;                          // hPrevInstance
+        s32_args[3] = 0;                          // lpCmdLine
+        s32_args[4] = 1;                          // nShowCmd
+
         __asm__ volatile(
             // Save full 64-bit callee-saved state + rflags
             "pushfq\n\t"
@@ -717,39 +730,28 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
             "push %%r15\n\t"
             "push %%rbp\n\t"
 
-            // rdi = instance handle (image base truncated to 32 bits)
-                        "movq %[base], %%rax\n\t"
-                        "movl %%eax, %%edi\n\t"
-                        // rsi = hPrevInstance (null)
-                        "xorl %%esi, %%esi\n\t"
-                        // edx = empty cmdline
-                        "xorl %%edx, %%edx\n\t"
-                        // ecx = nShowCmd = 1
-                        "movl $1, %%ecx\n\t"
+            // Point rsp at the prepared 32-bit stack frame
+            "movq %[stack_ptr], %%rsp\n\t"
+            // Push far-return frame: [rsp] = seg:offset
+            "pushq %[cs32]\n\t"
+            "pushq %[entry]\n\t"
+            "lretq\n\t"                   // far return: load cs=CS32, rip=entry
 
-                        // Point rsp at the fresh 32-bit stack
-                        "movq %[stack32], %%rsp\n\t"
-                        // Push far-return frame: [rsp] = seg:offset. We push CS:entry then lretq
-                        "pushq %[cs32]\n\t"
-                        "pushq %[entry]\n\t"
-                        "lretq\n\t"                   // far return: load cs=CS32, rip=entry
-
-                        // -- Never reached unless entry far-returns back to 64-bit CS and
-                        //    lands here. We support that: restore state and return.
-                        "pop %%rbp\n\t"
-                        "pop %%r15\n\t"
-                        "pop %%r14\n\t"
-                        "pop %%r13\n\t"
-                        "pop %%r12\n\t"
-                        "pop %%rbx\n\t"
-                        "popfq\n\t"
-                        :
-                        : [base]   "r" (base & 0xFFFFFFFF),
-                          [stack32]"r" (reinterpret_cast<u64>(stack32) + stack_size - 16),
-                          [cs32]   "r" (CS32),
-                          [entry]  "r" (entry)
-                        : "rax", "rdi", "esi", "edx", "ecx", "rbp",
-                          "rbx", "r12", "r13", "r14", "r15", "cc", "memory");
+            // -- Never reached unless entry far-returns back to 64-bit CS and
+            //    lands here. Restore state and return.
+            "pop %%rbp\n\t"
+            "pop %%r15\n\t"
+            "pop %%r14\n\t"
+            "pop %%r13\n\t"
+            "pop %%r12\n\t"
+            "pop %%rbx\n\t"
+            "popfq\n\t"
+            :
+            : [stack_ptr] "r" (reinterpret_cast<u64>(s32_args)),
+              [cs32]      "r" (CS32),
+              [entry]     "r" (entry)
+            : "rax", "rdi", "esi", "edx", "ecx", "rbp",
+              "rbx", "r12", "r13", "r14", "r15", "cc", "memory");
 
         // Reaching here means the far-return back-channel fired (stub returned
         // via far return). Unwind handled above.

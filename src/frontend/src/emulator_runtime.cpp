@@ -162,7 +162,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     log::info("RUNTIME", "Priming execution pipeline for Target: '{}'", exe_path);
 
     std::filesystem::path game_p(exe_path);
-    if (!std::filesystem::exists(game_p) && !config_.headless) {
+    if (!std::filesystem::exists(game_p)) {
         log::error("RUNTIME", "Target game binary does not exist: '{}'", exe_path);
         return ErrorCode::FileNotFound;
     }
@@ -217,72 +217,70 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             << "papaya.mipLodBias = 3.0\n";
     }
 
-    if (!config_.headless) {
-        pid_t pid = fork();
-        if (pid < 0) {
-            log::error("RUNTIME", "Failed to fork game process");
-            return ErrorCode::UnsupportedOperation;
+    pid_t pid = fork();
+    if (pid < 0) {
+        log::error("RUNTIME", "Failed to fork game process");
+        return ErrorCode::UnsupportedOperation;
+    }
+
+    if (pid == 0) {
+        // Child execution process
+        std::string game_dir = game_p.parent_path().string();
+        if (!game_dir.empty()) {
+            if (chdir(game_dir.c_str()) != 0) {}
         }
 
-        if (pid == 0) {
-            // Child execution process
-            std::string game_dir = game_p.parent_path().string();
-            if (!game_dir.empty()) {
-                if (chdir(game_dir.c_str()) != 0) {}
-            }
+        const char* disp = getenv("DISPLAY");
+        if (!disp) setenv("DISPLAY", ":0", 1);
 
-            const char* disp = getenv("DISPLAY");
-            if (!disp) setenv("DISPLAY", ":0", 1);
+        setenv("PAPAYA_POTATO_MODE", "1", 1);
+        setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
 
-            setenv("PAPAYA_POTATO_MODE", "1", 1);
-            setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
-
-            if (mode == ExecutionMode::NativeEngine) {
-                if (is_java) {
-                    log::info("ENGINE", ">>> Papaya Native Java Engine Bridge: Executing '{}' via Host JVM (Zero Wine!) <<<", jar_file);
+        if (mode == ExecutionMode::NativeEngine) {
+            if (is_java) {
+                log::info("ENGINE", ">>> Papaya Native Java Engine Bridge: Executing '{}' via Host JVM (Zero Wine!) <<<", jar_file);
+                char* args[] = {
+                    const_cast<char*>("java"),
+                    const_cast<char*>("-jar"),
+                    const_cast<char*>(jar_file.c_str()),
+                    nullptr
+                };
+                execvp("java", args);
+                _exit(127);
+            } else if (is_godot) {
+                log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' (Zero Wine!) <<<", pck_file);
+                const char* runners[] = {"godot", "godot4", "godot3", nullptr};
+                for (int i = 0; runners[i] != nullptr; ++i) {
                     char* args[] = {
-                        const_cast<char*>("java"),
-                        const_cast<char*>("-jar"),
-                        const_cast<char*>(jar_file.c_str()),
+                        const_cast<char*>(runners[i]),
+                        const_cast<char*>("--main-pack"),
+                        const_cast<char*>(pck_file.c_str()),
                         nullptr
                     };
-                    execvp("java", args);
-                    _exit(127);
-                } else if (is_godot) {
-                    log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' (Zero Wine!) <<<", pck_file);
-                    const char* runners[] = {"godot", "godot4", "godot3", nullptr};
-                    for (int i = 0; runners[i] != nullptr; ++i) {
-                        char* args[] = {
-                            const_cast<char*>(runners[i]),
-                            const_cast<char*>("--main-pack"),
-                            const_cast<char*>(pck_file.c_str()),
-                            nullptr
-                        };
-                        execvp(runners[i], args);
-                    }
-                    log::warn("ENGINE", "No standalone native Godot runner found in PATH, engaging Papaya Native Win32 HLE Matrix");
+                    execvp(runners[i], args);
                 }
+                log::warn("ENGINE", "No standalone native Godot runner found in PATH, engaging Papaya Native Win32 HLE Matrix");
             }
-
-            if (mode == ExecutionMode::NativeWin32 && loaded_img.entry_point != nullptr) {
-                log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
-                auto ret = pe_loader_->execute_native(loaded_img);
-                _exit(ret.value_or(0));
-            }
-
-            // NO WINE. If we reach here, the native path couldn't handle this binary.
-            // Fail loudly instead of silently degrading to an external wine/proton/bottle.
-            log::error("NATIVE_WIN32",
-                       "Papaya native translation layer could not execute '{}' "
-                       "(no Wine/Proton/Bottles fallback is permitted). "
-                       "The binary was not mapped or its architecture is unsupported.",
-                       game_p.string());
-            _exit(127);
         }
 
-        child_pid_ = pid;
-        log::info("RUNTIME", "Game execution spawned successfully with PID: {}", child_pid_);
+        if (mode == ExecutionMode::NativeWin32 && loaded_img.entry_point != nullptr) {
+            log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
+            auto ret = pe_loader_->execute_native(loaded_img);
+            _exit(ret.value_or(0));
+        }
+
+        // NO WINE. If we reach here, the native path couldn't handle this binary.
+        // Fail loudly instead of silently degrading to an external wine/proton/bottle.
+        log::error("NATIVE_WIN32",
+                   "Papaya native translation layer could not execute '{}' "
+                   "(no Wine/Proton/Bottles fallback is permitted). "
+                   "The binary was not mapped or its architecture is unsupported.",
+                   game_p.string());
+        _exit(127);
     }
+
+    child_pid_ = pid;
+    log::info("RUNTIME", "Game execution spawned successfully with PID: {}", child_pid_);
 
     is_running_ = true;
     return {};
