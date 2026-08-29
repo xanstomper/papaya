@@ -331,6 +331,15 @@ public:
     static PAPAYA_MS_ABI void  hle_steam_api_run_callbacks();
     static PAPAYA_MS_ABI BOOL  hle_steam_api_restart_app_if_necessary(u32 unOwnAppID);
     static PAPAYA_MS_ABI void* hle_steam_internal_create_interface(const char* ver);
+    static PAPAYA_MS_ABI void* hle_steam_internal_context_init(void* pCtxPointer);
+    static PAPAYA_MS_ABI void* hle_steam_internal_find_or_create_user_interface(const char* ver);
+    static PAPAYA_MS_ABI void* hle_steam_internal_find_or_create_server_interface(const char* ver);
+    static PAPAYA_MS_ABI void  hle_steam_register_callback(int cb, int nCallback);
+    static PAPAYA_MS_ABI void  hle_steam_unregister_callback(int cb);
+    static PAPAYA_MS_ABI void  hle_steam_register_call_result(int cb, int hResult);
+    static PAPAYA_MS_ABI void  hle_steam_unregister_call_result(int cb);
+    static PAPAYA_MS_ABI BOOL  hle_steam_is_running();
+    static PAPAYA_MS_ABI u32   hle_steam_get_h_steam_user();
 
     // MSVCRT Emulation (the C runtime every mingw/MSVC binary needs).
     // Memory & string (void-returning int for ABI simplicity; see impls).

@@ -1989,6 +1989,9 @@ u32 Win32ApiHle::hle_xinput_get_audio_device_ids(u32 dwUserIndex, void* pRenderI
 // -------------------------------------------------------------
 // Steamworks Direct Clean-Room Binding
 // -------------------------------------------------------------
+struct SteamInterface { void* vtable; int dummy; };
+struct SteamInternal_Ctx { void* pSteamBaseInterface; };
+static SteamInterface g_steam_iface;
 BOOL Win32ApiHle::hle_steam_api_init() {
     if (g_active_steam_stub) return g_active_steam_stub->steam_api_init() ? TRUE_VAL : FALSE_VAL;
     return TRUE_VAL;
@@ -2007,7 +2010,38 @@ BOOL Win32ApiHle::hle_steam_api_restart_app_if_necessary(u32 unOwnAppID) {
 }
 
 void* Win32ApiHle::hle_steam_internal_create_interface(const char* ver) {
-    return nullptr;
+    (void)ver;
+    // A real, non-null interface sentinel so games can cache the pointer and
+    // call interface methods without dereferencing null.
+    return &g_steam_iface;
+}
+
+// Modern Steam API: SteamInternal_ContextInit(&ctxMem). ctxMem must become a
+// usable CSteamAPIContext (first member = the base ISteamClient*). We store a
+// real singleton pointer so interface accessors return non-null and don't crash.
+void* Win32ApiHle::hle_steam_internal_context_init(void* pCtxPointer) {
+    if (!pCtxPointer) return nullptr;
+    auto* ctx = static_cast<SteamInternal_Ctx*>(pCtxPointer);
+    ctx->pSteamBaseInterface = &g_steam_iface;
+    return pCtxPointer;
+}
+void* Win32ApiHle::hle_steam_internal_find_or_create_user_interface(const char* ver) {
+    (void)ver;
+    return &g_steam_iface;
+}
+void* Win32ApiHle::hle_steam_internal_find_or_create_server_interface(const char* ver) {
+    (void)ver;
+    return &g_steam_iface;
+}
+void Win32ApiHle::hle_steam_register_callback(int cb, int nCallback) { (void)cb; (void)nCallback; }
+void Win32ApiHle::hle_steam_unregister_callback(int cb) { (void)cb; }
+void Win32ApiHle::hle_steam_register_call_result(int cb, int hResult) { (void)cb; (void)hResult; }
+void Win32ApiHle::hle_steam_unregister_call_result(int cb) { (void)cb; }
+BOOL Win32ApiHle::hle_steam_is_running() {
+    return TRUE_VAL;   // Papaya hosts the process natively, not via a Steam client
+}
+u32 Win32ApiHle::hle_steam_get_h_steam_user() {
+    return 1u;   // a plausible HSteamUser
 }
 
 // -------------------------------------------------------------
@@ -4298,16 +4332,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("STEAM_API64.DLL", "SteamAPI_RestartAppIfNecessary", reinterpret_cast<void*>(&hle_steam_api_restart_app_if_necessary));
     register_function("STEAM_API64.DLL", "SteamInternal_CreateInterface", reinterpret_cast<void*>(&hle_steam_internal_create_interface));
     register_function("STEAM_API64.DLL", "SteamInternal_SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
-    register_function("STEAM_API64.DLL", "SteamInternal_ContextInit", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateUserInterface", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateGameServerInterface", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallback", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallback", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallResult", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallResult", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("STEAM_API64.DLL", "SteamAPI_IsSteamRunning", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("STEAM_API64.DLL", "SteamAPI_GetHSteamUser", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("STEAM_API64.DLL", "SteamGameServer_GetHSteamUser", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("STEAM_API64.DLL", "SteamInternal_ContextInit", reinterpret_cast<void*>(&hle_steam_internal_context_init));
+    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateUserInterface", reinterpret_cast<void*>(&hle_steam_internal_find_or_create_user_interface));
+    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateGameServerInterface", reinterpret_cast<void*>(&hle_steam_internal_find_or_create_server_interface));
+    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallback", reinterpret_cast<void*>(&hle_steam_register_callback));
+    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallback", reinterpret_cast<void*>(&hle_steam_unregister_callback));
+    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallResult", reinterpret_cast<void*>(&hle_steam_register_call_result));
+    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallResult", reinterpret_cast<void*>(&hle_steam_unregister_call_result));
+    register_function("STEAM_API64.DLL", "SteamAPI_IsSteamRunning", reinterpret_cast<void*>(&hle_steam_is_running));
+    register_function("STEAM_API64.DLL", "SteamAPI_GetHSteamUser", reinterpret_cast<void*>(&hle_steam_get_h_steam_user));
+    register_function("STEAM_API64.DLL", "SteamGameServer_GetHSteamUser", reinterpret_cast<void*>(&hle_steam_get_h_steam_user));
 
     register_function("STEAM_API.DLL", "SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
     register_function("STEAM_API.DLL", "SteamAPI_Shutdown", reinterpret_cast<void*>(&hle_steam_api_shutdown));
