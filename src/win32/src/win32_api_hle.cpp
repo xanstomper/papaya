@@ -27,9 +27,17 @@ static std::shared_ptr<steam::SteamApiStub> g_active_steam_stub = nullptr;
 static std::shared_ptr<input::VirtualXInputManager> g_active_input_mgr = nullptr;
 
 // Generic no-op stub for uncritical APIs
-static void* generic_stub_success() { return reinterpret_cast<void*>(1); }
-static void* generic_stub_null() { return nullptr; }
-static int   generic_stub_zero() { return 0; }
+static PAPAYA_MS_ABI void* generic_stub_success() { return reinterpret_cast<void*>(1); }
+static PAPAYA_MS_ABI void* generic_stub_null() { return nullptr; }
+static PAPAYA_MS_ABI int   generic_stub_zero() { return 0; }
+static PAPAYA_MS_ABI int   hle_bcrypt_gen_random(void* hAlg, u8* pbBuffer, u32 cbBuffer, u32 dwFlags) {
+    if (pbBuffer && cbBuffer > 0) {
+        if (getrandom(pbBuffer, cbBuffer, 0) < 0) {
+            for (u32 i = 0; i < cbBuffer; ++i) pbBuffer[i] = static_cast<u8>(rand() & 0xFF);
+        }
+    }
+    return 0; // STATUS_SUCCESS
+}
 
 // -------------------------------------------------------------
 // Memory Emulation
@@ -605,15 +613,8 @@ void* Win32ApiHle::hle_steam_internal_create_interface(const char* ver) {
 }
 
 // -------------------------------------------------------------
-// BCrypt & Random
+// Win32ApiHle Initialization & Registration Matrix
 // -------------------------------------------------------------
-static int hle_bcrypt_gen_random(void* hAlg, u8* pbBuffer, u32 cbBuffer, u32 dwFlags) {
-    if (pbBuffer && cbBuffer > 0) {
-        getrandom(pbBuffer, cbBuffer, 0);
-    }
-    return 0; // STATUS_SUCCESS
-}
-
 Win32ApiHle::Win32ApiHle(
     std::shared_ptr<steam::SteamApiStub> steam_stub,
     std::shared_ptr<input::VirtualXInputManager> input_mgr

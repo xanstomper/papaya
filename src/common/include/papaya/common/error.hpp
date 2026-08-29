@@ -107,6 +107,11 @@ public:
     T* operator->() { return &value(); }
     const T* operator->() const { return &value(); }
 
+    T value_or(T default_val) const {
+        if (has_value()) return std::get<T>(storage_);
+        return default_val;
+    }
+
     ErrorCode error() const {
         if (has_value()) return ErrorCode::Success;
         return std::get<ErrorCode>(storage_);

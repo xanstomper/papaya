@@ -26,6 +26,7 @@ namespace papaya::frontend {
 struct RuntimeConfig {
     DeviceTier device_tier{DeviceTier::DesktopLinux};
     PerformanceMode performance_mode{PerformanceMode::PotatoMode};
+    ExecutionMode execution_mode{ExecutionMode::Auto};
     std::string game_executable_path;
     u32 steam_app_id{0};
     bool headless{false};

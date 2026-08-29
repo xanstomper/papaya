@@ -92,8 +92,66 @@ Result<> EmulatorRuntime::initialize() {
     return {};
 }
 
+// Helper: Inspect if file has Godot PCK package (standalone .pck or embedded in PE)
+static bool detect_godot_pck(const std::filesystem::path& path, std::string& out_pck_path) {
+    if (path.extension() == ".pck" && std::filesystem::exists(path)) {
+        out_pck_path = path.string();
+        return true;
+    }
+    // Check adjacent .pck with same base name
+    auto adj = path.parent_path() / (path.stem().string() + ".pck");
+    if (std::filesystem::exists(adj)) {
+        out_pck_path = adj.string();
+        return true;
+    }
+    // Check if PE binary has GDPC header embedded
+    if (std::filesystem::exists(path)) {
+        std::ifstream f(path, std::ios::binary);
+        if (f.is_open()) {
+            f.seekg(0, std::ios::end);
+            auto sz = f.tellg();
+            if (sz > 64) {
+                // Check tail 1MB for GDPC magic (0x43504447)
+                size_t scan_size = std::min<size_t>(static_cast<size_t>(sz), 1024 * 1024);
+                f.seekg(-static_cast<std::streamoff>(scan_size), std::ios::end);
+                std::vector<char> buf(scan_size);
+                f.read(buf.data(), scan_size);
+                if (std::string_view(buf.data(), scan_size).find("GDPC") != std::string_view::npos) {
+                    out_pck_path = path.string();
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Helper: Check for Java JAR
+static bool detect_java_jar(const std::filesystem::path& path, std::string& out_jar_path) {
+    if (path.extension() == ".jar" && std::filesystem::exists(path)) {
+        out_jar_path = path.string();
+        return true;
+    }
+    auto adj = path.parent_path() / (path.stem().string() + ".jar");
+    if (std::filesystem::exists(adj)) {
+        out_jar_path = adj.string();
+        return true;
+    }
+    auto djar = path.parent_path() / "desktop.jar";
+    if (std::filesystem::exists(djar)) {
+        out_jar_path = djar.string();
+        return true;
+    }
+    auto jre_djar = path.parent_path() / "jre" / "desktop.jar";
+    if (std::filesystem::exists(jre_djar)) {
+        out_jar_path = jre_djar.string();
+        return true;
+    }
+    return false;
+}
+
 Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
-    log::info("RUNTIME", "Priming execution pipeline for Steam Title: '{}'", exe_path);
+    log::info("RUNTIME", "Priming execution pipeline for Target: '{}'", exe_path);
 
     std::filesystem::path game_p(exe_path);
     if (!std::filesystem::exists(game_p) && !config_.headless) {
@@ -110,20 +168,37 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         steam_stub_->initialize();
     }
 
-    // Load PE Image directly into memory using Papaya's native PE Loader
+    // Detect Engine Types
+    std::string pck_file;
+    bool is_godot = detect_godot_pck(game_p, pck_file);
+
+    std::string jar_file;
+    bool is_java = detect_java_jar(game_p, jar_file);
+
+    // Determine Execution Mode
+    ExecutionMode mode = config_.execution_mode;
+    if (mode == ExecutionMode::Auto) {
+        if (is_java || is_godot) {
+            mode = ExecutionMode::NativeEngine;
+        } else {
+            mode = ExecutionMode::NativeWin32;
+        }
+    }
+
+    // Load PE Image if relevant
     win32::LoadedPeImage loaded_img{};
-    if (std::filesystem::exists(game_p)) {
+    if (std::filesystem::exists(game_p) && game_p.extension() == ".exe") {
         auto pe_res = pe_loader_->load_from_file(game_p);
         if (pe_res.has_value()) {
             loaded_img = *pe_res;
-            log::info("RUNTIME", "Papaya Native PE Mapper successfully mapped [Base: 0x{:X}, EntryPoint: 0x{:X}, Size: {} KB]",
+            log::info("RUNTIME", "Papaya Native PE Mapper mapped image [Base: 0x{:X}, EntryPoint: 0x{:X}, Size: {} KB]",
                       reinterpret_cast<u64>(loaded_img.image_base),
                       reinterpret_cast<u64>(loaded_img.entry_point),
                       loaded_img.size_of_image / 1024);
         }
     }
 
-    // Write Potato Mode dxvk.conf in game directory
+    // Generate Potato Mode dxvk.conf in game directory
     auto dxvk_conf = game_p.parent_path() / "dxvk.conf";
     if (!game_p.parent_path().empty()) {
         std::ofstream cfg(dxvk_conf);
@@ -134,11 +209,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             << "papaya.mipLodBias = 3.0\n";
     }
 
-    log::info("RUNTIME", "Executing target under Papaya Native Win32 Translation Matrix: '{}' (AppID: {})",
-              game_p.filename().string(), steam_stub_->get_app_id());
-
-    if (!config_.headless && loaded_img.entry_point != nullptr) {
-        // Fork child process to isolate address space and execute native PE
+    if (!config_.headless) {
         pid_t pid = fork();
         if (pid < 0) {
             log::error("RUNTIME", "Failed to fork game process");
@@ -146,7 +217,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         }
 
         if (pid == 0) {
-            // Child Process: Native Papaya Execution Environment
+            // Child execution process
             std::string game_dir = game_p.parent_path().string();
             if (!game_dir.empty()) {
                 if (chdir(game_dir.c_str()) != 0) {}
@@ -158,23 +229,51 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             setenv("PAPAYA_POTATO_MODE", "1", 1);
             setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
 
-            // Directly invoke the mapped PE binary Entry Point in memory!
-            log::info("NATIVE_EXEC", "Jumping to Native PE EntryPoint @ 0x{:X} without Wine!",
-                      reinterpret_cast<u64>(loaded_img.entry_point));
-
-            using WinMainFn = int (*)(void*, void*, const char*, int);
-            auto entry_fn = reinterpret_cast<WinMainFn>(loaded_img.entry_point);
-
-            try {
-                int exit_code = entry_fn(loaded_img.image_base, nullptr, "", 1);
-                _exit(exit_code);
-            } catch (...) {
-                _exit(0);
+            if (mode == ExecutionMode::NativeEngine) {
+                if (is_java) {
+                    log::info("ENGINE", ">>> Papaya Native Java Engine Bridge: Executing '{}' via Host JVM (Zero Wine!) <<<", jar_file);
+                    char* args[] = {
+                        const_cast<char*>("java"),
+                        const_cast<char*>("-jar"),
+                        const_cast<char*>(jar_file.c_str()),
+                        nullptr
+                    };
+                    execvp("java", args);
+                    _exit(127);
+                } else if (is_godot) {
+                    log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' (Zero Wine!) <<<", pck_file);
+                    const char* runners[] = {"godot", "godot4", "godot3", nullptr};
+                    for (int i = 0; runners[i] != nullptr; ++i) {
+                        char* args[] = {
+                            const_cast<char*>(runners[i]),
+                            const_cast<char*>("--main-pack"),
+                            const_cast<char*>(pck_file.c_str()),
+                            nullptr
+                        };
+                        execvp(runners[i], args);
+                    }
+                    log::warn("ENGINE", "No standalone native Godot runner found in PATH, engaging Papaya Native Win32 HLE Matrix");
+                }
             }
+
+            if (mode == ExecutionMode::NativeWin32 && loaded_img.entry_point != nullptr) {
+                log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
+                auto ret = pe_loader_->execute_native(loaded_img);
+                _exit(ret.value_or(0));
+            }
+
+            // NO WINE. If we reach here, the native path couldn't handle this binary.
+            // Fail loudly instead of silently degrading to an external wine/proton/bottle.
+            log::error("NATIVE_WIN32",
+                       "Papaya native translation layer could not execute '{}' "
+                       "(no Wine/Proton/Bottles fallback is permitted). "
+                       "The binary was not mapped or its architecture is unsupported.",
+                       game_p.string());
+            _exit(127);
         }
 
         child_pid_ = pid;
-        log::info("RUNTIME", "Native in-memory game execution started with PID: {}", child_pid_);
+        log::info("RUNTIME", "Game execution spawned successfully with PID: {}", child_pid_);
     }
 
     is_running_ = true;

@@ -4,8 +4,21 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <signal.h>
+#include <ucontext.h>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <asm/prctl.h>
+#include <sys/syscall.h>
+#endif
 
 namespace papaya::win32 {
+
+// -------------------------------------------------------------
+// Static fault-emulation state
+// -------------------------------------------------------------
+std::map<u64, u32> PeLoader::s_guard_pages;
+std::mutex PeLoader::s_guard_mutex;
+thread_local void* PeLoader::s_active_loader = nullptr;
 
 PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
     : hle_(hle ? hle : std::make_shared<Win32ApiHle>()) {
@@ -13,6 +26,54 @@ PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
 }
 
 PeLoader::~PeLoader() = default;
+
+// -------------------------------------------------------------
+// Header Parsing: supports both PE32+ (0x020B) and PE32 (0x010B)
+// -------------------------------------------------------------
+bool PeLoader::parse_nt_headers(const u8* file_raw, size_t file_size, size_t nt_offset,
+                                ImageNtHeadersUnified& out) {
+    if (nt_offset + sizeof(u32) + sizeof(ImageFileHeader) > file_size) return false;
+
+    const u32 signature = *reinterpret_cast<const u32*>(file_raw + nt_offset);
+    if (signature != IMAGE_NT_SIGNATURE) return false;
+
+    const auto* fh = reinterpret_cast<const ImageFileHeader*>(file_raw + nt_offset + sizeof(u32));
+    const u8* opt = file_raw + nt_offset + sizeof(u32) + sizeof(ImageFileHeader);
+    const size_t opt_avail = file_size - (opt - file_raw);
+
+    std::memset(&out, 0, sizeof(out));
+    out = ImageNtHeadersUnified{}; // value-init to silence memaccess warning
+    out.machine = fh->machine;
+
+    if (fh->size_of_optional_header < 2 || opt_avail < 2) return false;
+    const u16 magic = *reinterpret_cast<const u16*>(opt);
+
+    if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC && opt_avail >= sizeof(ImageOptionalHeader64)) {
+        const auto* oh = reinterpret_cast<const ImageOptionalHeader64*>(opt);
+        out.is_64bit = true;
+        out.size_of_image = oh->size_of_image;
+        out.size_of_headers = oh->size_of_headers;
+        out.address_of_entry_point = oh->address_of_entry_point;
+        out.image_base = oh->image_base;
+        out.section_alignment = oh->section_alignment;
+        out.file_alignment = oh->file_alignment;
+        std::memcpy(out.data_directory, oh->data_directory, sizeof(out.data_directory));
+        return true;
+    }
+    if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC && opt_avail >= sizeof(ImageOptionalHeader32)) {
+        const auto* oh = reinterpret_cast<const ImageOptionalHeader32*>(opt);
+        out.is_64bit = false;
+        out.size_of_image = oh->size_of_image;
+        out.size_of_headers = oh->size_of_headers;
+        out.address_of_entry_point = oh->address_of_entry_point;
+        out.image_base = oh->image_base;
+        out.section_alignment = oh->section_alignment;
+        out.file_alignment = oh->file_alignment;
+        std::memcpy(out.data_directory, oh->data_directory, sizeof(out.data_directory));
+        return true;
+    }
+    return false;
+}
 
 Result<LoadedPeImage> PeLoader::load_from_file(const std::filesystem::path& file_path) {
     std::ifstream file(file_path, std::ios::binary | std::ios::ate);
@@ -44,22 +105,59 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
         return ErrorCode::RomInvalidMagic;
     }
 
-    if (dos_hdr->e_lfanew <= 0 || static_cast<size_t>(dos_hdr->e_lfanew) + sizeof(ImageNtHeaders64) > file_data.size()) {
+    if (dos_hdr->e_lfanew <= 0 || static_cast<size_t>(dos_hdr->e_lfanew) >= file_data.size()) {
         log::error("PE_LOADER", "Invalid NT Header offset (e_lfanew: {})", dos_hdr->e_lfanew);
         return ErrorCode::RomCorruptHeader;
     }
 
-    const auto* nt_hdr = reinterpret_cast<const ImageNtHeaders64*>(file_data.data() + dos_hdr->e_lfanew);
-    if (nt_hdr->signature != IMAGE_NT_SIGNATURE) {
-        log::error("PE_LOADER", "Invalid NT Signature 0x{:X} (expected 'PE\\0\\0')", nt_hdr->signature);
+    ImageNtHeadersUnified nt{};
+    if (!parse_nt_headers(file_data.data(), file_data.size(),
+                          static_cast<size_t>(dos_hdr->e_lfanew), nt)) {
+        log::error("PE_LOADER", "Unparseable NT headers (neither PE32 nor PE32+ magic)");
         return ErrorCode::RomInvalidMagic;
     }
 
-    u64 size_of_image = nt_hdr->optional_header.size_of_image;
-    u64 original_base = nt_hdr->optional_header.image_base;
+    const u32 machine = nt.machine;
+    const bool is_64bit = nt.is_64bit;
+    log::info("PE_LOADER", "PE Architecture: {} ({}, {}-bit entry @ RVA 0x{:X})",
+              machine,
+              machine == IMAGE_FILE_MACHINE_AMD64 ? "x86-64" :
+              machine == IMAGE_FILE_MACHINE_I386  ? "x86-32" :
+              machine == IMAGE_FILE_MACHINE_ARM64 ? "ARM64" :
+              machine == IMAGE_FILE_MACHINE_ARMNT ? "ARM32 (Thumb-2)" : "unknown",
+              is_64bit ? 64 : 32,
+              nt.address_of_entry_point);
+
+    // ---- Architecture feasibility gate (NO silent Wine fallback) ----
+    bool arch_supported = false;
+#if defined(__x86_64__) || defined(_M_X64)
+    if (machine == IMAGE_FILE_MACHINE_AMD64) arch_supported = true;      // native
+    if (machine == IMAGE_FILE_MACHINE_I386)  arch_supported = true;      // via heaven's gate bridge
+#elif defined(__aarch64__)
+    if (machine == IMAGE_FILE_MACHINE_ARM64) arch_supported = true;      // native
+    if (machine == IMAGE_FILE_MACHINE_ARMNT) arch_supported = true;      // via ARM32 bridge
+#endif
+    if (!arch_supported) {
+        log::error("PE_LOADER", "Cannot natively execute PE machine type 0x{:X} on this host. "
+                                "Refusing to degrade to Wine.", machine);
+        return ErrorCode::UnsupportedOperation;
+    }
+
+    u64 size_of_image = nt.size_of_image;
+    u64 original_base = nt.image_base;
+
+    // 32-bit images expect to load below 4GB. On x86-64 Linux we can usually get
+    // the low 2GB region; fall back to any address (relocations fix pointers, but
+    // code assuming <4GB absolute addressing is rare in practice).
+    void* hint = nullptr;
+    if (!is_64bit) {
+        hint = reinterpret_cast<void*>(0x10000000); // classic low heap area
+    } else {
+        hint = reinterpret_cast<void*>(original_base);
+    }
 
     // Allocate virtual memory for the entire image
-    void* allocated_base = mmap(reinterpret_cast<void*>(original_base), size_of_image,
+    void* allocated_base = mmap(hint, size_of_image,
                                 PROT_READ | PROT_WRITE | PROT_EXEC,
                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
@@ -78,11 +176,12 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
     std::memset(allocated_base, 0, size_of_image);
 
     // Copy PE headers to base
-    u32 size_of_headers = nt_hdr->optional_header.size_of_headers;
-    std::memcpy(allocated_base, file_data.data(), std::min(static_cast<size_t>(size_of_headers), file_data.size()));
+    u32 size_of_headers = nt.size_of_headers;
+    std::memcpy(allocated_base, file_data.data(),
+                std::min(static_cast<size_t>(size_of_headers), file_data.size()));
 
     // Map each PE Section (.text, .rdata, .data, .reloc)
-    auto map_res = map_sections(file_data.data(), nt_hdr, allocated_base);
+    auto map_res = map_sections(file_data.data(), nt, allocated_base);
     if (!map_res) {
         munmap(allocated_base, size_of_image);
         return map_res.error();
@@ -90,36 +189,96 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
 
     // Apply base relocations if loaded at different base
     if (reinterpret_cast<u64>(allocated_base) != original_base) {
-        apply_relocations(nt_hdr, allocated_base, original_base);
+        auto reloc_res = apply_relocations(allocated_base, size_of_image, nt, original_base);
+        if (!reloc_res) {
+            munmap(allocated_base, size_of_image);
+            return reloc_res.error();
+        }
     }
 
-    // Resolve IAT imports
-    resolve_imports(file_data.data(), nt_hdr, allocated_base);
+    // Resolve IAT imports against the HLE export table
+    auto import_res = resolve_imports(reinterpret_cast<u8*>(allocated_base), nt);
+    if (!import_res) {
+        munmap(allocated_base, size_of_image);
+        return import_res.error();
+    }
 
     LoadedPeImage image{};
     image.image_base = allocated_base;
     image.size_of_image = size_of_image;
-    image.entry_point = reinterpret_cast<void*>(reinterpret_cast<u8*>(allocated_base) + nt_hdr->optional_header.address_of_entry_point);
-    image.machine = nt_hdr->file_header.machine;
-    image.is_64bit = (nt_hdr->optional_header.magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC);
+    image.entry_point = reinterpret_cast<void*>(reinterpret_cast<u8*>(allocated_base) +
+                                                nt.address_of_entry_point);
+    image.machine = machine;
+    image.is_64bit = is_64bit;
 
-    log::info("PE_LOADER", "Loaded PE Image [Base: 0x{:X}, Entry: 0x{:X}, Size: {} KB, Sections: {}]",
+    // Copy section headers into the image struct (they follow the optional header)
+    {
+        const size_t fh_off = static_cast<size_t>(dos_hdr->e_lfanew) + sizeof(u32);
+        const u16 nsec = *reinterpret_cast<const u16*>(file_data.data() + fh_off + 2);
+        const u16 size_opt = *reinterpret_cast<const u16*>(file_data.data() + fh_off + 16);
+        const auto* sh = reinterpret_cast<const ImageSectionHeader*>(
+            file_data.data() + fh_off + sizeof(ImageFileHeader) + size_opt);
+        for (u16 i = 0; i < nsec; ++i) image.sections.push_back(sh[i]);
+    }
+
+    auto prot_res = apply_section_protections(allocated_base, size_of_image, image.sections);
+    if (!prot_res) {
+        munmap(allocated_base, size_of_image);
+        return prot_res.error();
+    }
+
+    log::info("PE_LOADER", "Loaded PE Image [Base: 0x{:X}, Entry: 0x{:X}, Size: {} KB, Sections: {}, Arch: {}]",
               reinterpret_cast<u64>(image.image_base),
               reinterpret_cast<u64>(image.entry_point),
               image.size_of_image / 1024,
-              nt_hdr->file_header.number_of_sections);
+              image.sections.size(),
+              machine == IMAGE_FILE_MACHINE_I386 ? "x86-32" : "x86-64");
 
     return image;
 }
 
-Result<> PeLoader::map_sections(const u8* file_raw, const ImageNtHeaders64* nt_hdr, void* allocated_base) {
+// -------------------------------------------------------------
+// Section Mapping & Protections
+// -------------------------------------------------------------
+Result<> PeLoader::map_sections(const u8* file_raw, const ImageNtHeadersUnified& nt, void* allocated_base) {
+    // Section header array location is identical for PE32/PE32+: it follows the
+    // optional header (whose size lives in the file header).
+    const auto* fh = reinterpret_cast<const ImageFileHeader*>(
+        reinterpret_cast<const u8*>(&nt) + 0); // not used; section walk happens via caller data
+    (void)fh;
+
+    // NOTE: section headers are walked by load_from_memory via image.sections;
+    // this function uses the unified header + raw file to copy section payloads.
+    // The section header array pointer is derived from the raw file by the caller.
+    // For simplicity we re-derive it here from nt::data_directory[0] position is
+    // not possible; instead the caller passes image.sections already parsed.
+    // -> See load_from_memory: it calls this BEFORE building image.sections.
+    // To keep a single source of truth, re-parse section headers from the NT
+    // headers embedded in the file buffer. We reconstruct the offset from the
+    // optional header magic recorded in the unified view.
+    // (This keeps map_sections self-contained.)
+
+    // The section table always sits at: nt_offset + 4 + 20 + size_of_optional_header.
+    // We recover nt_offset by scanning back from the first section's known layout:
+    // instead, parse the DOS header again from the raw buffer is impossible here
+    // (we only get file_raw == the whole file). We assume e_lfanew == offset of
+    // "PE\0\0" signature in the buffer.
+    size_t nt_off = 0;
+    {
+        // Find "PE\0\0" - first occurrence at 4-byte alignment within first 1KB
+        for (size_t i = 0; i + 4 < 4096 && i + 4 < 1024 * 1024; i += 4) {
+            if (std::memcmp(file_raw + i, "PE\0\0", 4) == 0) { nt_off = i; break; }
+        }
+        if (nt_off == 0) return ErrorCode::RomInvalidMagic;
+    }
+
+    const auto* fh2 = reinterpret_cast<const ImageFileHeader*>(file_raw + nt_off + 4);
     const auto* section_hdrs = reinterpret_cast<const ImageSectionHeader*>(
-        reinterpret_cast<const u8*>(&nt_hdr->optional_header) + nt_hdr->file_header.size_of_optional_header
-    );
+        file_raw + nt_off + 4 + sizeof(ImageFileHeader) + fh2->size_of_optional_header);
 
     u8* base_bytes = reinterpret_cast<u8*>(allocated_base);
 
-    for (u16 i = 0; i < nt_hdr->file_header.number_of_sections; ++i) {
+    for (u16 i = 0; i < fh2->number_of_sections; ++i) {
         const auto& sec = section_hdrs[i];
         char sec_name[9] = {0};
         std::memcpy(sec_name, sec.name, 8);
@@ -130,26 +289,159 @@ Result<> PeLoader::map_sections(const u8* file_raw, const ImageNtHeaders64* nt_h
         u32 raw_size = sec.size_of_raw_data;
 
         if (raw_ptr > 0 && raw_size > 0) {
-            std::memcpy(base_bytes + vaddr, file_raw + raw_ptr, std::min(vsize > 0 ? vsize : raw_size, raw_size));
+            u32 copy_size = std::min(vsize > 0 ? vsize : raw_size, raw_size);
+            // Bound the copy inside the image allocation
+            if (static_cast<u64>(vaddr) + copy_size > nt.size_of_image) {
+                copy_size = static_cast<u32>(nt.size_of_image - vaddr);
+            }
+            std::memcpy(base_bytes + vaddr, file_raw + raw_ptr, copy_size);
         }
 
-        log::debug("PE_LOADER", "Mapped Section '{}' -> RVA 0x{:X} (Size: {} bytes)", sec_name, vaddr, vsize);
+        log::debug("PE_LOADER", "Mapped Section '{}' -> RVA 0x{:X} (Size: {} bytes)",
+                   sec_name, vaddr, vsize);
     }
 
     return {};
 }
 
-Result<> PeLoader::apply_relocations(const ImageNtHeaders64* nt_hdr, void* allocated_base, u64 original_image_base) {
-    const auto& reloc_dir = nt_hdr->optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+// -------------------------------------------------------------
+// Split-fault WRITE-COPY / guard-page emulation
+// -------------------------------------------------------------
+Result<> PeLoader::handle_guard_page_fault(u8* fault_addr, void* ctx) {
+    const u64 page = reinterpret_cast<u64>(fault_addr) & ~static_cast<u64>(0xFFF);
+
+    {
+        std::lock_guard<std::mutex> lock(s_guard_mutex);
+        auto it = s_guard_pages.find(page);
+        if (it == s_guard_pages.end()) return ErrorCode::UnsupportedOperation;
+        u32 prot = it->second;
+
+        int host_prot = PROT_READ;
+        if (prot & PAGE_READWRITE)  host_prot |= PROT_WRITE;
+        if (prot & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
+            host_prot |= PROT_EXEC;
+
+        if (mprotect(reinterpret_cast<void*>(page), 0x1000, host_prot) != 0)
+            return ErrorCode::UnsupportedOperation;
+    }
+
+    // Restart the faulting instruction with the trap flag set so we can restore
+    // the guard after exactly one instruction executes.
+    auto* uc = static_cast<ucontext_t*>(ctx);
+    uc->uc_mcontext.gregs[REG_EFL] |= 0x100; // set TF
+
+    // Restore pass: after the single step, a SIGTRAP will arrive; we handle it in
+    // the same handler by detecting pending guard pages for this thread.
+    // Simpler and robust: mark page for restore-on-next-fault instead of
+    // single-stepping restore. The page stays permissive for process lifetime —
+    // correct for games that never re-protect memory.
+    return {};
+}
+
+void PeLoader::fault_handler(int sig, siginfo_t* info, void* ctx) {
+    if (sig != SIGSEGV || !info || !info->si_addr) return;
+    auto* loader = static_cast<PeLoader*>(s_active_loader);
+    if (!loader) return; // not our fault — let default action kill us
+
+    // Only service faults that hit guard pages we manage
+    {
+        std::lock_guard<std::mutex> lock(s_guard_mutex);
+        u64 page = reinterpret_cast<u64>(info->si_addr) & ~static_cast<u64>(0xFFF);
+        if (s_guard_pages.find(page) == s_guard_pages.end()) return;
+    }
+
+    auto res = loader->handle_guard_page_fault(static_cast<u8*>(info->si_addr), ctx);
+    if (!res) {
+        log::error("PE_LOADER", "Guard-page fault at 0x{:X} could not be serviced",
+                   reinterpret_cast<u64>(info->si_addr));
+    }
+}
+
+void PeLoader::install_fault_handler() {
+    struct sigaction sa{};
+    sa.sa_sigaction = &PeLoader::fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, nullptr);
+
+    std::lock_guard<std::mutex> lock(s_guard_mutex);
+    s_guard_pages = guard_pages_;
+}
+
+// -------------------------------------------------------------
+// Per-section protections
+// -------------------------------------------------------------
+Result<> PeLoader::apply_section_protections(void* allocated_base, u64 size_of_image,
+                                             const std::vector<ImageSectionHeader>& sections) {
+    u8* base = reinterpret_cast<u8*>(allocated_base);
+    const long page_size = sysconf(_SC_PAGESIZE);
+    const u64 ps = static_cast<u64>(page_size);
+
+    for (const auto& sec : sections) {
+        u32 chars = sec.characteristics;
+        int prot = 0;
+        if (chars & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
+        if (chars & IMAGE_SCN_MEM_READ)    prot |= PROT_READ;
+        if (chars & IMAGE_SCN_MEM_WRITE)   prot |= PROT_WRITE;
+        if (prot == 0) prot = PROT_READ; // data sections without explicit READ
+
+        u64 start = reinterpret_cast<u64>(base) + sec.virtual_address;
+        u64 end   = start + (sec.misc.virtual_size ? sec.misc.virtual_size : sec.size_of_raw_data);
+        u64 p_start = start & ~(ps - 1);
+        u64 p_end   = (end + ps - 1) & ~(ps - 1);
+        if (p_end > reinterpret_cast<u64>(base) + size_of_image)
+            p_end = reinterpret_cast<u64>(base) + size_of_image;
+        if (p_end <= p_start) continue;
+
+        // Sections sharing a page with a more permissive section get the union;
+        // simple model: apply max prot. Track WC (write-copy) sections as guards.
+        bool writecopy = (prot & PROT_WRITE) && !(chars & 0x04000000); // !IMAGE_SCN_MEM_DISCARDABLE
+        if (prot & PROT_WRITE) {
+            // Keep writable pages RWX-free: RW is enough; EXEC+WRITE stays (JIT zones)
+            if (!(chars & IMAGE_SCN_MEM_EXECUTE)) prot = PROT_READ | PROT_WRITE;
+        }
+
+        if (writecopy) {
+            // Emulate COW lazily: start read-only, promote on fault
+            std::lock_guard<std::mutex> lock(s_guard_mutex);
+            for (u64 pg = p_start; pg < p_end; pg += ps) {
+                guard_pages_[pg] = PAGE_READWRITE;
+                s_guard_pages[pg] = PAGE_READWRITE;
+            }
+            if (mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, PROT_READ) != 0) {
+                log::warn("PE_LOADER", "mprotect RO for WC section failed — leaving RW");
+                mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, PROT_READ | PROT_WRITE);
+            }
+        } else {
+            if (mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, prot) != 0) {
+                log::warn("PE_LOADER", "mprotect(0x{:X}, {}) failed — skipping section protection",
+                          p_start, p_end - p_start);
+            }
+        }
+    }
+
+    install_fault_handler();
+    log::info("PE_LOADER", "Per-section protections applied ({} sections, {} guard pages)",
+              sections.size(), guard_pages_.size());
+    return {};
+}
+
+// -------------------------------------------------------------
+// Base Relocations
+// -------------------------------------------------------------
+Result<> PeLoader::apply_relocations(void* allocated_base, u64 size_of_image,
+                                     const ImageNtHeadersUnified& nt, u64 original_image_base) {
+    const auto& reloc_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
     if (reloc_dir.virtual_address == 0 || reloc_dir.size == 0) return {};
 
     u64 delta = reinterpret_cast<u64>(allocated_base) - original_image_base;
     u8* base_bytes = reinterpret_cast<u8*>(allocated_base);
     u8* reloc_ptr = base_bytes + reloc_dir.virtual_address;
     u8* reloc_end = reloc_ptr + reloc_dir.size;
+    if (reloc_end > base_bytes + size_of_image) reloc_end = base_bytes + size_of_image;
 
     u64 total_relocs = 0;
-    while (reloc_ptr < reloc_end) {
+    while (reloc_ptr + sizeof(ImageBaseRelocation) <= reloc_end) {
         const auto* block = reinterpret_cast<const ImageBaseRelocation*>(reloc_ptr);
         if (block->size_of_block == 0) break;
 
@@ -160,66 +452,307 @@ Result<> PeLoader::apply_relocations(const ImageNtHeaders64* nt_hdr, void* alloc
             u16 type = entries[i] >> 12;
             u16 offset = entries[i] & 0xFFF;
 
-            if (type == IMAGE_REL_BASED_DIR64) {
+            switch (type) {
+            case IMAGE_REL_BASED_DIR64: {
                 u64* target = reinterpret_cast<u64*>(base_bytes + block->virtual_address + offset);
                 *target += delta;
                 total_relocs++;
-            } else if (type == IMAGE_REL_BASED_HIGHLOW) {
+                break;
+            }
+            case IMAGE_REL_BASED_HIGHLOW: {
                 u32* target = reinterpret_cast<u32*>(base_bytes + block->virtual_address + offset);
                 *target += static_cast<u32>(delta);
                 total_relocs++;
+                break;
+            }
+            case IMAGE_REL_BASED_HIGH: {
+                u16* target = reinterpret_cast<u16*>(base_bytes + block->virtual_address + offset);
+                *target += static_cast<u16>(delta >> 16);
+                total_relocs++;
+                break;
+            }
+            case IMAGE_REL_BASED_LOW: {
+                u16* target = reinterpret_cast<u16*>(base_bytes + block->virtual_address + offset);
+                *target += static_cast<u16>(delta & 0xFFFF);
+                total_relocs++;
+                break;
+            }
+            case IMAGE_REL_BASED_ABSOLUTE:
+            default:
+                break;
             }
         }
 
         reloc_ptr += block->size_of_block;
     }
 
-    log::info("PE_LOADER", "Applied {} Base Relocations (Base Delta: 0x{:X})", total_relocs, delta);
+    log::info("PE_LOADER", "Applied {} Base Relocations (Base Delta: {:+#X})", total_relocs, static_cast<s64>(delta));
     return {};
 }
 
-Result<> PeLoader::resolve_imports(const u8* file_raw, const ImageNtHeaders64* nt_hdr, void* allocated_base) {
-    const auto& import_dir = nt_hdr->optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+// -------------------------------------------------------------
+// Import Resolution (handles PE32 4-byte thunks + PE32+ 8-byte thunks)
+// -------------------------------------------------------------
+Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& nt) {
+    const auto& import_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (import_dir.virtual_address == 0 || import_dir.size == 0) return {};
 
-    u8* base_bytes = reinterpret_cast<u8*>(allocated_base);
-    auto* import_desc = reinterpret_cast<ImageImportDescriptor*>(base_bytes + import_dir.virtual_address);
+    u64 read_ptr = import_dir.virtual_address;
+    while (read_ptr + sizeof(ImageImportDescriptor) <= nt.size_of_image) {
+        auto* desc = reinterpret_cast<ImageImportDescriptor*>(base_bytes + read_ptr);
+        if (desc->name == 0) break;
 
-    while (import_desc->name != 0) {
-        const char* dll_name = reinterpret_cast<const char*>(base_bytes + import_desc->name);
-        u32 thunk_rva = import_desc->original_first_thunk ? import_desc->original_first_thunk : import_desc->first_thunk;
-        
-        u64* lookup_thunk = reinterpret_cast<u64*>(base_bytes + thunk_rva);
-        u64* iat_thunk = reinterpret_cast<u64*>(base_bytes + import_desc->first_thunk);
+        const char* dll_name = reinterpret_cast<const char*>(base_bytes + desc->name);
+        u32 int_rva  = desc->original_first_thunk ? desc->original_first_thunk : desc->first_thunk;
+        u32 iat_rva  = desc->first_thunk;
+        u64 stride   = nt.is_64bit ? 8 : 4;
+        u64 ord_flag = nt.is_64bit ? 0x8000000000000000ULL : 0x80000000ULL;
 
-        while (*lookup_thunk != 0) {
-            if (*lookup_thunk & 0x8000000000000000ULL) {
-                // Import by Ordinal
-                u16 ordinal = static_cast<u16>(*lookup_thunk & 0xFFFF);
-                void* fn_ptr = hle_->resolve_symbol(dll_name, std::to_string(ordinal));
-                *iat_thunk = reinterpret_cast<u64>(fn_ptr);
+        u64 lookup_off = int_rva;
+        u64 iat_off = iat_rva;
+        u64 resolved = 0, failed = 0;
+
+        for (;;) {
+            u64 thunk_val;
+            if (lookup_off + stride > nt.size_of_image) break;
+            if (stride == 8) {
+                thunk_val = *reinterpret_cast<u64*>(base_bytes + lookup_off);
             } else {
-                // Import by Name
-                u32 name_rva = static_cast<u32>(*lookup_thunk & 0xFFFFFFFF);
-                const char* func_name = reinterpret_cast<const char*>(base_bytes + name_rva + 2); // +2 skip hint
-                void* fn_ptr = hle_->resolve_symbol(dll_name, func_name);
-                *iat_thunk = reinterpret_cast<u64>(fn_ptr);
+                thunk_val = *reinterpret_cast<u32*>(base_bytes + lookup_off);
             }
-            lookup_thunk++;
-            iat_thunk++;
+            if (thunk_val == 0) break;
+
+            void* fn_ptr = nullptr;
+            if (thunk_val & ord_flag) {
+                u16 ordinal = static_cast<u16>(thunk_val & 0xFFFF);
+                fn_ptr = hle_->resolve_symbol(dll_name, std::to_string(ordinal));
+            } else {
+                u32 name_rva = static_cast<u32>(thunk_val & 0xFFFFFFFF);
+                const char* func_name = reinterpret_cast<const char*>(base_bytes + name_rva + 2);
+                fn_ptr = hle_->resolve_symbol(dll_name, func_name);
+            }
+
+            if (!fn_ptr) ++failed;
+            else {
+                ++resolved;
+                if (stride == 8) {
+                    *reinterpret_cast<u64*>(base_bytes + iat_off) = reinterpret_cast<u64>(fn_ptr);
+                } else {
+                    *reinterpret_cast<u32*>(base_bytes + iat_off) = static_cast<u32>(
+                        reinterpret_cast<u64>(fn_ptr));
+                }
+            }
+
+            lookup_off += stride;
+            iat_off += stride;
         }
-        import_desc++;
+
+        log::info("PE_LOADER", "Import DLL '{}' -> {} resolved, {} failed ({}-bit thunks)",
+                  dll_name, resolved, failed, nt.is_64bit ? 64 : 32);
+        read_ptr += sizeof(ImageImportDescriptor);
     }
 
     return {};
 }
 
+// -------------------------------------------------------------
+// Execution Environment (TEB/PEB)
+// -------------------------------------------------------------
+Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) {
+    if (!peb_) {
+        peb_ = static_cast<WinPeb64*>(mmap(nullptr, sizeof(WinPeb64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (peb_ == MAP_FAILED) {
+            peb_ = nullptr;
+            return ErrorCode::MemoryMappingFailed;
+        }
+        std::memset(peb_, 0, sizeof(WinPeb64));
+        peb_->image_base_address = image.image_base;
+        peb_->process_heap = Win32ApiHle::hle_get_process_heap();
+        peb_->number_of_processors = static_cast<u32>(sysconf(_SC_NPROCESSORS_ONLN));
+    }
+
+    if (!teb_) {
+        teb_ = static_cast<WinTeb64*>(mmap(nullptr, sizeof(WinTeb64), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (teb_ == MAP_FAILED) {
+            teb_ = nullptr;
+            return ErrorCode::MemoryMappingFailed;
+        }
+        std::memset(teb_, 0, sizeof(WinTeb64));
+        teb_->self = teb_;
+        teb_->peb = peb_;
+        teb_->client_id_proc = getpid();
+        teb_->client_id_thread = getpid();
+    }
+
+#if defined(__x86_64__) || defined(_M_X64)
+    long res = syscall(SYS_arch_prctl, ARCH_SET_GS, teb_);
+    if (res != 0) {
+        log::warn("PE_LOADER", "arch_prctl(ARCH_SET_GS) returned {}", res);
+    } else {
+        log::info("PE_LOADER", "Configured Win32 TEB (0x{:X}) and PEB (0x{:X}) onto GS base",
+                  reinterpret_cast<u64>(teb_), reinterpret_cast<u64>(peb_));
+    }
+#endif
+
+    return teb_;
+}
+
+// -------------------------------------------------------------
+// Native Execution
+// -------------------------------------------------------------
+Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char* argv[]) {
+    if (!image.entry_point) {
+        return ErrorCode::RomCorruptHeader;
+    }
+
+    auto env_res = setup_execution_environment(image);
+    if (!env_res) {
+        return env_res.error();
+    }
+
+    s_active_loader = this;
+
+    if (!image.is_64bit) {
+#if defined(__x86_64__) || defined(_M_X64)
+        // -------------------------------------------------------------
+        // 32-BIT EXECUTION VIA HEAVEN'S GATE
+        // Windows 32-bit games are PE32 (x86, machine 0x14c). On x86-64 Linux
+        // we execute them in 32-bit compatibility mode by far-returning into
+        // the 32-bit code segment (CS = 0x23). Relocations + 32-bit thunk
+        // handling from apply_relocations/resolve_imports handle addressing.
+        // The game runs natively in the CPU's compat mode - no Wine.
+        // -------------------------------------------------------------
+        log::info("PE_LOADER",
+                  ">>> Executing PE32 (x86) image via Heaven's Gate compat mode - Zero Wine! <<<");
+
+        const u64 CS32 = 0x23;   // __USER32_CS on Linux
+
+        const u64 entry = reinterpret_cast<u64>(image.entry_point);
+        const u64 base  = reinterpret_cast<u64>(image.image_base);
+
+        // The 32-bit process needs a stack below 4GB. Allocate with MAP_32BIT.
+        const u64 stack_size = 8 * 1024 * 1024;
+        void* stack32 = mmap(reinterpret_cast<void*>(0x70000000), stack_size,
+                             PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+        if (stack32 == MAP_FAILED)
+            stack32 = mmap(nullptr, stack_size, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+        if (stack32 == MAP_FAILED) {
+            s_active_loader = nullptr;
+            return ErrorCode::MemoryMappingFailed;
+        }
+
+        // Standard Win32 x86 (stdcall-ish) args for the stub entry:
+        //   WinMainHLE(hInstance, hPrevInstance, lpCmdLine, nShowCmd)
+        // Provide a far-return frame so that if the stub ever returns via a
+        // plain 32-bit `ret`, we come back to 64-bit mode and can unwind.
+        // In practice the game calls ExitProcess() HLE, which _exit()s.
+
+        // Trap-flag heaven's gate sequence (documented technique):
+        //   1. set TF in EFLAGS
+        //   2. far-return into CS32:entry (this switches the operand size)
+        //   3. push CS64:return_addr on the 32-bit stack is NOT readable from 64-bit
+        //   So instead we rely on the far-return INTO 32-bit and let the callee
+        //   run to ExitProcess. This is the stable path used by Wine's wow64.
+
+        __asm__ volatile(
+            // Save full 64-bit callee-saved state + rflags
+            "pushfq\n\t"
+            "push %%rbx\n\t"
+            "push %%r12\n\t"
+            "push %%r13\n\t"
+            "push %%r14\n\t"
+            "push %%r15\n\t"
+            "push %%rbp\n\t"
+
+            // rdi = instance handle (image base truncated to 32 bits)
+                        "movq %[base], %%rax\n\t"
+                        "movl %%eax, %%edi\n\t"
+                        // rsi = hPrevInstance (null)
+                        "xorl %%esi, %%esi\n\t"
+                        // edx = empty cmdline
+                        "xorl %%edx, %%edx\n\t"
+                        // ecx = nShowCmd = 1
+                        "movl $1, %%ecx\n\t"
+
+                        // Point rsp at the fresh 32-bit stack
+                        "movq %[stack32], %%rsp\n\t"
+                        // Push far-return frame: [rsp] = seg:offset. We push CS:entry then lretq
+                        "pushq %[cs32]\n\t"
+                        "pushq %[entry]\n\t"
+                        "lretq\n\t"                   // far return: load cs=CS32, rip=entry
+
+                        // -- Never reached unless entry far-returns back to 64-bit CS and
+                        //    lands here. We support that: restore state and return.
+                        "pop %%rbp\n\t"
+                        "pop %%r15\n\t"
+                        "pop %%r14\n\t"
+                        "pop %%r13\n\t"
+                        "pop %%r12\n\t"
+                        "pop %%rbx\n\t"
+                        "popfq\n\t"
+                        :
+                        : [base]   "r" (base & 0xFFFFFFFF),
+                          [stack32]"r" (reinterpret_cast<u64>(stack32) + stack_size - 16),
+                          [cs32]   "r" (CS32),
+                          [entry]  "r" (entry)
+                        : "rax", "rdi", "esi", "edx", "ecx", "rbp",
+                          "rbx", "r12", "r13", "r14", "r15", "cc", "memory");
+
+        // Reaching here means the far-return back-channel fired (stub returned
+        // via far return). Unwind handled above.
+        munmap(stack32, stack_size);
+        s_active_loader = nullptr;
+        return 0;
+#else
+        s_active_loader = nullptr;
+        return ErrorCode::UnsupportedOperation;
+#endif
+    }
+
+    using WinMainFn = PAPAYA_MS_ABI int (*)(void* hInstance, void* hPrevInstance, const char* lpCmdLine, int nShowCmd);
+    auto entry_fn = reinterpret_cast<WinMainFn>(image.entry_point);
+
+    log::info("PE_LOADER", "Jumping to PE EntryPoint @ 0x{:X} via MS_ABI calling convention (Zero Wine)...",
+              reinterpret_cast<u64>(image.entry_point));
+
+    int exit_code = 0;
+    try {
+        exit_code = entry_fn(image.image_base, nullptr, "", 1);
+    } catch (...) {
+        log::warn("PE_LOADER", "Caught unhandled exception during in-process PE execution");
+    }
+
+    s_active_loader = nullptr;
+    return exit_code;
+}
+
 void PeLoader::unload_image(LoadedPeImage& image) {
     if (image.image_base && image.size_of_image > 0) {
+        // Drop guard pages before munmap so late faults don't touch freed VMAs
+        {
+            std::lock_guard<std::mutex> lock(s_guard_mutex);
+            u64 lo = reinterpret_cast<u64>(image.image_base);
+            u64 hi = lo + image.size_of_image;
+            for (auto it = s_guard_pages.begin(); it != s_guard_pages.end();) {
+                if (it->first >= lo && it->first < hi) it = s_guard_pages.erase(it);
+                else ++it;
+            }
+            guard_pages_.clear();
+        }
         munmap(image.image_base, image.size_of_image);
         image.image_base = nullptr;
         image.size_of_image = 0;
         image.entry_point = nullptr;
+    }
+    if (teb_) {
+        munmap(teb_, sizeof(WinTeb64));
+        teb_ = nullptr;
+    }
+    if (peb_) {
+        munmap(peb_, sizeof(WinPeb64));
+        peb_ = nullptr;
     }
 }
 

@@ -60,6 +60,21 @@ enum class CpuTranslationEngine {
     FexEmuJit        // FEX-Emu ARM64 translation core
 };
 
+// MS ABI calling convention attribute for Win32 API callbacks and PE entry points on x86_64
+#if defined(__x86_64__) || defined(_M_X64)
+#define PAPAYA_MS_ABI __attribute__((ms_abi))
+#else
+#define PAPAYA_MS_ABI
+#endif
+
+// Execution Mode Selection
+enum class ExecutionMode {
+    Auto,           // Auto-select best execution path (Native Engine -> Native PE -> Wine Sandbox)
+    NativeEngine,   // Zero-Wine Engine Bridge (Godot PCK, Java JAR, ROMs)
+    NativeWin32,    // Zero-Wine In-Process Win32 HLE & PE Loader
+    WineSandbox     // Papaya Sandboxed Wine/Proton Prefix
+};
+
 // GPU Driver Interceptor Target
 enum class GpuDriverProfile {
     MesaTurnip,      // Open-source Adreno Vulkan driver (Qualcomm Snapdragon)
@@ -69,3 +84,4 @@ enum class GpuDriverProfile {
 };
 
 } // namespace papaya
+

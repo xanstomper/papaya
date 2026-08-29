@@ -20,10 +20,14 @@ void print_banner() {
 }
 
 void print_usage(const char* prog) {
-    std::cout << "Usage: " << prog << " [options]\n"
+    std::cout << "Usage: " << prog << " [options] [game_path or rom_path]\n"
               << "Options:\n"
               << "  --game <path.exe>     Path to Windows game executable\n"
               << "  --rom <path.iso>      Path to ROM/ISO/CSO/CHD disc image to play via Steam\n"
+              << "  --mode <mode>         Execution mode: auto (default), engine (zero wine), native (zero wine), wine\n"
+              << "  --zero-wine, --native Force Papaya Native Win32 HLE & in-memory PE execution (No Wine)\n"
+              << "  --engine              Force Papaya Engine Bridge (Godot PCK / Java JAR / ROMs)\n"
+              << "  --wine                Force Sandboxed Wine Prefix execution\n"
               << "  --appid <id>          Steam AppID (overrides steam_appid.txt)\n"
               << "  --potato              Force aggressive Potato Mode (1x1 textures, 540p upscaled)\n"
               << "  --tier <tier>         Hardware tier: low (RP5), mid, high (Odin2), deck, desktop\n"
@@ -53,6 +57,18 @@ int main(int argc, char* argv[]) {
             config.force_potato_mode = true;
         } else if (arg == "--headless") {
             config.headless = true;
+        } else if (arg == "--zero-wine" || arg == "--native") {
+            config.execution_mode = papaya::ExecutionMode::NativeWin32;
+        } else if (arg == "--engine") {
+            config.execution_mode = papaya::ExecutionMode::NativeEngine;
+        } else if (arg == "--wine") {
+            config.execution_mode = papaya::ExecutionMode::WineSandbox;
+        } else if (arg == "--mode" && i + 1 < argc) {
+            std::string_view m = argv[++i];
+            if (m == "native" || m == "zero-wine") config.execution_mode = papaya::ExecutionMode::NativeWin32;
+            else if (m == "engine") config.execution_mode = papaya::ExecutionMode::NativeEngine;
+            else if (m == "wine") config.execution_mode = papaya::ExecutionMode::WineSandbox;
+            else config.execution_mode = papaya::ExecutionMode::Auto;
         } else if (arg == "--game" && i + 1 < argc) {
             game_path = argv[++i];
         } else if (arg == "--rom" && i + 1 < argc) {
@@ -72,6 +88,16 @@ int main(int argc, char* argv[]) {
             else if (lvl == "debug") papaya::log::Logger::instance().set_level(papaya::log::Level::Debug);
             else if (lvl == "warn") papaya::log::Logger::instance().set_level(papaya::log::Level::Warn);
             else if (lvl == "error") papaya::log::Logger::instance().set_level(papaya::log::Level::Error);
+        } else if (!arg.starts_with("-")) {
+            // Positional argument
+            std::string path_str(arg);
+            if (path_str.ends_with(".iso") || path_str.ends_with(".chd") || path_str.ends_with(".cso") ||
+                path_str.ends_with(".bin") || path_str.ends_with(".pbp") || path_str.ends_with(".n64") ||
+                path_str.ends_with(".z64") || path_str.ends_with(".gba") || path_str.ends_with(".nds")) {
+                rom_path = path_str;
+            } else {
+                game_path = path_str;
+            }
         }
     }
 
