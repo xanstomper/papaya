@@ -278,6 +278,11 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_query_performance_frequency(s64* lpFrequency);
     static PAPAYA_MS_ABI u32   hle_get_tick_count();
     static PAPAYA_MS_ABI u64   hle_get_tick_count_64();
+    static PAPAYA_MS_ABI char* hle_lstrcpy_a(char* dst, const char* src);
+    static PAPAYA_MS_ABI int   hle_lstrcmp_a(const char* a, const char* b);
+    static PAPAYA_MS_ABI u32   hle_get_thread_priority(void* hThread);
+    static PAPAYA_MS_ABI u32   hle_get_private_profile_string_a(const char* app, const char* key, const char* def, char* out, u32 size, const char* file);
+    static PAPAYA_MS_ABI BOOL  hle_write_private_profile_string_a(const char* app, const char* key, const char* value, const char* file);
     static PAPAYA_MS_ABI u32   hle_get_last_error();
     static PAPAYA_MS_ABI void  hle_set_last_error(u32 dwErrCode);
 

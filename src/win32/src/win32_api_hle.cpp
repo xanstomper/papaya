@@ -1712,6 +1712,87 @@ u64 Win32ApiHle::hle_get_tick_count_64() {
     return static_cast<u64>(ts.tv_sec) * 1000ULL + static_cast<u64>(ts.tv_nsec) / 1000000ULL;
 }
 
+char* Win32ApiHle::hle_lstrcpy_a(char* dst, const char* src) {
+    if (!dst) return dst;
+    if (src) std::strcpy(dst, src); else dst[0] = 0;
+    return dst;
+}
+int Win32ApiHle::hle_lstrcmp_a(const char* a, const char* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    return std::strcmp(a, b);
+}
+u32 Win32ApiHle::hle_get_thread_priority(void* hThread) {
+    (void)hThread;
+    return 0;   // THREAD_PRIORITY_NORMAL
+}
+u32 Win32ApiHle::hle_get_private_profile_string_a(const char* app, const char* key, const char* def,
+                                                  char* out, u32 size, const char* file) {
+    if (!out || size == 0) return 0;
+    out[0] = 0;
+    std::string path = normalize_win_path(file ? file : "");
+    std::ifstream in(path, std::ios::binary);
+    if (!in) { if (def && size) std::strncpy(out, def, size - 1), out[size-1]=0; return static_cast<u32>(std::strlen(out)); }
+    std::string line, section;
+    while (std::getline(in, line)) {
+        // strip trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // trim
+        size_t b = line.find_first_not_of(" \t");
+        if (b == std::string::npos) continue;
+        size_t e = line.find_last_not_of(" \t");
+        std::string t = line.substr(b, e - b + 1);
+        if (t.front() == '[' && t.back() == ']') { section = t.substr(1, t.size() - 2); continue; }
+        if (section != (app ? app : "")) continue;
+        size_t eq = t.find('=');
+        std::string k = (eq == std::string::npos) ? t : t.substr(0, eq);
+        if (k == (key ? key : "")) {
+            std::string v = (eq == std::string::npos) ? "" : t.substr(eq + 1);
+            u32 n = static_cast<u32>(v.size());
+            if (n >= size) n = size - 1;
+            std::memcpy(out, v.c_str(), n); out[n] = 0;
+            return n;
+        }
+    }
+    if (def && size) { std::strncpy(out, def, size - 1); out[size-1] = 0; }
+    return static_cast<u32>(std::strlen(out));
+}
+BOOL Win32ApiHle::hle_write_private_profile_string_a(const char* app, const char* key, const char* value, const char* file) {
+    if (!app || !key || !file) return FALSE_VAL;
+    std::string path = normalize_win_path(file);
+    std::string target_app = "[" + std::string(app) + "]";
+    std::string kv = std::string(key) + "=" + (value ? value : "");
+    // Read the whole file, update or append section/key, write back.
+    std::vector<std::string> lines;
+    { std::ifstream in(path, std::ios::binary); std::string l;
+      while (std::getline(in, l)) { if (!l.empty() && l.back()=='\r') l.pop_back(); lines.push_back(l); } }
+    bool in_app = false, replaced = false, app_seen = false;
+    for (auto& l : lines) {
+        std::string t = l; size_t b = t.find_first_not_of(" \t");
+        if (b != std::string::npos) t = t.substr(b);
+        if (!t.empty() && t.front()=='[' && t.back()==']') { in_app = (t == target_app); if (in_app) app_seen = true; continue; }
+        if (!in_app) continue;
+        size_t eq = t.find('=');
+        std::string k = (eq == std::string::npos) ? t : t.substr(0, eq);
+        if (k == key) { l = kv; replaced = true; break; }
+    }
+    if (!replaced) {
+        std::vector<std::string> nl;
+        bool inserted = false;
+        for (auto& l : lines) {
+            nl.push_back(l);
+            if (!inserted && l == target_app) { nl.push_back(kv); inserted = true; }
+        }
+        if (!inserted) { if (!nl.empty() && !nl.back().empty()) nl.push_back(""); nl.push_back(target_app); nl.push_back(kv); }
+        lines.swap(nl);
+    }
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return FALSE_VAL;
+    for (auto& l : lines) out << l << '\n';
+    return TRUE_VAL;
+}
+
 u32 Win32ApiHle::hle_get_last_error() {
     return g_last_error;
 }
@@ -4226,6 +4307,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "QueryPerformanceCounter", reinterpret_cast<void*>(&hle_query_performance_counter));
     register_function("KERNEL32.DLL", "QueryPerformanceFrequency", reinterpret_cast<void*>(&hle_query_performance_frequency));
     register_function("KERNEL32.DLL", "GetTickCount", reinterpret_cast<void*>(&hle_get_tick_count));
+    register_function("KERNEL32.DLL", "lstrcpyA", reinterpret_cast<void*>(&hle_lstrcpy_a));
+    register_function("KERNEL32.DLL", "lstrcmpA", reinterpret_cast<void*>(&hle_lstrcmp_a));
+    register_function("KERNEL32.DLL", "GetThreadPriority", reinterpret_cast<void*>(&hle_get_thread_priority));
+    register_function("KERNEL32.DLL", "GetPrivateProfileStringA", reinterpret_cast<void*>(&hle_get_private_profile_string_a));
+    register_function("KERNEL32.DLL", "WritePrivateProfileStringA", reinterpret_cast<void*>(&hle_write_private_profile_string_a));
     register_function("KERNEL32.DLL", "GetTickCount64", reinterpret_cast<void*>(&hle_get_tick_count_64));
     register_function("KERNEL32.DLL", "GetLastError", reinterpret_cast<void*>(&hle_get_last_error));
     register_function("KERNEL32.DLL", "SetLastError", reinterpret_cast<void*>(&hle_set_last_error));
