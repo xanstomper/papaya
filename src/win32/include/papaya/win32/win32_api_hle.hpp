@@ -494,6 +494,13 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_imm_release_context(void* hwnd, void* himc);
     static PAPAYA_MS_ABI s64   hle_imm_get_composition_string_w(void* himc, u32 index, void* buf, u32 buflen);
 
+    // CRYPT32 certificate store (real, empty store for games that probe certs)
+    static PAPAYA_MS_ABI void* hle_cert_open_system_store_a(void* hprov, const char* name);
+    static PAPAYA_MS_ABI BOOL  hle_cert_close_store(void* store, u32 flags);
+    static PAPAYA_MS_ABI void* hle_cert_enum_certificates_in_store(void* store, void* prev);
+    static PAPAYA_MS_ABI BOOL  hle_cert_get_certificate_context_property(void* cert, u32 prop, void* data, void* len);
+    static PAPAYA_MS_ABI BOOL  hle_crypt_binary_to_string_a(const u8* data, u32 len, u32 flags, char* str, u32* strlen);
+
     // WINMM
     static PAPAYA_MS_ABI u32   hle_time_get_time();
     static PAPAYA_MS_ABI u32   hle_time_begin_period(u32 uPeriod);

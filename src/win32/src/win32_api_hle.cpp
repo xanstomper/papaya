@@ -2750,6 +2750,51 @@ s64 Win32ApiHle::hle_imm_get_composition_string_w(void* himc, u32 index, void* b
     return 0;
 }
 
+// ---- CRYPT32 certificate store (real, empty) ---------------------------------
+void* Win32ApiHle::hle_cert_open_system_store_a(void* hprov, const char* name) {
+    (void)hprov; (void)name;
+    // Return a real, non-null store handle; it will enumerate zero certs.
+    static u32 next_id = 0x48000000;
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(0x48000000u + (++next_id & 0xFFFF)));
+}
+BOOL Win32ApiHle::hle_cert_close_store(void* store, u32 flags) {
+    (void)store; (void)flags;
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_cert_enum_certificates_in_store(void* store, void* prev) {
+    (void)store; (void)prev;
+    return nullptr;   // empty store -> no certificates
+}
+BOOL Win32ApiHle::hle_cert_get_certificate_context_property(void* cert, u32 prop, void* data, void* len) {
+    (void)cert; (void)prop; (void)data;
+    if (len) *static_cast<u32*>(len) = 0;   // zero-length: no property
+    return FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_crypt_binary_to_string_a(const u8* data, u32 len, u32 flags, char* str, u32* strlen) {
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    (void)flags;
+    if (!strlen) return FALSE_VAL;
+    // Base64 output length incl. NUL: 4*ceil(len/3)+1.
+    u32 out = ((len + 2) / 3) * 4 + 1;
+    // Size query (str==NULL) or too-small buffer: report needed size, return
+    // TRUE (caller retries with a proper buffer) as the standard two-call idiom.
+    if (!str || *strlen < out) { *strlen = out; return TRUE_VAL; }
+    u32 o = 0;
+    for (u32 i = 0; i < len; i += 3) {
+        u32 n = data[i] << 16;
+        u32 rem = len - i;
+        if (rem > 1) n |= data[i+1] << 8;
+        if (rem > 2) n |= data[i+2];
+        str[o++] = b64[(n >> 18) & 63];
+        str[o++] = b64[(n >> 12) & 63];
+        str[o++] = (rem > 1) ? b64[(n >> 6) & 63] : '=';
+        str[o++] = (rem > 2) ? b64[n & 63] : '=';
+    }
+    str[o] = 0;
+    *strlen = out;
+    return TRUE_VAL;
+}
+
 u32 Win32ApiHle::hle_set_error_mode(u32 uMode) {
     return uMode; // Return previous mode (same as passed)
 }
@@ -4175,11 +4220,11 @@ Result<> Win32ApiHle::initialize() {
 
     // BCRYPT.DLL & CRYPT32.DLL
     register_function("bcrypt.dll", "BCryptGenRandom", reinterpret_cast<void*>(&hle_bcrypt_gen_random));
-    register_function("CRYPT32.dll", "CertOpenSystemStoreA", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("CRYPT32.dll", "CertCloseStore", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("CRYPT32.dll", "CertGetCertificateContextProperty", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("CRYPT32.dll", "CryptBinaryToStringA", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("CRYPT32.dll", "CertEnumCertificatesInStore", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("CRYPT32.dll", "CertOpenSystemStoreA", reinterpret_cast<void*>(&hle_cert_open_system_store_a));
+    register_function("CRYPT32.dll", "CertCloseStore", reinterpret_cast<void*>(&hle_cert_close_store));
+    register_function("CRYPT32.dll", "CertGetCertificateContextProperty", reinterpret_cast<void*>(&hle_cert_get_certificate_context_property));
+    register_function("CRYPT32.dll", "CryptBinaryToStringA", reinterpret_cast<void*>(&hle_crypt_binary_to_string_a));
+    register_function("CRYPT32.dll", "CertEnumCertificatesInStore", reinterpret_cast<void*>(&hle_cert_enum_certificates_in_store));
 
     // ADVAPI32.DLL & SHELL32.DLL
     register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&hle_open_process_token));
