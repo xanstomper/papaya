@@ -594,6 +594,14 @@ public:
     static PAPAYA_MS_ABI u32   hle_set_bk_color(void* hdc, u32 crColor);
     static PAPAYA_MS_ABI u32   hle_set_text_color(void* hdc, u32 crColor);
     static PAPAYA_MS_ABI BOOL  hle_text_out_a(void* hdc, int x, int y, const char* lpString, int nCount);
+    static PAPAYA_MS_ABI BOOL  hle_fill_rect(void* hdc, const void* lprc, void* hbr);
+    static PAPAYA_MS_ABI BOOL  hle_rectangle(void* hdc, int l, int t, int r, int b);
+    static PAPAYA_MS_ABI BOOL  hle_ellipse(void* hdc, int l, int t, int r, int b);
+    static PAPAYA_MS_ABI BOOL  hle_move_to_ex(void* hdc, int x, int y, void* lpPoint);
+    static PAPAYA_MS_ABI BOOL  hle_line_to(void* hdc, int x, int y);
+    static PAPAYA_MS_ABI void* hle_create_pen(int style, int width, u32 color);
+    static PAPAYA_MS_ABI void* hle_create_solid_brush(u32 color);
+    static PAPAYA_MS_ABI BOOL  hle_get_class_name_a(HWND hWnd, char* lpClassName, int nMaxCount);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 

@@ -392,6 +392,9 @@ struct GdiDc {
     void* hwnd{nullptr};   // owning native window (re-resolve fb via surface_buffer)
     u32  text_color{0xFF000000};   // RGBA, for TextOutA
     u32  bg_color{0xFFFFFFFF};
+    u32  pen_color{0xFF000000};    // COLORREF BGR for LineTo/Rectangle outline
+    u32  brush_color{0xFFFFFFFF};  // COLORREF BGR for FillRect/Rectangle fill
+    int  pos_x{0}, pos_y{0};       // current pen position
 };
 struct GdiBitmap {
     u32 tag{0x4744424D};   // "GDBM"
@@ -3524,8 +3527,8 @@ u32 Win32ApiHle::hle_get_pixel(void* hdc, int x, int y) {
     u8* fb = gdi_dc_fb(d);
     if (!d || !fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return 0xFFFFFFFF;  // CLR_INVALID
     const u8* p = fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
-    // COLORREF is 0x00BBGGRR (BGR order), little-endian uint32.
-    return static_cast<u32>(p[2]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[0]) << 16);
+    // COLORREF is 0x00BBGGRR: R | G<<8 | B<<16 (fb is RGBA).
+    return static_cast<u32>(p[0]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[2]) << 16);
 }
 
 // ---- GDI text + stock objects -------------------------------------------------
@@ -3575,6 +3578,100 @@ BOOL Win32ApiHle::hle_text_out_a(void* hdc, int x, int y, const char* lpString, 
         }
     }
     return TRUE_VAL;
+}
+
+// ---- GDI 2D drawing primitives ------------------------------------------------
+// Brush colors created via CreateSolidBrush (handle -> COLORREF).
+static std::unordered_map<void*, u32> g_brush_colors;
+// Helper: fill one pixel with a COLORREF (BGR).
+static inline void gdi_px(u8* fb, int w, int h, int x, int y, u32 bgr) {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    u8* p = fb + (static_cast<u32>(y) * w + static_cast<u32>(x)) * 4;
+    p[0] = static_cast<u8>(bgr & 0xFF);          // R
+    p[1] = static_cast<u8>((bgr >> 8) & 0xFF);   // G
+    p[2] = static_cast<u8>((bgr >> 16) & 0xFF);  // B
+    p[3] = 0xFF;
+}
+BOOL Win32ApiHle::hle_fill_rect(void* hdc, const void* lprc, void* hbr) {
+    (void)hbr;   // brush selection tracked via the DC state
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb || !lprc) return FALSE_VAL;
+    auto* r = static_cast<const s32*>(lprc);   // RECT { l, t, r, b }
+    u32 color = g_brush_colors.count(hbr) ? g_brush_colors[hbr] : d->brush_color;
+    for (int y = r[1]; y < r[3]; ++y)
+        for (int x = r[0]; x < r[2]; ++x)
+            gdi_px(fb, d->w, d->h, x, y, color);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_rectangle(void* hdc, int l, int t, int r, int b) {
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb) return FALSE_VAL;
+    for (int y = t; y <= b; ++y)
+        for (int x = l; x <= r; ++x)
+            gdi_px(fb, d->w, d->h, x, y, d->pen_color);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_ellipse(void* hdc, int l, int t, int r, int b) {
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb) return FALSE_VAL;
+    double cx = (l + r) / 2.0, cy = (t + b) / 2.0;
+    double rx = (r - l) / 2.0, ry = (b - t) / 2.0;
+    if (rx <= 0 || ry <= 0) return FALSE_VAL;
+    for (int y = t; y <= b; ++y)
+        for (int x = l; x <= r; ++x) {
+            double dx = (x - cx) / rx, dy = (y - cy) / ry;
+            if (dx*dx + dy*dy <= 1.0) gdi_px(fb, d->w, d->h, x, y, d->pen_color);
+        }
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_move_to_ex(void* hdc, int x, int y, void* lpPoint) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return FALSE_VAL;
+    if (lpPoint) { auto* p = static_cast<s32*>(lpPoint); p[0] = d->pos_x; p[1] = d->pos_y; }
+    d->pos_x = x; d->pos_y = y;
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_line_to(void* hdc, int x, int y) {
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb) return FALSE_VAL;
+    // Bresenham from the current pen position.
+    int x0 = d->pos_x, y0 = d->pos_y;
+    int dx = (x > x0) ? x - x0 : x0 - x, sx = (x0 < x) ? 1 : -1;
+    int dy = -(y > y0 ? y - y0 : y0 - y), sy = (y0 < y) ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        gdi_px(fb, d->w, d->h, x0, y0, d->pen_color);
+        if (x0 == x && y0 == y) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+    d->pos_x = x; d->pos_y = y;
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_create_pen(int style, int width, u32 color) {
+    (void)style; (void)width;
+    static u8 pen_slots[4];
+    return &pen_slots[style & 3];   // non-null HPEN
+}
+void* Win32ApiHle::hle_create_solid_brush(u32 color) {
+    static u8 brush_slots[8];
+    void* h = &brush_slots[color & 7];   // non-null HBRUSH
+    g_brush_colors[h] = color;
+    return h;
+}
+BOOL Win32ApiHle::hle_get_class_name_a(HWND hWnd, char* lpClassName, int nMaxCount) {
+    auto* w = window_manager().window_from_hwnd(hWnd);
+    if (!w || !lpClassName || nMaxCount <= 0) return 0;
+    u32 n = static_cast<u32>(w->title.size());
+    if (n >= static_cast<u32>(nMaxCount)) n = static_cast<u32>(nMaxCount - 1);
+    std::memcpy(lpClassName, w->title.c_str(), n);
+    lpClassName[n] = 0;
+    return static_cast<BOOL>(n);
 }
 
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
@@ -4859,6 +4956,13 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "SetBkColor",           reinterpret_cast<void*>(&hle_set_bk_color));
     register_function("GDI32.DLL", "SetTextColor",         reinterpret_cast<void*>(&hle_set_text_color));
     register_function("GDI32.DLL", "TextOutA",             reinterpret_cast<void*>(&hle_text_out_a));
+    register_function("GDI32.DLL", "FillRect",             reinterpret_cast<void*>(&hle_fill_rect));
+    register_function("GDI32.DLL", "Rectangle",            reinterpret_cast<void*>(&hle_rectangle));
+    register_function("GDI32.DLL", "Ellipse",              reinterpret_cast<void*>(&hle_ellipse));
+    register_function("GDI32.DLL", "MoveToEx",             reinterpret_cast<void*>(&hle_move_to_ex));
+    register_function("GDI32.DLL", "LineTo",               reinterpret_cast<void*>(&hle_line_to));
+    register_function("GDI32.DLL", "CreatePen",            reinterpret_cast<void*>(&hle_create_pen));
+    register_function("GDI32.DLL", "CreateSolidBrush",     reinterpret_cast<void*>(&hle_create_solid_brush));
 
     // OPENGL32.DLL & VULKAN-1.DLL
     register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));
