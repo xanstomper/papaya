@@ -15,6 +15,7 @@
 #include <time.h>
 #include <cstring>
 #include <cstdlib>
+#include <fstream>
 #include <cstdio>
 #include <cstdarg>
 #include <csignal>
@@ -2840,6 +2841,40 @@ BOOL Win32ApiHle::hle_adjust_token_privileges(void* hToken, BOOL bDisableAllPriv
     return TRUE_VAL;   // privileges are a no-op; report success
 }
 
+// SHFileOperationW: SHFILEOPSTRUCT{wFunc@8, pFrom@16, pTo@24, ...}.
+// wFunc: 1=FO_MOVE, 2=FO_COPY, 3=FO_DELETE. pFrom/pTo are double-NUL wide strings.
+u32 Win32ApiHle::hle_sh_file_operation_w(const void* lpFileOp) {
+    if (!lpFileOp) return 8;   // access denied-ish
+    const auto* b = static_cast<const u8*>(lpFileOp);
+    u32 wfunc = *reinterpret_cast<const u32*>(b + 8);
+    const void* fromp = *reinterpret_cast<const void* const*>(b + 16);
+    const void* top   = *reinterpret_cast<const void* const*>(b + 24);
+    std::string from = wchar_to_utf8(static_cast<const wchar_t*>(fromp));
+    std::string ffrom = from.substr(0, from.find('\0'));
+    std::string fpath = normalize_win_path(ffrom.c_str());
+    std::string tpath;
+    if (top) {
+        std::string tw = wchar_to_utf8(static_cast<const wchar_t*>(top));
+        std::string ftw = tw.substr(0, tw.find('\0'));
+        tpath = normalize_win_path(ftw.c_str());
+    }
+    if (wfunc == 3) {           // FO_DELETE
+        std::remove(fpath.c_str());
+        return 0;
+    }
+    if (wfunc == 2 || wfunc == 1) {   // FO_COPY / FO_MOVE (fall back to copy)
+        if (fpath.empty() || tpath.empty()) return 7;   // file not found-ish
+        std::ifstream src(fpath, std::ios::binary);
+        if (!src) return 7;
+        std::ofstream dst(tpath, std::ios::binary | std::ios::trunc);
+        if (!dst) return 7;
+        dst << src.rdbuf();
+        if (wfunc == 1) std::remove(fpath.c_str());   // FO_MOVE removes source
+        return 0;
+    }
+    return 0;
+}
+
 // ---- CRYPT32 certificate store (real, empty) ---------------------------------
 void* Win32ApiHle::hle_cert_open_system_store_a(void* hprov, const char* name) {
     (void)hprov; (void)name;
@@ -4329,7 +4364,7 @@ Result<> Win32ApiHle::initialize() {
 
     register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&hle_shell_execute_w));
     register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&hle_command_line_to_argv_w));
-    register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&hle_sh_file_operation_w));
     register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&hle_drag_accept_files));
     register_function("SHELL32.dll", "DragQueryFileW", reinterpret_cast<void*>(&hle_drag_query_file_w));
 
