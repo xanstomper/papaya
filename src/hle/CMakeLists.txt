@@ -14,4 +14,6 @@ target_link_libraries(papaya-hle PUBLIC
     papaya-common
     papaya-hv
     papaya-storage
+    papaya-audio
+    papaya-input
 )

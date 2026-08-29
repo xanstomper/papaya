@@ -27,14 +27,15 @@ Result<> VulkanBackend::initialize() {
 
     VkResult res = vkCreateInstance(&create_info, nullptr, &instance_);
     if (res != VK_SUCCESS) {
-        log::warn("GPU", "vkCreateInstance returned {} (Vulkan driver or display might not be active in headless mode)", (int)res);
-        // Do not hard-fail if running headless / testing without display
+        log::warn("GPU", "vkCreateInstance returned {} (Running without native display / headless)", (int)res);
         initialized_ = false;
         return {};
     }
 
     log::info("GPU", "Vulkan 1.3 Instance initialized successfully");
     initialized_ = true;
+
+    create_device();
     return {};
 #else
     log::warn("GPU", "Compiled without Vulkan support");
@@ -42,8 +43,58 @@ Result<> VulkanBackend::initialize() {
 #endif
 }
 
+Result<> VulkanBackend::create_device() {
+#ifdef PAPAYA_HAS_VULKAN
+    if (!initialized_ || instance_ == VK_NULL_HANDLE) {
+        return {};
+    }
+
+    uint32_t gpu_count = 0;
+    vkEnumeratePhysicalDevices(instance_, &gpu_count, nullptr);
+    if (gpu_count == 0) {
+        log::warn("GPU", "No physical Vulkan GPUs detected");
+        return {};
+    }
+
+    std::vector<VkPhysicalDevice> gpus(gpu_count);
+    vkEnumeratePhysicalDevices(instance_, &gpu_count, gpus.data());
+    physical_device_ = gpus[0];
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(physical_device_, &props);
+    log::info("GPU", "Selected GPU: '{}' (Vulkan API {}.{}.{})",
+              props.deviceName,
+              VK_VERSION_MAJOR(props.apiVersion),
+              VK_VERSION_MINOR(props.apiVersion),
+              VK_VERSION_PATCH(props.apiVersion));
+
+    float queue_prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{};
+    qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    qci.queueFamilyIndex = 0;
+    qci.queueCount = 1;
+    qci.pQueuePriorities = &queue_prio;
+
+    VkDeviceCreateInfo dci{};
+    dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos = &qci;
+
+    if (vkCreateDevice(physical_device_, &dci, nullptr, &device_) == VK_SUCCESS) {
+        vkGetDeviceQueue(device_, 0, 0, &graphics_queue_);
+        has_device_ = true;
+        log::info("GPU", "Vulkan logical device and graphics queue created successfully");
+    }
+#endif
+    return {};
+}
+
 void VulkanBackend::shutdown() {
 #ifdef PAPAYA_HAS_VULKAN
+    if (command_pool_ != VK_NULL_HANDLE && device_ != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(device_, command_pool_, nullptr);
+        command_pool_ = VK_NULL_HANDLE;
+    }
     if (device_ != VK_NULL_HANDLE) {
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
@@ -53,6 +104,7 @@ void VulkanBackend::shutdown() {
         instance_ = VK_NULL_HANDLE;
     }
 #endif
+    has_device_ = false;
     initialized_ = false;
 }
 
@@ -76,6 +128,11 @@ Result<> VulkanBackend::execute_pm4_packets(const std::vector<DecodedPm4Packet>&
                 break;
         }
     }
+    return {};
+}
+
+Result<> VulkanBackend::render_frame_present(u32 width, u32 height) {
+    log::trace("GPU", "Present frame {}x{}", width, height);
     return {};
 }
 

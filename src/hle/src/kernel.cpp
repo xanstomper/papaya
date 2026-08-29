@@ -1,11 +1,17 @@
 #include "papaya/hle/kernel.hpp"
 #include "papaya/common/logger.hpp"
 #include <chrono>
+#include <cstring>
 
 namespace papaya::hle {
 
-Kernel::Kernel(std::shared_ptr<hv::IHypervisor> hv, std::shared_ptr<storage::VirtualFileSystem> vfs)
-    : hv_(hv), vfs_(vfs), thunk_manager_(0x00100000), thread_manager_(handle_table_) {}
+Kernel::Kernel(
+    std::shared_ptr<hv::IHypervisor> hv,
+    std::shared_ptr<storage::VirtualFileSystem> vfs,
+    input::InputManager* input,
+    audio::AudioEngine* audio
+) : hv_(hv), vfs_(vfs), input_(input), audio_(audio),
+    thunk_manager_(0x00100000), thread_manager_(handle_table_) {}
 
 Kernel::~Kernel() = default;
 
@@ -16,6 +22,8 @@ Result<> Kernel::initialize() {
     register_ntdll_exports();
     register_xg_exports();
     register_synchronization_exports();
+    register_xinput_exports();
+    register_xaudio_exports();
 
     return {};
 }
@@ -75,6 +83,34 @@ void Kernel::register_kernel32_exports() {
         return 1; // Success
     });
 
+    thunk_manager_.register_function("kernel32.dll", "VirtualProtect", [](HleCallContext& ctx) -> u64 {
+        if (ctx.host_ram_base && ctx.r9 != 0) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            *reinterpret_cast<u32*>(ram + ctx.r9) = 0x04; // PAGE_READWRITE
+        }
+        return 1;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "HeapCreate", [](HleCallContext&) -> u64 {
+        return 0x18000000; // Heap handle
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "HeapDestroy", [](HleCallContext&) -> u64 {
+        return 1;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "HeapAlloc", [](HleCallContext& ctx) -> u64 {
+        u64 dwBytes = ctx.r8;
+        static GuestVirtAddr heap_ptr = 0x18001000;
+        GuestVirtAddr addr = heap_ptr;
+        heap_ptr += ((dwBytes + 15) & ~15);
+        return addr;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "HeapFree", [](HleCallContext&) -> u64 {
+        return 1;
+    });
+
     thunk_manager_.register_function("kernel32.dll", "QueryPerformanceCounter", [](HleCallContext& ctx) -> u64 {
         auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
         u64 counts = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
@@ -115,6 +151,22 @@ void Kernel::register_ntdll_exports() {
     thunk_manager_.register_function("ntdll.dll", "RtlFreeHeap", [](HleCallContext&) -> u64 {
         return 1;
     });
+
+    thunk_manager_.register_function("ntdll.dll", "RtlZeroMemory", [](HleCallContext& ctx) -> u64 {
+        if (ctx.host_ram_base && ctx.rcx != 0) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            std::memset(ram + ctx.rcx, 0, ctx.rdx);
+        }
+        return 0;
+    });
+
+    thunk_manager_.register_function("ntdll.dll", "RtlCopyMemory", [](HleCallContext& ctx) -> u64 {
+        if (ctx.host_ram_base && ctx.rcx != 0 && ctx.rdx != 0) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            std::memcpy(ram + ctx.rcx, ram + ctx.rdx, ctx.r8);
+        }
+        return 0;
+    });
 }
 
 void Kernel::register_xg_exports() {
@@ -138,7 +190,6 @@ void Kernel::register_synchronization_exports() {
         bool initial_state = (ctx.r8 != 0);
         auto evt = std::make_shared<HleEvent>(manual_reset, initial_state);
         u32 handle = handle_table_.insert(evt);
-        log::debug("HLE_SYNC", "CreateEventA: handle=0x{:X}, manual={}, init={}", handle, manual_reset, initial_state);
         return handle;
     });
 
@@ -294,6 +345,57 @@ void Kernel::register_synchronization_exports() {
 
     thunk_manager_.register_function("kernel32.dll", "TlsSetValue", [this](HleCallContext& ctx) -> u64 {
         return thread_manager_.tls_set_value(static_cast<u32>(ctx.rcx), ctx.rdx, thread_manager_.get_current_tid()) ? 1 : 0;
+    });
+}
+
+void Kernel::register_xinput_exports() {
+    thunk_manager_.register_function("xinput1_4.dll", "XInputGetState", [this](HleCallContext& ctx) -> u64 {
+        u32 user_index = static_cast<u32>(ctx.rcx);
+        GuestVirtAddr pState = ctx.rdx;
+
+        if (user_index >= input::MAX_CONTROLLERS || pState == 0 || !ctx.host_ram_base) {
+            return 1167; // ERROR_DEVICE_NOT_CONNECTED
+        }
+
+        if (input_) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            const auto& state = input_->get_gamepad_state(user_index);
+            // XINPUT_STATE: dwPacketNumber (u32), Gamepad (GamepadState)
+            *reinterpret_cast<u32*>(ram + pState) = 1; // dwPacketNumber
+            std::memcpy(ram + pState + sizeof(u32), &state, sizeof(input::GamepadState));
+            return 0; // ERROR_SUCCESS
+        }
+
+        return 0;
+    });
+
+    thunk_manager_.register_function("xinput1_4.dll", "XInputSetState", [this](HleCallContext& ctx) -> u64 {
+        u32 user_index = static_cast<u32>(ctx.rcx);
+        GuestVirtAddr pVib = ctx.rdx;
+
+        if (user_index >= input::MAX_CONTROLLERS || pVib == 0 || !ctx.host_ram_base) {
+            return 1167;
+        }
+
+        if (input_) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            const auto* vib = reinterpret_cast<const input::GamepadVibration*>(ram + pVib);
+            input_->set_vibration(user_index, *vib);
+            return 0; // ERROR_SUCCESS
+        }
+
+        return 0;
+    });
+}
+
+void Kernel::register_xaudio_exports() {
+    thunk_manager_.register_function("xaudio2_8.dll", "XAudio2Create", [](HleCallContext& ctx) -> u64 {
+        log::info("XAUDIO2", "XAudio2Create engine initialized");
+        if (ctx.host_ram_base && ctx.rcx != 0) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            *reinterpret_cast<u64*>(ram + ctx.rcx) = 0x50000000ULL; // XAudio2 COM object interface pointer
+        }
+        return 0; // S_OK
     });
 }
 

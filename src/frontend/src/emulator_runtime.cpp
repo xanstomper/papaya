@@ -56,21 +56,7 @@ Result<> EmulatorRuntime::initialize() {
         return ErrorCode::HypervisorInitFailed;
     }
 
-    // 5. HLE Kernel
-    kernel_ = std::make_unique<hle::Kernel>(hv_, vfs_);
-    if (!kernel_->initialize()) {
-        log::error("RUNTIME", "HLE Kernel initialization failed");
-        return ErrorCode::UnsupportedOperation;
-    }
-
-    // 6. GPU Subsystem
-    gpu_ = std::make_unique<gpu::GpuCore>();
-    if (!gpu_->initialize()) {
-        log::error("RUNTIME", "GPU core initialization failed");
-        return ErrorCode::GpuInitFailed;
-    }
-
-    // 7. Audio Engine
+    // 5. Audio Engine
     audio_ = std::make_unique<audio::AudioEngine>();
     if (!audio_->initialize()) {
         log::error("RUNTIME", "Audio engine initialization failed");
@@ -78,11 +64,25 @@ Result<> EmulatorRuntime::initialize() {
     }
     audio_->start_stream();
 
-    // 8. Input Subsystem
+    // 6. Input Subsystem
     input_ = std::make_unique<input::InputManager>();
     if (!input_->initialize()) {
         log::error("RUNTIME", "Input subsystem initialization failed");
         return ErrorCode::InvalidParameter;
+    }
+
+    // 7. HLE Kernel
+    kernel_ = std::make_unique<hle::Kernel>(hv_, vfs_, input_.get(), audio_.get());
+    if (!kernel_->initialize()) {
+        log::error("RUNTIME", "HLE Kernel initialization failed");
+        return ErrorCode::UnsupportedOperation;
+    }
+
+    // 8. GPU Subsystem
+    gpu_ = std::make_unique<gpu::GpuCore>();
+    if (!gpu_->initialize()) {
+        log::error("RUNTIME", "GPU core initialization failed");
+        return ErrorCode::GpuInitFailed;
     }
 
     // 9. Window Manager
@@ -90,7 +90,9 @@ Result<> EmulatorRuntime::initialize() {
         .title = "Project Papaya - Next-Gen Xbox Emulator",
         .width = 1920,
         .height = 1080,
-        .headless = config_.headless
+        .fullscreen = false,
+        .headless = config_.headless,
+        .vsync = true
     };
     window_ = std::make_unique<WindowManager>(win_cfg);
     if (!window_->initialize()) {

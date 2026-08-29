@@ -103,6 +103,15 @@ target_link_libraries(test_emulator_runtime PRIVATE
     papaya-frontend
 )
 
+add_executable(test_full_game_loop
+    test_full_game_loop.cpp
+)
+
+target_link_libraries(test_full_game_loop PRIVATE
+    papaya-common
+    papaya-frontend
+)
+
 add_test(NAME KvmBootTest COMMAND test_kvm_boot)
 add_test(NAME GpuPm4Test COMMAND test_gpu_pm4)
 add_test(NAME PeLoaderTest COMMAND test_pe_loader)
@@ -114,3 +123,4 @@ add_test(NAME ThreadingSyncTest COMMAND test_threading_sync)
 add_test(NAME XvdCryptoTest COMMAND test_xvd_crypto)
 add_test(NAME AudioEngineTest COMMAND test_audio_engine)
 add_test(NAME EmulatorRuntimeTest COMMAND test_emulator_runtime)
+add_test(NAME FullGameLoopTest COMMAND test_full_game_loop)

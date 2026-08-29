@@ -41,6 +41,8 @@ public:
     f64 get_current_fps() const { return current_fps_.load(); }
 
     hv::IHypervisor& get_hypervisor() { return *hv_; }
+    hv::MemoryMap& get_memory_map() { return *memory_map_; }
+    storage::VirtualFileSystem& get_vfs() { return *vfs_; }
     hle::Kernel& get_kernel() { return *kernel_; }
     gpu::GpuCore& get_gpu() { return *gpu_; }
     audio::AudioEngine& get_audio() { return *audio_; }
