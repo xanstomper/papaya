@@ -6,6 +6,9 @@
 #include <time.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <cstdarg>
+#include <csignal>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -25,6 +28,21 @@ static std::vector<pthread_key_t> g_tls_keys;
 static std::mutex g_tls_mutex;
 static std::shared_ptr<steam::SteamApiStub> g_active_steam_stub = nullptr;
 static std::shared_ptr<input::VirtualXInputManager> g_active_input_mgr = nullptr;
+
+// ---------------------------------------------------------------------------
+// Data-import targets. msvcrt exports data symbols (__initenv, _environ, ...)
+// that the CRT dereferences as addresses and writes through. They must resolve
+// to REAL, writable, non-null variables — NOT function stubs. The CRT does
+// e.g. `mov (%__imp___initenv),rax; mov envp,(rax)` so __initenv itself must
+// point at a valid char* array (else the write-through faults on NULL).
+// ---------------------------------------------------------------------------
+static char* g_initenv_slots[2] = { nullptr, nullptr };
+static char** g_initenv = g_initenv_slots;      // __initenv -> empty env array
+static char*  g_environ_slots[2] = { nullptr, nullptr };
+static char** g_environ = g_environ_slots;      // _environ  -> empty env array
+// Command-line string that main()/CRT parse directly via _acmdln/__p__acmdln.
+static char  g_acmdln_buf[] = "papaya_game.exe";
+static char* g_acmdln = g_acmdln_buf;           // _acmdln -> non-null cmdline
 
 // Generic no-op stub for uncritical APIs
 static PAPAYA_MS_ABI void* generic_stub_success() { return reinterpret_cast<void*>(1); }
@@ -613,6 +631,161 @@ void* Win32ApiHle::hle_steam_internal_create_interface(const char* ver) {
 }
 
 // -------------------------------------------------------------
+// MSVCRT Emulation
+// Every host-compiled (mingw/MSVC) game imports these. They are the C runtime
+// the CRT startup stub calls before main(): __getmainargs, __set_app_type,
+// _initterm, __iob_func, and the raw memory/string/stdio primitives.
+// We map them to their libc equivalents so games actually RUN, not crash.
+// -------------------------------------------------------------
+void* Win32ApiHle::hle_msvcrt_malloc(size_t n)    { return std::malloc(n); }
+void  Win32ApiHle::hle_msvcrt_free(void* p)       { if (p) std::free(p); }
+void* Win32ApiHle::hle_msvcrt_calloc(size_t a, size_t b) { return std::calloc(a, b); }
+void* Win32ApiHle::hle_msvcrt_realloc(void* p, size_t n) { return std::realloc(p, n); }
+void* Win32ApiHle::hle_msvcrt_memcpy(void* d, const void* s, size_t n)  { return std::memcpy(d, s, n); }
+void* Win32ApiHle::hle_msvcrt_memmove(void* d, const void* s, size_t n) { return std::memmove(d, s, n); }
+void* Win32ApiHle::hle_msvcrt_memset(void* d, int c, size_t n)          { return std::memset(d, c, n); }
+size_t Win32ApiHle::hle_msvcrt_strlen(const char* s)      { return s ? std::strlen(s) : 0; }
+int   Win32ApiHle::hle_msvcrt_strcmp(const char* a, const char* b)      { return std::strcmp(a, b); }
+int   Win32ApiHle::hle_msvcrt_strncmp(const char* a, const char* b, size_t n) { return std::strncmp(a, b, n); }
+char* Win32ApiHle::hle_msvcrt_strcpy(char* d, const char* s)   { return std::strcpy(d, s); }
+char* Win32ApiHle::hle_msvcrt_strncpy(char* d, const char* s, size_t n) { return std::strncpy(d, s, n); }
+char* Win32ApiHle::hle_msvcrt_strcat(char* d, const char* s)   { return std::strcat(d, s); }
+int   Win32ApiHle::hle_msvcrt_atoi(const char* s)      { return std::atoi(s); }
+double Win32ApiHle::hle_msvcrt_atof(const char* s)     { return std::atof(s); }
+void* Win32ApiHle::hle_msvcrt_mbstowcs(void* dst, const char* src, size_t n) {
+    // Minimal ASCII-only mb->wc: widen in place.
+    if (!src) return nullptr;
+    for (size_t i = 0; i < n; ++i) {
+        reinterpret_cast<wchar_t*>(dst)[i] = static_cast<wchar_t>(
+            static_cast<unsigned char>(src[i]));
+        if (src[i] == 0) break;
+    }
+    return dst;
+}
+
+// Process lifecycle: exit terminates the guest process (host process exits too,
+// matching a real game exiting).
+void Win32ApiHle::hle_msvcrt_exit(int code)          { _exit(code); }
+void Win32ApiHle::hle_msvcrt__exit(int code)         { _exit(code); }
+void Win32ApiHle::hle_msvcrt_abort()                 { abort(); }
+void Win32ApiHle::hle_msvcrt__cexit()                { /* flush+return; guest continues */ }
+int  Win32ApiHle::hle_msvcrt__initterm(void*, void*) { return 0; } // static-init table walked as no-op
+void Win32ApiHle::hle_msvcrt__set_app_type(int)      { /* app type (GUI/console) ignored */ }
+void Win32ApiHle::hle_msvcrt__amsg_exit(int)         { /* _amsg_exit prints to stderr on fatal error */ }
+int  Win32ApiHle::hle_msvcrt__onexit(void*)          { return 0; }
+int  Win32ApiHle::hle_msvcrt__ismbblead(u32)         { return 0; }
+void Win32ApiHle::hle_msvcrt__setusermatherr(void*)  { /* matherr override ignored */ }
+void Win32ApiHle::hle_msvcrt__commode(int)           { /* file translation mode ignored */ }
+void Win32ApiHle::hle_msvcrt__fmode(int)             { /* file mode ignored */ }
+
+// __getmainargs(argc, argv, envp, dowildcard, mode): fills the CRT command line
+// and environment. The CRT stores the envp result into __initenv and then does
+// `mov (%__initenv),%reg; mov envp,(%reg)` — so envp MUST point to a valid,
+// non-null empty array, not NULL (NULL would fault on the write-through).
+void Win32ApiHle::hle_msvcrt__getmainargs(int* argc, char*** argv, char*** envp, int, int*) {
+    // Provide an argc=0 / empty-argv environment. mingw main() tokenizes argv
+    // itself; giving a single synthesized argv[0] made its arg-walker deref
+    // past the terminator. Empty + non-null is the safe, well-formed default
+    // (a real null-terminated env array so __initenv write-through is safe).
+    static char* empty_env[1] = { nullptr };
+    static char* empty_argv[1] = { nullptr };
+    if (argc) *argc = 0;
+    if (argv) *argv = empty_argv;
+    if (envp) *envp = empty_env;
+}
+
+// __iob_func(): returns the FILE* array for the std streams. Old mingw uses
+// this to reach stdin/stdout/stderr. We return six system-valid FILE slots
+// backed by fd 0/1/2 so stdio works.
+void* Win32ApiHle::hle_msvcrt___iob_func() {
+    static FILE* iob[3] = { stdout, stderr, stdin }; // some runtimes expect stdin at 0
+    // Reorder to [stdin, stdout, stderr]-order semantics with 20-byte stride for
+    // the MSVCRT _iob[] legacy layout; safest is to alias to host stdout/err.
+    FILE** arr = static_cast<FILE**>(iob);
+    arr[0] = stdin; arr[1] = stdout; arr[2] = stderr;
+    return arr;
+}
+
+// ---- stdio ----
+int Win32ApiHle::hle_msvcrt_printf(const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vfprintf(stdout, fmt, ap);
+    va_end(ap); return r;
+}
+int Win32ApiHle::hle_msvcrt_fprintf(void* stream, const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
+              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
+    int r = vfprintf(f ? f : stdout, fmt, ap);
+    va_end(ap); return r;
+}
+int Win32ApiHle::hle_msvcrt_vfprintf(void* stream, const char* fmt, va_list ap) {
+    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
+              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
+    // On x64 the guest passes its va_list by pointer value into `ap`.
+    return vfprintf(f ? f : stdout, fmt, ap);
+}
+int Win32ApiHle::hle_msvcrt_sprintf(char* buf, const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vsprintf(buf, fmt, ap);
+    va_end(ap); return r;
+}
+size_t Win32ApiHle::hle_msvcrt_fwrite(const void* ptr, size_t sz, size_t n, void* stream) {
+    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
+              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
+    return fwrite(ptr, sz, n, f ? f : stdout);
+}
+int Win32ApiHle::hle_msvcrt_puts(const char* s)    { return puts(s); }
+int Win32ApiHle::hle_msvcrt_fputs(const char* s, void* stream) {
+    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
+              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
+    return fputs(s, f ? f : stdout);
+}
+int Win32ApiHle::hle_msvcrt_fputc(int c, void* stream) {
+    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
+              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
+    return fputc(c, f ? f : stdout);
+}
+
+// ---- misc ----
+void* Win32ApiHle::hle_msvcrt_signal(int signum, void* handler) {
+    return reinterpret_cast<void*>(signal(signum, reinterpret_cast<void (*)(int)>(handler)));
+}
+// Structured exception handler dispatcher (x64 only; we never raise SEH, so no-op).
+void* Win32ApiHle::hle_msvcrt___C_specific_handler(void* a, void* b, void* c, void* d) {
+    return nullptr;
+}
+int  Win32ApiHle::hle_msvcrt__crt_debugger_hook(int) { return 0; }
+
+// __p__acmdln(): returns &_acmdln so main() can read the command line global.
+static PAPAYA_MS_ABI char** hle_msvcrt_p_acmdln() { return &g_acmdln; }
+
+// ---- KERNEL32 additions ----
+void  Win32ApiHle::hle_get_startup_info_a(void* lpStartupInfo) {
+    if (!lpStartupInfo) return;
+    std::memset(lpStartupInfo, 0, 104); // STARTUPINFOA is 104 bytes
+    auto* st = static_cast<u32*>(lpStartupInfo);
+    st[0] = 104; // cb
+    st[7] = 0;   // dwX/Y etc default
+    auto* size_ctx = reinterpret_cast<u16*>(lpStartupInfo);
+    size_ctx[0] = 104; // cb (word-safe)
+}
+void* Win32ApiHle::hle_set_unhandled_exception_filter(void* lpH) {
+    (void)lpH; return nullptr;
+}
+size_t Win32ApiHle::hle_virtual_query(void* lpAddr, int info, void* buf, size_t len) {
+    // Minimal MEMORY_BASIC_INFORMATION fill: report RWX private committed.
+    if (!buf || len < 48) return 0;
+    auto* base = reinterpret_cast<u8*>(buf);
+    std::memset(base, 0, 48);
+    *reinterpret_cast<void**>(base + 0)  = lpAddr;
+    *reinterpret_cast<void**>(base + 8)  = lpAddr;
+    *reinterpret_cast<u32*>(base + 16)   = 0x20000; // MEM_PRIVATE
+    *reinterpret_cast<u32*>(base + 20)   = 0x1000;  // PAGE_READWRITE
+    return 48;
+}
+
+// -------------------------------------------------------------
 // Win32ApiHle Initialization & Registration Matrix
 // -------------------------------------------------------------
 Win32ApiHle::Win32ApiHle(
@@ -706,6 +879,9 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "GetTickCount64", reinterpret_cast<void*>(&hle_get_tick_count_64));
     register_function("KERNEL32.DLL", "GetLastError", reinterpret_cast<void*>(&hle_get_last_error));
     register_function("KERNEL32.DLL", "SetLastError", reinterpret_cast<void*>(&hle_set_last_error));
+    register_function("KERNEL32.DLL", "GetStartupInfoA", reinterpret_cast<void*>(&hle_get_startup_info_a));
+    register_function("KERNEL32.DLL", "SetUnhandledExceptionFilter", reinterpret_cast<void*>(&hle_set_unhandled_exception_filter));
+    register_function("KERNEL32.DLL", "VirtualQuery", reinterpret_cast<void*>(&hle_virtual_query));
 
     // NTDLL.DLL
     register_function("NTDLL.DLL", "NtAllocateVirtualMemory", reinterpret_cast<void*>(&hle_virtual_alloc));
@@ -714,6 +890,60 @@ Result<> Win32ApiHle::initialize() {
     register_function("NTDLL.DLL", "RtlEnterCriticalSection", reinterpret_cast<void*>(&hle_enter_critical_section));
     register_function("NTDLL.DLL", "RtlLeaveCriticalSection", reinterpret_cast<void*>(&hle_leave_critical_section));
     register_function("NTDLL.DLL", "RtlDeleteCriticalSection", reinterpret_cast<void*>(&hle_delete_critical_section));
+
+    // MSVCRT.DLL - the C runtime every mingw/MSVC binary imports.
+    register_function("msvcrt.dll", "malloc",   reinterpret_cast<void*>(&hle_msvcrt_malloc));
+    register_function("msvcrt.dll", "free",     reinterpret_cast<void*>(&hle_msvcrt_free));
+    register_function("msvcrt.dll", "calloc",   reinterpret_cast<void*>(&hle_msvcrt_calloc));
+    register_function("msvcrt.dll", "realloc",  reinterpret_cast<void*>(&hle_msvcrt_realloc));
+    register_function("msvcrt.dll", "memcpy",   reinterpret_cast<void*>(&hle_msvcrt_memcpy));
+    register_function("msvcrt.dll", "memmove",  reinterpret_cast<void*>(&hle_msvcrt_memmove));
+    register_function("msvcrt.dll", "memset",   reinterpret_cast<void*>(&hle_msvcrt_memset));
+    register_function("msvcrt.dll", "strlen",   reinterpret_cast<void*>(&hle_msvcrt_strlen));
+    register_function("msvcrt.dll", "strcmp",   reinterpret_cast<void*>(&hle_msvcrt_strcmp));
+    register_function("msvcrt.dll", "strncmp",  reinterpret_cast<void*>(&hle_msvcrt_strncmp));
+    register_function("msvcrt.dll", "strcpy",   reinterpret_cast<void*>(&hle_msvcrt_strcpy));
+    register_function("msvcrt.dll", "strncpy",  reinterpret_cast<void*>(&hle_msvcrt_strncpy));
+    register_function("msvcrt.dll", "strcat",   reinterpret_cast<void*>(&hle_msvcrt_strcat));
+    register_function("msvcrt.dll", "atoi",     reinterpret_cast<void*>(&hle_msvcrt_atoi));
+    register_function("msvcrt.dll", "atof",     reinterpret_cast<void*>(&hle_msvcrt_atof));
+    register_function("msvcrt.dll", "mbstowcs", reinterpret_cast<void*>(&hle_msvcrt_mbstowcs));
+
+    register_function("msvcrt.dll", "exit",     reinterpret_cast<void*>(&hle_msvcrt_exit));
+    register_function("msvcrt.dll", "_exit",    reinterpret_cast<void*>(&hle_msvcrt__exit));
+    register_function("msvcrt.dll", "abort",    reinterpret_cast<void*>(&hle_msvcrt_abort));
+    register_function("msvcrt.dll", "_cexit",   reinterpret_cast<void*>(&hle_msvcrt__cexit));
+    register_function("msvcrt.dll", "_initterm", reinterpret_cast<void*>(&hle_msvcrt__initterm));
+    register_function("msvcrt.dll", "__set_app_type", reinterpret_cast<void*>(&hle_msvcrt__set_app_type));
+    register_function("msvcrt.dll", "_set_app_type",  reinterpret_cast<void*>(&hle_msvcrt__set_app_type));
+    register_function("msvcrt.dll", "_amsg_exit", reinterpret_cast<void*>(&hle_msvcrt__amsg_exit));
+    register_function("msvcrt.dll", "_onexit",  reinterpret_cast<void*>(&hle_msvcrt__onexit));
+    register_function("msvcrt.dll", "_ismbblead", reinterpret_cast<void*>(&hle_msvcrt__ismbblead));
+    register_function("msvcrt.dll", "__getmainargs", reinterpret_cast<void*>(&hle_msvcrt__getmainargs));
+    register_function("msvcrt.dll", "__setusermatherr", reinterpret_cast<void*>(&hle_msvcrt__setusermatherr));
+    register_function("msvcrt.dll", "_commode", reinterpret_cast<void*>(&hle_msvcrt__commode));
+    register_function("msvcrt.dll", "_fmode",   reinterpret_cast<void*>(&hle_msvcrt__fmode));
+
+    register_function("msvcrt.dll", "printf",   reinterpret_cast<void*>(&hle_msvcrt_printf));
+    register_function("msvcrt.dll", "fprintf",  reinterpret_cast<void*>(&hle_msvcrt_fprintf));
+    register_function("msvcrt.dll", "vfprintf", reinterpret_cast<void*>(&hle_msvcrt_vfprintf));
+    register_function("msvcrt.dll", "sprintf",  reinterpret_cast<void*>(&hle_msvcrt_sprintf));
+    register_function("msvcrt.dll", "fwrite",   reinterpret_cast<void*>(&hle_msvcrt_fwrite));
+    register_function("msvcrt.dll", "puts",     reinterpret_cast<void*>(&hle_msvcrt_puts));
+    register_function("msvcrt.dll", "fputs",    reinterpret_cast<void*>(&hle_msvcrt_fputs));
+    register_function("msvcrt.dll", "fputc",    reinterpret_cast<void*>(&hle_msvcrt_fputc));
+    register_function("msvcrt.dll", "__iob_func", reinterpret_cast<void*>(&hle_msvcrt___iob_func));
+
+    register_function("msvcrt.dll", "signal",   reinterpret_cast<void*>(&hle_msvcrt_signal));
+    register_function("msvcrt.dll", "__C_specific_handler", reinterpret_cast<void*>(&hle_msvcrt___C_specific_handler));
+    register_function("msvcrt.dll", "_crt_debugger_hook", reinterpret_cast<void*>(&hle_msvcrt__crt_debugger_hook));
+
+    // msvcrt data imports (resolved to real writable variable addresses, not stubs).
+    register_function("msvcrt.dll", "__initenv", reinterpret_cast<void*>(&g_initenv));
+    register_function("msvcrt.dll", "_environ",  reinterpret_cast<void*>(&g_environ));
+    register_function("msvcrt.dll", "__envp",    reinterpret_cast<void*>(&g_environ));
+    register_function("msvcrt.dll", "_acmdln",   reinterpret_cast<void*>(&g_acmdln));
+    register_function("msvcrt.dll", "__p__acmdln", reinterpret_cast<void*>(&hle_msvcrt_p_acmdln));
 
     // USER32.DLL & GDI32.DLL
     register_function("USER32.DLL", "GetSystemMetrics", reinterpret_cast<void*>(&hle_get_system_metrics));

@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <cstdarg>
 
 namespace papaya::win32 {
 
@@ -181,6 +182,61 @@ public:
     static PAPAYA_MS_ABI void  hle_steam_api_run_callbacks();
     static PAPAYA_MS_ABI BOOL  hle_steam_api_restart_app_if_necessary(u32 unOwnAppID);
     static PAPAYA_MS_ABI void* hle_steam_internal_create_interface(const char* ver);
+
+    // MSVCRT Emulation (the C runtime every mingw/MSVC binary needs).
+    // Memory & string (void-returning int for ABI simplicity; see impls).
+    static PAPAYA_MS_ABI void* hle_msvcrt_malloc(size_t);
+    static PAPAYA_MS_ABI void  hle_msvcrt_free(void*);
+    static PAPAYA_MS_ABI void* hle_msvcrt_calloc(size_t, size_t);
+    static PAPAYA_MS_ABI void* hle_msvcrt_realloc(void*, size_t);
+    static PAPAYA_MS_ABI void* hle_msvcrt_memcpy(void*, const void*, size_t);
+    static PAPAYA_MS_ABI void* hle_msvcrt_memmove(void*, const void*, size_t);
+    static PAPAYA_MS_ABI void* hle_msvcrt_memset(void*, int, size_t);
+    static PAPAYA_MS_ABI size_t hle_msvcrt_strlen(const char*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_strcmp(const char*, const char*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_strncmp(const char*, const char*, size_t);
+    static PAPAYA_MS_ABI char* hle_msvcrt_strcpy(char*, const char*);
+    static PAPAYA_MS_ABI char* hle_msvcrt_strncpy(char*, const char*, size_t);
+    static PAPAYA_MS_ABI char* hle_msvcrt_strcat(char*, const char*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_atoi(const char*);
+    static PAPAYA_MS_ABI double hle_msvcrt_atof(const char*);
+    static PAPAYA_MS_ABI void* hle_msvcrt_mbstowcs(void*, const char*, size_t);
+
+    // Process lifecycle / CRT init
+    static PAPAYA_MS_ABI void  hle_msvcrt_exit(int);
+    static PAPAYA_MS_ABI void  hle_msvcrt__exit(int);
+    static PAPAYA_MS_ABI void  hle_msvcrt_abort();
+    static PAPAYA_MS_ABI void  hle_msvcrt__cexit();
+    static PAPAYA_MS_ABI int   hle_msvcrt__initterm(void*, void*);
+    static PAPAYA_MS_ABI void  hle_msvcrt__set_app_type(int);
+    static PAPAYA_MS_ABI void  hle_msvcrt__amsg_exit(int);
+    static PAPAYA_MS_ABI int   hle_msvcrt__onexit(void*);
+    static PAPAYA_MS_ABI int   hle_msvcrt__ismbblead(u32);
+    static PAPAYA_MS_ABI void  hle_msvcrt__getmainargs(int*, char***, char***, int, int*);
+    static PAPAYA_MS_ABI void  hle_msvcrt__setusermatherr(void*);
+
+    // stdio
+    static PAPAYA_MS_ABI int   hle_msvcrt_printf(const char*, ...);
+    static PAPAYA_MS_ABI int   hle_msvcrt_fprintf(void*, const char*, ...);
+    static PAPAYA_MS_ABI int   hle_msvcrt_vfprintf(void*, const char*, va_list);
+    static PAPAYA_MS_ABI int   hle_msvcrt_sprintf(char*, const char*, ...);
+    static PAPAYA_MS_ABI size_t hle_msvcrt_fwrite(const void*, size_t, size_t, void*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_puts(const char*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_fputs(const char*, void*);
+    static PAPAYA_MS_ABI int   hle_msvcrt_fputc(int, void*);
+    static PAPAYA_MS_ABI void* hle_msvcrt___iob_func();
+
+    // Misc / signal
+    static PAPAYA_MS_ABI void* hle_msvcrt_signal(int, void*);
+    static PAPAYA_MS_ABI void  hle_msvcrt__commode(int);
+    static PAPAYA_MS_ABI void  hle_msvcrt__fmode(int);
+    static PAPAYA_MS_ABI void* hle_msvcrt___C_specific_handler(void*, void*, void*, void*);
+    static PAPAYA_MS_ABI int   hle_msvcrt__crt_debugger_hook(int);
+
+    // KERNEL32 additions
+    static PAPAYA_MS_ABI void  hle_get_startup_info_a(void*);
+    static PAPAYA_MS_ABI void* hle_set_unhandled_exception_filter(void*);
+    static PAPAYA_MS_ABI size_t hle_virtual_query(void*, int, void*, size_t);
 
 private:
     std::shared_ptr<steam::SteamApiStub> steam_stub_;
