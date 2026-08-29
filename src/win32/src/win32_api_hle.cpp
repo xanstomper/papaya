@@ -4263,10 +4263,6 @@ Result<> Win32ApiHle::initialize() {
     // ADVAPI32.DLL & SHELL32.DLL
     register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&hle_open_process_token));
     register_function("ADVAPI32.dll", "GetTokenInformation", reinterpret_cast<void*>(&hle_get_token_information));
-    register_function("ADVAPI32.dll", "RegOpenKeyExW", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("ADVAPI32.dll", "RegQueryValueExW", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("ADVAPI32.dll", "RegCloseKey", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("ADVAPI32.dll", "RegGetValueW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&hle_get_current_hw_profile_a));
     register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
@@ -4277,7 +4273,6 @@ Result<> Win32ApiHle::initialize() {
     register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&hle_shell_execute_w));
     register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&hle_command_line_to_argv_w));
     register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("SHELL32.dll", "SHGetKnownFolderPath", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&hle_drag_accept_files));
     register_function("SHELL32.dll", "DragQueryFileW", reinterpret_cast<void*>(&hle_drag_query_file_w));
 
