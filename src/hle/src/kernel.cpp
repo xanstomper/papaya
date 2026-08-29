@@ -4,153 +4,297 @@
 
 namespace papaya::hle {
 
-Kernel::Kernel(std::shared_ptr<hv::IHypervisor> hypervisor, std::shared_ptr<storage::VirtualFileSystem> vfs)
-    : hypervisor_(std::move(hypervisor)), vfs_(std::move(vfs)) {}
+Kernel::Kernel(std::shared_ptr<hv::IHypervisor> hv, std::shared_ptr<storage::VirtualFileSystem> vfs)
+    : hv_(hv), vfs_(vfs), thunk_manager_(0x00100000), thread_manager_(handle_table_) {}
 
 Kernel::~Kernel() = default;
 
 Result<> Kernel::initialize() {
-    log::info("KERNEL", "Initializing Xbox OS / Era Kernel Runtime & HLE Library Dispatch");
-    register_standard_syscalls();
-    register_standard_hle_apis();
+    log::info("KERNEL", "Initializing Papaya High-Level Emulation (HLE) Runtime & Win32 subsystem");
+
+    register_kernel32_exports();
+    register_ntdll_exports();
+    register_xg_exports();
+    register_synchronization_exports();
+
     return {};
-}
-
-void Kernel::register_standard_syscalls() {
-    // 0x0001: NtYieldExecution
-    dispatcher_.register_syscall(0x0001, "NtYieldExecution", [](Kernel&, hv::IVcpu&, const hv::CpuRegisters&) -> u64 {
-        return 0; // STATUS_SUCCESS
-    });
-
-    // 0x0002: NtTerminateProcess
-    dispatcher_.register_syscall(0x0002, "NtTerminateProcess", [](Kernel&, hv::IVcpu&, const hv::CpuRegisters& regs) -> u64 {
-        log::info("KERNEL", "NtTerminateProcess invoked with exit code: {}", regs.rcx);
-        return 0;
-    });
-
-    // 0x0003: NtQuerySystemInformation
-    dispatcher_.register_syscall(0x0003, "NtQuerySystemInformation", [](Kernel&, hv::IVcpu&, const hv::CpuRegisters&) -> u64 {
-        return 0;
-    });
-
-    // 0x0010: XgSubmitCommandRing (Graphics Ring Buffer Submit)
-    dispatcher_.register_syscall(0x0010, "XgSubmitCommandRing", [](Kernel&, hv::IVcpu&, const hv::CpuRegisters& regs) -> u64 {
-        log::debug("KERNEL", "XgSubmitCommandRing: ring_buffer_gpa=0x{:X}, size={}", regs.rcx, regs.rdx);
-        return 0;
-    });
-}
-
-void Kernel::register_standard_hle_apis() {
-    // === kernel32.dll ===
-    thunk_mgr_.register_function("kernel32.dll", "GetModuleHandleA", [](HleCallContext& ctx) -> u64 {
-        log::debug("HLE", "GetModuleHandleA(0x{:X})", ctx.rcx);
-        return 0x00400000; // Base address of main executable
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "GetModuleHandleW", [](HleCallContext& ctx) -> u64 {
-        log::debug("HLE", "GetModuleHandleW(0x{:X})", ctx.rcx);
-        return 0x00400000;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "GetProcAddress", [](HleCallContext& ctx) -> u64 {
-        log::debug("HLE", "GetProcAddress(hModule=0x{:X}, lpProcName=0x{:X})", ctx.rcx, ctx.rdx);
-        return 0;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "GetCurrentProcessId", [](HleCallContext&) -> u64 {
-        return 0x1337;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "GetCurrentThreadId", [](HleCallContext&) -> u64 {
-        return 0x1000;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "QueryPerformanceFrequency", [](HleCallContext& ctx) -> u64 {
-        if (ctx.host_ram_base && ctx.rcx + sizeof(u64) <= ctx.ram_size) {
-            auto* freq_ptr = reinterpret_cast<u64*>(static_cast<u8*>(ctx.host_ram_base) + ctx.rcx);
-            *freq_ptr = 10000000ULL; // 10 MHz timer
-            return 1; // TRUE
-        }
-        return 0;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "QueryPerformanceCounter", [](HleCallContext& ctx) -> u64 {
-        if (ctx.host_ram_base && ctx.rcx + sizeof(u64) <= ctx.ram_size) {
-            auto now = std::chrono::steady_clock::now().time_since_epoch();
-            u64 counts = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() / 100;
-            auto* counter_ptr = reinterpret_cast<u64*>(static_cast<u8*>(ctx.host_ram_base) + ctx.rcx);
-            *counter_ptr = counts;
-            return 1; // TRUE
-        }
-        return 0;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "VirtualAlloc", [](HleCallContext& ctx) -> u64 {
-        log::info("HLE", "VirtualAlloc(lpAddress=0x{:X}, dwSize=0x{:X}, flAllocationType=0x{:X}, flProtect=0x{:X})",
-                  ctx.rcx, ctx.rdx, ctx.r8, ctx.r9);
-        // Simple bump/identity allocation for guest Title address space
-        static u64 next_guest_alloc = 0x20000000ULL; // 512MB mark
-        u64 allocated = (ctx.rcx != 0) ? ctx.rcx : next_guest_alloc;
-        if (ctx.rcx == 0) {
-            next_guest_alloc = (next_guest_alloc + ctx.rdx + 0xFFFULL) & ~0xFFFULL;
-        }
-        return allocated;
-    });
-
-    thunk_mgr_.register_function("kernel32.dll", "OutputDebugStringA", [](HleCallContext& ctx) -> u64 {
-        if (ctx.host_ram_base && ctx.rcx < ctx.ram_size) {
-            const char* msg = reinterpret_cast<const char*>(static_cast<const u8*>(ctx.host_ram_base) + ctx.rcx);
-            log::info("TITLE_LOG", "{}", msg);
-        }
-        return 0;
-    });
-
-    // === xg.dll (Xbox Graphics API) ===
-    thunk_mgr_.register_function("xg.dll", "XgSubmitCommandRing", [](HleCallContext& ctx) -> u64 {
-        log::debug("HLE", "XgSubmitCommandRing: ring_gpa=0x{:X}, dwords={}", ctx.rcx, ctx.rdx);
-        return 0; // S_OK
-    });
-
-    thunk_mgr_.register_function("xg.dll", "XgCreateDevice", [](HleCallContext& ctx) -> u64 {
-        log::info("HLE", "XgCreateDevice invoked");
-        return 0; // S_OK
-    });
 }
 
 Result<storage::LoadedPeImage> Kernel::load_title_executable(
     std::string_view exe_path,
-    void* host_ram_base,
-    u64 ram_size
+    void* guest_memory_host_base,
+    u64 guest_memory_size
 ) {
-    log::info("KERNEL", "Loading and preparing title PE64 executable: {}", exe_path);
-
-    if (!vfs_ || !vfs_->exists(exe_path)) {
-        log::error("KERNEL", "Executable not found in VFS: {}", exe_path);
+    if (!vfs_) {
         return ErrorCode::InvalidParameter;
     }
 
-    auto node = vfs_->resolve(exe_path);
-    auto data_res = node->read_all();
-    if (!data_res) {
-        return data_res.error();
+    auto file_res = vfs_->read_file(exe_path);
+    if (!file_res) {
+        log::error("KERNEL", "Failed to read Title executable: {}", exe_path);
+        return file_res.error();
     }
 
-    // Load PE image into guest memory (base = 0x0040_0000 or preferred base)
-    auto image_res = pe_loader_.load_image(*data_res, 0x00400000ULL, host_ram_base, ram_size);
-    if (!image_res) {
-        log::error("KERNEL", "Failed to load PE image");
-        return image_res.error();
+    log::info("KERNEL", "Loading title PE executable ({} bytes)", file_res->size());
+    auto img_res = pe_loader_.load_image(*file_res, 0x00400000, guest_memory_host_base, guest_memory_size);
+    if (!img_res) {
+        return img_res.error();
     }
 
-    // Bind all imported symbols to HLE trampolines
-    auto bind_res = thunk_mgr_.bind_imports(image_res->imports, host_ram_base, ram_size);
+    // Write HLE trampolines to 0x00100000
+    thunk_manager_.write_trampolines_to_guest(guest_memory_host_base, guest_memory_size);
+
+    // Bind PE imports to trampolines
+    auto bind_res = thunk_manager_.bind_imports(img_res->imports, guest_memory_host_base, guest_memory_size);
     if (!bind_res) {
-        log::error("KERNEL", "Failed to bind PE imports");
+        log::error("KERNEL", "Failed to bind imports for title executable");
         return bind_res.error();
     }
 
-    log::info("KERNEL", "Title executable ready to execute at Entry Point 0x{:X}", image_res->entry_point);
-    return *image_res;
+    return *img_res;
+}
+
+void Kernel::register_kernel32_exports() {
+    thunk_manager_.register_function("kernel32.dll", "GetModuleHandleA", [](HleCallContext&) -> u64 {
+        return 0x00400000;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "GetModuleHandleW", [](HleCallContext&) -> u64 {
+        return 0x00400000;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "VirtualAlloc", [](HleCallContext& ctx) -> u64 {
+        GuestVirtAddr lpAddress = ctx.rcx;
+        u64 dwSize = ctx.rdx;
+        if (lpAddress == 0) lpAddress = 0x10000000;
+        log::debug("HLE", "VirtualAlloc(addr=0x{:X}, size=0x{:X})", lpAddress, dwSize);
+        return lpAddress;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "VirtualFree", [](HleCallContext&) -> u64 {
+        return 1; // Success
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "QueryPerformanceCounter", [](HleCallContext& ctx) -> u64 {
+        auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
+        u64 counts = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+        if (ctx.rcx != 0 && ctx.host_ram_base) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            *reinterpret_cast<u64*>(ram + ctx.rcx) = counts;
+        }
+        return 1;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "QueryPerformanceFrequency", [](HleCallContext& ctx) -> u64 {
+        if (ctx.rcx != 0 && ctx.host_ram_base) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            *reinterpret_cast<u64*>(ram + ctx.rcx) = 1000000000ULL; // 1 GHz
+        }
+        return 1;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "OutputDebugStringA", [](HleCallContext& ctx) -> u64 {
+        if (ctx.rcx != 0 && ctx.host_ram_base) {
+            auto* ram = static_cast<u8*>(ctx.host_ram_base);
+            const char* str = reinterpret_cast<const char*>(ram + ctx.rcx);
+            log::info("GUEST_DEBUG", "{}", str);
+        }
+        return 0;
+    });
+}
+
+void Kernel::register_ntdll_exports() {
+    thunk_manager_.register_function("ntdll.dll", "RtlAllocateHeap", [](HleCallContext& ctx) -> u64 {
+        u64 size = ctx.r8;
+        static GuestVirtAddr heap_alloc_ptr = 0x18000000;
+        GuestVirtAddr addr = heap_alloc_ptr;
+        heap_alloc_ptr += ((size + 15) & ~15);
+        return addr;
+    });
+
+    thunk_manager_.register_function("ntdll.dll", "RtlFreeHeap", [](HleCallContext&) -> u64 {
+        return 1;
+    });
+}
+
+void Kernel::register_xg_exports() {
+    thunk_manager_.register_function("xg.dll", "XgCreateDevice", [](HleCallContext&) -> u64 {
+        log::info("XG", "XgCreateDevice invoked by guest");
+        return 0; // S_OK
+    });
+
+    thunk_manager_.register_function("xg.dll", "XgSubmitCommandRing", [](HleCallContext& ctx) -> u64 {
+        GuestVirtAddr ring_gpa = ctx.rcx;
+        u32 dword_count = static_cast<u32>(ctx.rdx);
+        log::debug("XG", "XgSubmitCommandRing(ring_gpa=0x{:X}, dwords={})", ring_gpa, dword_count);
+        return 0; // S_OK
+    });
+}
+
+void Kernel::register_synchronization_exports() {
+    // 1. Events
+    thunk_manager_.register_function("kernel32.dll", "CreateEventA", [this](HleCallContext& ctx) -> u64 {
+        bool manual_reset = (ctx.rdx != 0);
+        bool initial_state = (ctx.r8 != 0);
+        auto evt = std::make_shared<HleEvent>(manual_reset, initial_state);
+        u32 handle = handle_table_.insert(evt);
+        log::debug("HLE_SYNC", "CreateEventA: handle=0x{:X}, manual={}, init={}", handle, manual_reset, initial_state);
+        return handle;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "CreateEventW", [this](HleCallContext& ctx) -> u64 {
+        bool manual_reset = (ctx.rdx != 0);
+        bool initial_state = (ctx.r8 != 0);
+        auto evt = std::make_shared<HleEvent>(manual_reset, initial_state);
+        return handle_table_.insert(evt);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "SetEvent", [this](HleCallContext& ctx) -> u64 {
+        auto obj = handle_table_.get(static_cast<u32>(ctx.rcx));
+        if (obj && obj->get_type() == HandleType::Event) {
+            static_cast<HleEvent*>(obj.get())->set();
+            return 1;
+        }
+        return 0;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "ResetEvent", [this](HleCallContext& ctx) -> u64 {
+        auto obj = handle_table_.get(static_cast<u32>(ctx.rcx));
+        if (obj && obj->get_type() == HandleType::Event) {
+            static_cast<HleEvent*>(obj.get())->reset();
+            return 1;
+        }
+        return 0;
+    });
+
+    // 2. Mutexes
+    thunk_manager_.register_function("kernel32.dll", "CreateMutexA", [this](HleCallContext& ctx) -> u64 {
+        bool initial_owner = (ctx.rdx != 0);
+        auto mtx = std::make_shared<HleMutex>(initial_owner, thread_manager_.get_current_tid());
+        return handle_table_.insert(mtx);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "CreateMutexW", [this](HleCallContext& ctx) -> u64 {
+        bool initial_owner = (ctx.rdx != 0);
+        auto mtx = std::make_shared<HleMutex>(initial_owner, thread_manager_.get_current_tid());
+        return handle_table_.insert(mtx);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "ReleaseMutex", [this](HleCallContext& ctx) -> u64 {
+        auto obj = handle_table_.get(static_cast<u32>(ctx.rcx));
+        if (obj && obj->get_type() == HandleType::Mutex) {
+            return static_cast<HleMutex*>(obj.get())->release(thread_manager_.get_current_tid()) ? 1 : 0;
+        }
+        return 0;
+    });
+
+    // 3. Semaphores
+    thunk_manager_.register_function("kernel32.dll", "CreateSemaphoreA", [this](HleCallContext& ctx) -> u64 {
+        s32 initial_count = static_cast<s32>(ctx.rdx);
+        s32 max_count = static_cast<s32>(ctx.r8);
+        auto sem = std::make_shared<HleSemaphore>(initial_count, max_count);
+        return handle_table_.insert(sem);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "ReleaseSemaphore", [this](HleCallContext& ctx) -> u64 {
+        auto obj = handle_table_.get(static_cast<u32>(ctx.rcx));
+        if (obj && obj->get_type() == HandleType::Semaphore) {
+            s32 release_count = static_cast<s32>(ctx.rdx);
+            s32* prev_ptr = nullptr;
+            if (ctx.r8 != 0 && ctx.host_ram_base) {
+                auto* ram = static_cast<u8*>(ctx.host_ram_base);
+                prev_ptr = reinterpret_cast<s32*>(ram + ctx.r8);
+            }
+            return static_cast<HleSemaphore*>(obj.get())->release(release_count, prev_ptr) ? 1 : 0;
+        }
+        return 0;
+    });
+
+    // 4. Waiting
+    thunk_manager_.register_function("kernel32.dll", "WaitForSingleObject", [this](HleCallContext& ctx) -> u64 {
+        u32 handle = static_cast<u32>(ctx.rcx);
+        u32 timeout_ms = static_cast<u32>(ctx.rdx);
+        return handle_table_.wait_for_single_object(handle, timeout_ms);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "CloseHandle", [this](HleCallContext& ctx) -> u64 {
+        u32 handle = static_cast<u32>(ctx.rcx);
+        return handle_table_.remove(handle) ? 1 : 0;
+    });
+
+    // 5. Fast Futex Synchronization (WaitOnAddress / WakeByAddress)
+    thunk_manager_.register_function("api-ms-win-core-synch-l1-2-0.dll", "WaitOnAddress", [](HleCallContext& ctx) -> u64 {
+        if (!ctx.host_ram_base || ctx.rcx == 0 || ctx.rdx == 0) return 0;
+        auto* ram = static_cast<u8*>(ctx.host_ram_base);
+        void* addr = ram + ctx.rcx;
+        u64 compare_val = *reinterpret_cast<const u64*>(ram + ctx.rdx);
+        size_t size = ctx.r8;
+        u32 timeout_ms = static_cast<u32>(ctx.r9);
+        return HleFutex::wait_on_address(addr, compare_val, size, timeout_ms) ? 1 : 0;
+    });
+
+    thunk_manager_.register_function("api-ms-win-core-synch-l1-2-0.dll", "WakeByAddressSingle", [](HleCallContext& ctx) -> u64 {
+        if (!ctx.host_ram_base || ctx.rcx == 0) return 0;
+        auto* ram = static_cast<u8*>(ctx.host_ram_base);
+        void* addr = ram + ctx.rcx;
+        HleFutex::wake_by_address_single(addr);
+        return 1;
+    });
+
+    thunk_manager_.register_function("api-ms-win-core-synch-l1-2-0.dll", "WakeByAddressAll", [](HleCallContext& ctx) -> u64 {
+        if (!ctx.host_ram_base || ctx.rcx == 0) return 0;
+        auto* ram = static_cast<u8*>(ctx.host_ram_base);
+        void* addr = ram + ctx.rcx;
+        HleFutex::wake_by_address_all(addr);
+        return 1;
+    });
+
+    // 6. Thread Management
+    thunk_manager_.register_function("kernel32.dll", "CreateThread", [this](HleCallContext& ctx) -> u64 {
+        u64 stack_size = ctx.rdx;
+        GuestVirtAddr start_address = ctx.r8;
+        GuestVirtAddr parameter = ctx.r9;
+        auto res = thread_manager_.create_thread(start_address, parameter, stack_size, 0);
+        return res.has_value() ? *res : 0;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "ResumeThread", [this](HleCallContext& ctx) -> u64 {
+        return thread_manager_.resume_thread(static_cast<u32>(ctx.rcx)) ? 1 : 0;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "SuspendThread", [this](HleCallContext& ctx) -> u64 {
+        return thread_manager_.suspend_thread(static_cast<u32>(ctx.rcx)) ? 0 : static_cast<u64>(-1);
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "ExitThread", [this](HleCallContext& ctx) -> u64 {
+        thread_manager_.exit_thread(static_cast<u32>(ctx.rcx));
+        return 0;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "GetCurrentThreadId", [this](HleCallContext&) -> u64 {
+        return thread_manager_.get_current_tid();
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "GetCurrentProcessId", [](HleCallContext&) -> u64 {
+        return 0x1337;
+    });
+
+    // 7. Thread Local Storage (TLS)
+    thunk_manager_.register_function("kernel32.dll", "TlsAlloc", [this](HleCallContext&) -> u64 {
+        return thread_manager_.tls_alloc();
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "TlsFree", [this](HleCallContext& ctx) -> u64 {
+        return thread_manager_.tls_free(static_cast<u32>(ctx.rcx)) ? 1 : 0;
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "TlsGetValue", [this](HleCallContext& ctx) -> u64 {
+        return thread_manager_.tls_get_value(static_cast<u32>(ctx.rcx), thread_manager_.get_current_tid());
+    });
+
+    thunk_manager_.register_function("kernel32.dll", "TlsSetValue", [this](HleCallContext& ctx) -> u64 {
+        return thread_manager_.tls_set_value(static_cast<u32>(ctx.rcx), ctx.rdx, thread_manager_.get_current_tid()) ? 1 : 0;
+    });
 }
 
 } // namespace papaya::hle

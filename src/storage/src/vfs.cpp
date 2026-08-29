@@ -76,11 +76,26 @@ std::shared_ptr<IVfsNode> VirtualFileSystem::resolve(std::string_view virtual_pa
             }
         }
     }
+
+    // Direct host fallback
+    std::filesystem::path direct_path(virtual_path);
+    if (std::filesystem::exists(direct_path)) {
+        return std::make_shared<HostVfsNode>(direct_path);
+    }
+
     return nullptr;
 }
 
 bool VirtualFileSystem::exists(std::string_view virtual_path) const {
     return resolve(virtual_path) != nullptr;
+}
+
+Result<std::vector<u8>> VirtualFileSystem::read_file(std::string_view virtual_path) const {
+    auto node = resolve(virtual_path);
+    if (!node) {
+        return ErrorCode::NotFound;
+    }
+    return node->read_all();
 }
 
 } // namespace papaya::storage

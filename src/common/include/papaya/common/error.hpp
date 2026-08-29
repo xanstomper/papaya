@@ -11,6 +11,8 @@ namespace papaya {
 enum class ErrorCode {
     Success = 0,
     InvalidParameter,
+    NotFound,
+    FileNotFound,
     OutOfMemory,
     HypervisorInitFailed,
     KvmUnavailable,
@@ -30,6 +32,8 @@ inline std::string_view error_to_string(ErrorCode code) {
     switch (code) {
         case ErrorCode::Success: return "Success";
         case ErrorCode::InvalidParameter: return "Invalid Parameter";
+        case ErrorCode::NotFound: return "Item Not Found";
+        case ErrorCode::FileNotFound: return "File Not Found";
         case ErrorCode::OutOfMemory: return "Out of Memory";
         case ErrorCode::HypervisorInitFailed: return "Hypervisor Initialization Failed";
         case ErrorCode::KvmUnavailable: return "KVM Device Unavailable (/dev/kvm)";

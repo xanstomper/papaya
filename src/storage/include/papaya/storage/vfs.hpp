@@ -35,6 +35,7 @@ public:
     
     std::shared_ptr<IVfsNode> resolve(std::string_view virtual_path) const;
     bool exists(std::string_view virtual_path) const;
+    Result<std::vector<u8>> read_file(std::string_view virtual_path) const;
 
 private:
     std::unordered_map<std::string, std::filesystem::path> host_mounts_;
