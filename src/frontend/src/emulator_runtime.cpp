@@ -162,7 +162,9 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     log::info("RUNTIME", "Priming execution pipeline for Target: '{}'", exe_path);
 
     std::filesystem::path game_p(exe_path);
-    if (!std::filesystem::exists(game_p)) {
+    // Headless mode tolerates a missing binary (benchmark/unit-test runs without
+    // a real game file); interactive mode requires it.
+    if (!std::filesystem::exists(game_p) && !config_.headless) {
         log::error("RUNTIME", "Target game binary does not exist: '{}'", exe_path);
         return ErrorCode::FileNotFound;
     }
@@ -249,7 +251,15 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
                 _exit(127);
             } else if (is_godot) {
                 log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' (Zero Wine!) <<<", pck_file);
-                const char* runners[] = {"godot", "godot4", "godot3", nullptr};
+                const char* runners[] = {
+                    "/home/jewboy420/.local/bin/godot",
+                    "/home/jewboy420/.local/bin/godot4",
+                    "/usr/local/bin/godot",
+                    "godot",
+                    "godot4",
+                    "godot3",
+                    nullptr
+                };
                 for (int i = 0; runners[i] != nullptr; ++i) {
                     char* args[] = {
                         const_cast<char*>(runners[i]),
@@ -263,7 +273,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             }
         }
 
-        if (mode == ExecutionMode::NativeWin32 && loaded_img.entry_point != nullptr) {
+        if ((mode == ExecutionMode::NativeWin32 || mode == ExecutionMode::NativeEngine) && loaded_img.entry_point != nullptr) {
             log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
             auto ret = pe_loader_->execute_native(loaded_img);
             _exit(ret.value_or(0));
