@@ -9,6 +9,16 @@
 
 namespace papaya::cpu {
 
+enum class PageProtection {
+    None = 0,
+    Read = 1,
+    Write = 2,
+    Execute = 4,
+    ReadWrite = 3,
+    ReadExecute = 5,
+    ReadWriteExecute = 7
+};
+
 struct CpuHostInfo {
     std::string architecture;
     u64 host_page_size{PAGE_SIZE_4K};
@@ -30,11 +40,17 @@ public:
     bool is_4k_emulation_required() const { return host_page_size_ > PAGE_SIZE_4K; }
     u64 get_host_page_size() const { return host_page_size_; }
 
-    Result<void*> allocate_page_aligned(u64 size, int prot);
+    Result<void*> allocate_page_aligned(u64 size, PageProtection prot);
     Result<> free_page_aligned(void* ptr, u64 size);
+    Result<> protect_page_range(void* ptr, u64 size, PageProtection prot);
+
+    // Sub-page translation tracking
+    void register_subpage_mapping(u64 guest_4k_addr, u64 host_aligned_addr, u64 size);
 
 private:
     u64 host_page_size_{PAGE_SIZE_4K};
+    std::unordered_map<u64, u64> subpage_table_;
+    std::mutex subpage_mutex_;
 };
 
 class CpuTranslator {
@@ -49,6 +65,9 @@ public:
 
     // Generates environment variables for JIT execution on ARM (Box64 / FEX)
     std::vector<std::pair<std::string, std::string>> get_environment_overrides() const;
+
+    // Flushes instruction cache for translated JIT blocks
+    static void flush_instruction_cache(void* start, void* end);
 
     // Detects host CPU specs from /proc/cpuinfo or sysconf
     static CpuHostInfo detect_host_cpu();

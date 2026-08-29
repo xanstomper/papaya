@@ -7,6 +7,14 @@
 
 namespace papaya::cpu {
 
+static int to_posix_prot(PageProtection prot) {
+    int p = PROT_NONE;
+    if (static_cast<int>(prot) & static_cast<int>(PageProtection::Read)) p |= PROT_READ;
+    if (static_cast<int>(prot) & static_cast<int>(PageProtection::Write)) p |= PROT_WRITE;
+    if (static_cast<int>(prot) & static_cast<int>(PageProtection::Execute)) p |= PROT_EXEC;
+    return p;
+}
+
 PageSizeManager::PageSizeManager(u64 host_page_size)
     : host_page_size_(host_page_size) {}
 
@@ -18,9 +26,10 @@ u64 PageSizeManager::align_size_to_host_page(u64 size) const {
     return (size + host_page_size_ - 1) & ~(host_page_size_ - 1);
 }
 
-Result<void*> PageSizeManager::allocate_page_aligned(u64 size, int prot) {
+Result<void*> PageSizeManager::allocate_page_aligned(u64 size, PageProtection prot) {
     u64 aligned_sz = align_size_to_host_page(size);
-    void* ptr = mmap(nullptr, aligned_sz, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    int posix_prot = to_posix_prot(prot);
+    void* ptr = mmap(nullptr, aligned_sz, posix_prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
         return ErrorCode::MemoryMappingFailed;
     }
@@ -33,6 +42,24 @@ Result<> PageSizeManager::free_page_aligned(void* ptr, u64 size) {
         return ErrorCode::MemoryMappingFailed;
     }
     return {};
+}
+
+Result<> PageSizeManager::protect_page_range(void* ptr, u64 size, PageProtection prot) {
+    long os_page_size = sysconf(_SC_PAGESIZE);
+    u64 os_mask = (os_page_size > 0 ? static_cast<u64>(os_page_size) : PAGE_SIZE_4K) - 1;
+    u64 aligned_addr = reinterpret_cast<u64>(ptr) & ~os_mask;
+    u64 offset = reinterpret_cast<u64>(ptr) - aligned_addr;
+    u64 aligned_sz = (size + offset + os_mask) & ~os_mask;
+
+    if (mprotect(reinterpret_cast<void*>(aligned_addr), aligned_sz, to_posix_prot(prot)) != 0) {
+        return ErrorCode::MemoryMappingFailed;
+    }
+    return {};
+}
+
+void PageSizeManager::register_subpage_mapping(u64 guest_4k_addr, u64 host_aligned_addr, u64 size) {
+    std::lock_guard<std::mutex> lock(subpage_mutex_);
+    subpage_table_[guest_4k_addr] = host_aligned_addr;
 }
 
 CpuTranslator::CpuTranslator(CpuTranslationEngine engine)
@@ -99,6 +126,12 @@ Result<> CpuTranslator::initialize() {
 
     is_initialized_ = true;
     return {};
+}
+
+void CpuTranslator::flush_instruction_cache(void* start, void* end) {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(end));
+#endif
 }
 
 std::vector<std::pair<std::string, std::string>> CpuTranslator::get_environment_overrides() const {

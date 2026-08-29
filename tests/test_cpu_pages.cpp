@@ -1,6 +1,5 @@
 #include "papaya/common/logger.hpp"
 #include "papaya/cpu/cpu_translator.hpp"
-#include <sys/mman.h>
 #include <iostream>
 #include <cstdlib>
 
@@ -31,10 +30,11 @@ int main() {
     u64 aligned_size = page_mgr_16k.align_size_to_host_page(unaligned_size);
     TEST_CHECK(aligned_size == 16384);
 
-    // 2. Test Page Allocation
-    auto alloc_res = page_mgr_16k.allocate_page_aligned(4096, PROT_READ | PROT_WRITE);
+    // 2. Test Page Allocation & Memory Protection
+    auto alloc_res = page_mgr_16k.allocate_page_aligned(4096, PageProtection::ReadWrite);
     TEST_CHECK(alloc_res.has_value());
     TEST_CHECK(*alloc_res != nullptr);
+    TEST_CHECK(page_mgr_16k.protect_page_range(*alloc_res, 4096, PageProtection::Read).has_value());
     TEST_CHECK(page_mgr_16k.free_page_aligned(*alloc_res, 4096).has_value());
 
     // 3. Test CPU Translator JIT Environment Variables
