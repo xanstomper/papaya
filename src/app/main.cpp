@@ -88,6 +88,9 @@ int main(int argc, char* argv[]) {
             else if (lvl == "debug") papaya::log::Logger::instance().set_level(papaya::log::Level::Debug);
             else if (lvl == "warn") papaya::log::Logger::instance().set_level(papaya::log::Level::Warn);
             else if (lvl == "error") papaya::log::Logger::instance().set_level(papaya::log::Level::Error);
+        } else if (arg == "--lod-bias" && i + 1 < argc) {
+            try { config.lod_bias_override = std::stof(argv[++i]); }
+            catch (...) { papaya::log::warn("MAIN", "--lod-bias value is not a valid float, ignoring"); }
         } else if (!arg.starts_with("-")) {
             // Positional argument
             std::string path_str(arg);

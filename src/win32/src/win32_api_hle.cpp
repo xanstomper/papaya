@@ -44,6 +44,49 @@ static char** g_environ = g_environ_slots;      // _environ  -> empty env array
 static char  g_acmdln_buf[] = "papaya_game.exe";
 static char* g_acmdln = g_acmdln_buf;           // _acmdln -> non-null cmdline
 
+// CRT error globals whose accessors (msvcrt! _errno/__p__errno/_doserrno)
+// return POINTERS to them; the CRT dereferences the returned pointer.
+static thread_local int g_crt_errno = 0;
+static thread_local unsigned long g_crt_doserrno = 0;
+static thread_local int* g_p_errno_slot = nullptr; // __p__errno -> &int*
+
+// ---------------------------------------------------------------------------
+// Standard I/O (_iob) emulation.
+// The CRT reaches stdout/stdin/stderr via __iob_func() (imported from msvcrt)
+// which returns the base of the _iob[] array. __acrt_iob_func(i) then computes
+// base + i*48 (mingw's FILE is 48 bytes on the wire). __mingw_pformat writes to
+// _iob[1] (stdout) through this. So __iob_func() must hand back a buffer of at
+// least 6 * 48 bytes whose slots alias host stdin/stdout/stderr.
+//
+// Each 48-byte guest _iob slot stores a pointer to the host FILE in its first
+// 8 bytes (mirroring where FILE::_ptr lives). Our stdio HLE functions read that
+// back to recover the host stream. Buffers are never read/written structurally
+// by us — the slot is an opaque handle target.
+// ---------------------------------------------------------------------------
+constexpr size_t kGuestFileStride  = 48;   // WIN rt FILE stride (24*2)
+constexpr size_t kGuestIOBSlots    = 6;    // stdin..stderr + pseudo
+static unsigned char g_iob_slots[kGuestIOBSlots * kGuestFileStride] alignas(8);
+
+static void* iob_at(int idx) { return g_iob_slots + static_cast<size_t>(idx) * kGuestFileStride; }
+
+// Map a guest FILE* (lodged in a guest _iob slot) back to the host FILE*.
+static FILE* host_file_for(void* guest_file) {
+    unsigned char* slot = static_cast<unsigned char*>(guest_file);
+    // Clamp to the containing 48-byte slot base.
+    if (slot >= g_iob_slots && slot < g_iob_slots + sizeof(g_iob_slots)) {
+        size_t off = static_cast<size_t>(slot - g_iob_slots);
+        slot = g_iob_slots + (off / kGuestFileStride) * kGuestFileStride;
+    }
+    FILE* hf = nullptr;
+    std::memcpy(&hf, slot, sizeof(hf));
+    return hf;
+}
+static FILE* host_stream(int idx) {
+    FILE* hf = nullptr;
+    std::memcpy(&hf, g_iob_slots + static_cast<size_t>(idx) * kGuestFileStride, sizeof(hf));
+    return hf;
+}
+
 // Generic no-op stub for uncritical APIs
 static PAPAYA_MS_ABI void* generic_stub_success() { return reinterpret_cast<void*>(1); }
 static PAPAYA_MS_ABI void* generic_stub_null() { return nullptr; }
@@ -694,16 +737,20 @@ void Win32ApiHle::hle_msvcrt__getmainargs(int* argc, char*** argv, char*** envp,
     if (envp) *envp = empty_env;
 }
 
-// __iob_func(): returns the FILE* array for the std streams. Old mingw uses
-// this to reach stdin/stdout/stderr. We return six system-valid FILE slots
-// backed by fd 0/1/2 so stdio works.
+// __iob_func(): the CRT calls this to get the base of the _iob[] array, then
+// __acrt_iob_func(i) computes base+i*48. Return our guest _iob slot buffer,
+// seeded so slot[0]=stdin, [1]=stdout, [2]=stderr host streams.
 void* Win32ApiHle::hle_msvcrt___iob_func() {
-    static FILE* iob[3] = { stdout, stderr, stdin }; // some runtimes expect stdin at 0
-    // Reorder to [stdin, stdout, stderr]-order semantics with 20-byte stride for
-    // the MSVCRT _iob[] legacy layout; safest is to alias to host stdout/err.
-    FILE** arr = static_cast<FILE**>(iob);
-    arr[0] = stdin; arr[1] = stdout; arr[2] = stderr;
-    return arr;
+    // Host polluted; seed slots only once.
+    if (!host_stream(0)) {
+        std::memset(g_iob_slots, 0, sizeof(g_iob_slots));
+        FILE* h[3] = { stdin, stdout, stderr };
+        for (int i = 0; i < 3; ++i) {
+            FILE* hf = h[i];
+            std::memcpy(g_iob_slots + static_cast<size_t>(i) * kGuestFileStride, &hf, sizeof(hf));
+        }
+    }
+    return g_iob_slots;
 }
 
 // ---- stdio ----
@@ -714,16 +761,13 @@ int Win32ApiHle::hle_msvcrt_printf(const char* fmt, ...) {
 }
 int Win32ApiHle::hle_msvcrt_fprintf(void* stream, const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
-    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
-              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
-    int r = vfprintf(f ? f : stdout, fmt, ap);
+    FILE* f = host_file_for(stream); if (!f) f = stdout;
+    int r = vfprintf(f, fmt, ap);
     va_end(ap); return r;
 }
 int Win32ApiHle::hle_msvcrt_vfprintf(void* stream, const char* fmt, va_list ap) {
-    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
-              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
-    // On x64 the guest passes its va_list by pointer value into `ap`.
-    return vfprintf(f ? f : stdout, fmt, ap);
+    FILE* f = host_file_for(stream); if (!f) f = stdout;
+    return vfprintf(f, fmt, ap);
 }
 int Win32ApiHle::hle_msvcrt_sprintf(char* buf, const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -731,20 +775,17 @@ int Win32ApiHle::hle_msvcrt_sprintf(char* buf, const char* fmt, ...) {
     va_end(ap); return r;
 }
 size_t Win32ApiHle::hle_msvcrt_fwrite(const void* ptr, size_t sz, size_t n, void* stream) {
-    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
-              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
-    return fwrite(ptr, sz, n, f ? f : stdout);
+    FILE* f = host_file_for(stream); if (!f) f = stdout;
+    return fwrite(ptr, sz, n, f);
 }
 int Win32ApiHle::hle_msvcrt_puts(const char* s)    { return puts(s); }
 int Win32ApiHle::hle_msvcrt_fputs(const char* s, void* stream) {
-    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
-              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
-    return fputs(s, f ? f : stdout);
+    FILE* f = host_file_for(stream); if (!f) f = stdout;
+    return fputs(s, f);
 }
 int Win32ApiHle::hle_msvcrt_fputc(int c, void* stream) {
-    FILE* f = (stream == reinterpret_cast<void*>(1)) ? stdout :
-              (stream == reinterpret_cast<void*>(2)) ? stderr : static_cast<FILE*>(stream);
-    return fputc(c, f ? f : stdout);
+    FILE* f = host_file_for(stream); if (!f) f = stdout;
+    return fputc(c, f);
 }
 
 // ---- misc ----
@@ -759,6 +800,14 @@ int  Win32ApiHle::hle_msvcrt__crt_debugger_hook(int) { return 0; }
 
 // __p__acmdln(): returns &_acmdln so main() can read the command line global.
 static PAPAYA_MS_ABI char** hle_msvcrt_p_acmdln() { return &g_acmdln; }
+
+// CRT error accessors: return pointers to per-thread errno variables.
+static PAPAYA_MS_ABI int* hle_msvcrt_errno() { return &g_crt_errno; }
+static PAPAYA_MS_ABI int** hle_msvcrt_p_errno() {
+    g_p_errno_slot = &g_crt_errno;       // __p__errno returns &(the int* holding errno)
+    return &g_p_errno_slot;
+}
+static PAPAYA_MS_ABI unsigned long* hle_msvcrt_doserrno() { return &g_crt_doserrno; }
 
 // ---- KERNEL32 additions ----
 void  Win32ApiHle::hle_get_startup_info_a(void* lpStartupInfo) {
@@ -944,6 +993,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("msvcrt.dll", "__envp",    reinterpret_cast<void*>(&g_environ));
     register_function("msvcrt.dll", "_acmdln",   reinterpret_cast<void*>(&g_acmdln));
     register_function("msvcrt.dll", "__p__acmdln", reinterpret_cast<void*>(&hle_msvcrt_p_acmdln));
+    register_function("msvcrt.dll", "_errno",    reinterpret_cast<void*>(&hle_msvcrt_errno));
+    register_function("msvcrt.dll", "__p__errno", reinterpret_cast<void*>(&hle_msvcrt_p_errno));
+    register_function("msvcrt.dll", "_doserrno", reinterpret_cast<void*>(&hle_msvcrt_doserrno));
+    register_function("msvcrt.dll", "__p__doserrno", reinterpret_cast<void*>(&hle_msvcrt_doserrno));
 
     // USER32.DLL & GDI32.DLL
     register_function("USER32.DLL", "GetSystemMetrics", reinterpret_cast<void*>(&hle_get_system_metrics));

@@ -238,6 +238,84 @@ public:
     static PAPAYA_MS_ABI void* hle_set_unhandled_exception_filter(void*);
     static PAPAYA_MS_ABI size_t hle_virtual_query(void*, int, void*, size_t);
 
+    // Semaphore
+    static PAPAYA_MS_ABI HANDLE hle_create_semaphore_a(void* lpSec, s32 lInitialCount, s32 lMaxCount, const char* lpName);
+    static PAPAYA_MS_ABI HANDLE hle_create_semaphore_w(void* lpSec, s32 lInitialCount, s32 lMaxCount, const wchar_t* lpName);
+    static PAPAYA_MS_ABI BOOL   hle_release_semaphore(HANDLE hSemaphore, s32 lReleaseCount, s32* lpPreviousCount);
+    static PAPAYA_MS_ABI HANDLE hle_open_semaphore_a(u32 dwAccess, BOOL bInherit, const char* lpName);
+
+    // Named event/mutex open
+    static PAPAYA_MS_ABI HANDLE hle_open_event_a(u32 dwAccess, BOOL bInherit, const char* lpName);
+    static PAPAYA_MS_ABI HANDLE hle_open_event_w(u32 dwAccess, BOOL bInherit, const wchar_t* lpName);
+    static PAPAYA_MS_ABI HANDLE hle_open_mutex_a(u32 dwAccess, BOOL bInherit, const char* lpName);
+
+    // Interlocked atomics
+    static PAPAYA_MS_ABI s32  hle_interlocked_increment(volatile s32* lpAddend);
+    static PAPAYA_MS_ABI s32  hle_interlocked_decrement(volatile s32* lpAddend);
+    static PAPAYA_MS_ABI s32  hle_interlocked_exchange(volatile s32* Target, s32 Value);
+    static PAPAYA_MS_ABI s32  hle_interlocked_compare_exchange(volatile s32* Dest, s32 Exchange, s32 Comparand);
+    static PAPAYA_MS_ABI s64  hle_interlocked_exchange_add(volatile s64* Addend, s64 Value);
+
+    // Extended wait
+    static PAPAYA_MS_ABI u32  hle_wait_for_single_object_ex(HANDLE hHandle, u32 dwMilliseconds, BOOL bAlertable);
+
+    // Handle duplication
+    static PAPAYA_MS_ABI BOOL hle_duplicate_handle(HANDLE hSrcProc, HANDLE hSrcHandle, HANDLE hDstProc, HANDLE* lpTargetHandle, u32 dwAccess, BOOL bInherit, u32 dwOptions);
+
+    // Instruction cache flush (no-op on x86; required on ARM)
+    static PAPAYA_MS_ABI BOOL hle_flush_instruction_cache(HANDLE hProcess, const void* lpBaseAddress, size_t dwSize);
+
+    // Console & debug
+    static PAPAYA_MS_ABI BOOL  hle_set_console_ctrl_handler(void* HandlerRoutine, BOOL Add);
+    static PAPAYA_MS_ABI void  hle_output_debug_string_a(const char* lpOutputString);
+    static PAPAYA_MS_ABI void  hle_output_debug_string_w(const wchar_t* lpOutputString);
+    static PAPAYA_MS_ABI BOOL  hle_is_debugger_present();
+
+    // Wide char / multibyte conversion
+    static PAPAYA_MS_ABI int   hle_multi_byte_to_wide_char(u32 CodePage, u32 dwFlags, const char* lpMBStr, int cbMB, wchar_t* lpWStr, int cchWC);
+    static PAPAYA_MS_ABI int   hle_wide_char_to_multi_byte(u32 CodePage, u32 dwFlags, const wchar_t* lpWStr, int cchWC, char* lpMBStr, int cbMB, const char* lpDef, BOOL* lpUsed);
+
+    // Locale & format
+    static PAPAYA_MS_ABI int   hle_get_locale_info_a(u32 Locale, u32 LCType, char* lpLCData, int cchData);
+    static PAPAYA_MS_ABI int   hle_get_locale_info_w(u32 Locale, u32 LCType, wchar_t* lpLCData, int cchData);
+    static PAPAYA_MS_ABI u32   hle_get_acp();
+    static PAPAYA_MS_ABI u32   hle_get_system_default_locale_name(wchar_t* lpLocaleName, int cchLocaleName);
+    static PAPAYA_MS_ABI u32   hle_format_message_a(u32 dwFlags, const void* lpSource, u32 dwMsgId, u32 dwLangId, char* lpBuf, u32 nSize, void* args);
+    static PAPAYA_MS_ABI u32   hle_format_message_w(u32 dwFlags, const void* lpSource, u32 dwMsgId, u32 dwLangId, wchar_t* lpBuf, u32 nSize, void* args);
+
+    // Date/time string formatting
+    static PAPAYA_MS_ABI int   hle_get_date_format_a(u32 Locale, u32 dwFlags, const void* lpDate, const char* lpFormat, char* lpDateStr, int cchDate);
+    static PAPAYA_MS_ABI int   hle_get_time_format_a(u32 Locale, u32 dwFlags, const void* lpTime, const char* lpFormat, char* lpTimeStr, int cchTime);
+
+    // System time
+    static PAPAYA_MS_ABI void  hle_get_system_time(void* lpSystemTime);
+    static PAPAYA_MS_ABI void  hle_get_local_time(void* lpSystemTime);
+    static PAPAYA_MS_ABI BOOL  hle_system_time_to_file_time(const void* lpSystemTime, void* lpFileTime);
+    static PAPAYA_MS_ABI BOOL  hle_file_time_to_system_time(const void* lpFileTime, void* lpSystemTime);
+
+    // Registry stubs (additional)
+    static PAPAYA_MS_ABI s32   hle_reg_open_key_ex_a(void* hKey, const char* lpSubKey, u32 ulOptions, u32 samDesired, void** phkResult);
+    static PAPAYA_MS_ABI s32   hle_reg_query_value_ex_a(void* hKey, const char* lpValueName, u32* lpReserved, u32* lpType, u8* lpData, u32* lpcbData);
+    static PAPAYA_MS_ABI s32   hle_reg_close_key(void* hKey);
+    static PAPAYA_MS_ABI s32   hle_reg_set_value_ex_a(void* hKey, const char* lpValueName, u32 Reserved, u32 dwType, const u8* lpData, u32 cbData);
+
+    // Misc kernel
+    static PAPAYA_MS_ABI BOOL  hle_create_directory_a(const char* lpPathName, void* lpSec);
+    static PAPAYA_MS_ABI BOOL  hle_remove_directory_a(const char* lpPathName);
+    static PAPAYA_MS_ABI BOOL  hle_delete_file_a(const char* lpFileName);
+    static PAPAYA_MS_ABI BOOL  hle_copy_file_a(const char* lpExisting, const char* lpNew, BOOL bFailIfExists);
+    static PAPAYA_MS_ABI BOOL  hle_move_file_a(const char* lpExisting, const char* lpNew);
+    static PAPAYA_MS_ABI u32   hle_get_temp_path_a(u32 nBufferLength, char* lpBuffer);
+    static PAPAYA_MS_ABI u32   hle_get_temp_file_name_a(const char* lpPathName, const char* lpPrefixStr, u32 uUnique, char* lpTempFileName);
+    static PAPAYA_MS_ABI u32   hle_get_windows_directory_a(char* lpBuffer, u32 uSize);
+    static PAPAYA_MS_ABI u32   hle_get_system_directory_a(char* lpBuffer, u32 uSize);
+    static PAPAYA_MS_ABI BOOL  hle_get_computer_name_a(char* lpBuffer, u32* lpnSize);
+    static PAPAYA_MS_ABI BOOL  hle_get_user_name_a(char* lpBuffer, u32* lpnSize);
+    static PAPAYA_MS_ABI void* hle_get_environment_strings();
+    static PAPAYA_MS_ABI BOOL  hle_free_environment_strings_a(void* lpszEnvironmentBlock);
+    static PAPAYA_MS_ABI u32   hle_set_error_mode(u32 uMode);
+    static PAPAYA_MS_ABI void  hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args);
+
 private:
     std::shared_ptr<steam::SteamApiStub> steam_stub_;
     std::shared_ptr<input::VirtualXInputManager> input_mgr_;

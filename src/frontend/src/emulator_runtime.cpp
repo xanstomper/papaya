@@ -38,6 +38,14 @@ Result<> EmulatorRuntime::initialize() {
     vulkan_layer_ = std::make_unique<gpu::VulkanLayerInterceptor>(potato_interceptor_, shader_stripper_, upscaler_);
     vulkan_layer_->initialize();
 
+    // Apply explicit LOD bias override if provided
+    if (config_.lod_bias_override >= 0.0f) {
+        gpu::TextureOverrideConfig tex_cfg = auto_cfg.texture_config;
+        tex_cfg.mip_lod_bias = config_.lod_bias_override;
+        potato_interceptor_->set_config(tex_cfg);
+        log::info("RUNTIME", "Applied explicit LOD bias override: +{:.2f}", config_.lod_bias_override);
+    }
+
     // Register watchdog memory flush callback
     watchdog_->register_flush_callback([this]() {
         log::warn("RUNTIME", "Memory watchdog triggered: flushing texture caches");

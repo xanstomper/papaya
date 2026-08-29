@@ -31,6 +31,7 @@ struct RuntimeConfig {
     u32 steam_app_id{0};
     bool headless{false};
     bool force_potato_mode{false};
+    f32 lod_bias_override{-1.0f};   // Negative = use auto profile default; >= 0 = explicit override
 };
 
 class EmulatorRuntime {
