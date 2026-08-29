@@ -65,6 +65,11 @@ struct NativeWindow {
     int                x{0}, y{0}, width{0}, height{0};
     bool               visible{false};
     u32                style{0};
+    // Software GDI backbuffer (RGBA, width*height*4), presented via XPutImage.
+    u8*                fb{nullptr};
+    u32                fb_size{0};
+    bool               fb_dirty{false};
+    u32                fb_bpp{4};
 };
 
 // X11-backed Win32 window manager. Owns the display + per-window state + the
@@ -92,6 +97,11 @@ public:
     void  update_window(void* hwnd);
     void  get_window_rect(void* hwnd, void* lpRect);
     void  get_client_rect(void* hwnd, void* lpRect);
+
+    // Software GDI surface: get/ensure the RGBA backbuffer, write into it, and
+    // present it into the X11 window. Used by the GDI32 HLE drawing functions.
+    u8*    surface_buffer(void* hwnd, int w, int h);
+    void   surface_present(void* hwnd);
 
     // Message pump
     int   get_message(void* lpMsg, void* hwnd, u32 min, u32 max);

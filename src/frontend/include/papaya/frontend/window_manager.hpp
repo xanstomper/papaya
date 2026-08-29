@@ -28,11 +28,16 @@ public:
     u32 get_width() const { return config_.width; }
     u32 get_height() const { return config_.height; }
     bool is_headless() const { return config_.headless; }
+    void* get_native_display() const { return display_; }
+    u64 get_native_window() const { return window_; }
 
 private:
     WindowConfig config_;
     bool should_close_{false};
     bool is_initialized_{false};
+    void* display_{nullptr};
+    u64 window_{0};
+    u64 wm_delete_window_{0};
 };
 
 } // namespace papaya::frontend

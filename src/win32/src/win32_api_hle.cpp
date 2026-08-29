@@ -231,6 +231,32 @@ struct ThreadParamBridge {
     void* lpParam;
 };
 
+// GDI32 software-surface handle types (a DC/bitmap is one of these; the window
+// manager owns the per-window backbuffer, compatible DCs/bitmaps allocate their own).
+struct GdiDc {
+    u32 tag{0x47444943};   // "GDIC"
+    int  w{0}, h{0};
+    u8*  fb{nullptr};
+    u32  fb_size{0};
+    bool window_backed{false};
+};
+struct GdiBitmap {
+    u32 tag{0x4744424D};   // "GDBM"
+    int  w{0}, h{0};
+    u8*  fb{nullptr};
+    u32  fb_size{0};
+};
+static GdiDc* gdi_dc_of(void* h) {
+    if (!h || reinterpret_cast<uintptr_t>(h) < 0x10000) return nullptr;
+    auto* d = static_cast<GdiDc*>(h);
+    return (d->tag == 0x47444943) ? d : nullptr;
+}
+static GdiBitmap* gdi_bmp_of(void* h) {
+    if (!h || reinterpret_cast<uintptr_t>(h) < 0x10000) return nullptr;
+    auto* b = static_cast<GdiBitmap*>(h);
+    return (b->tag == 0x4744424D) ? b : nullptr;
+}
+
 static void* thread_trampoline(void* arg) {
     auto* tp = static_cast<ThreadParamBridge*>(arg);
     auto fn = reinterpret_cast<u32 (__attribute__((ms_abi))*)(void*)>(tp->lpStart);
@@ -793,6 +819,30 @@ BOOL Win32ApiHle::hle_get_window_rect(HWND hWnd, void* lpRect) {
     return TRUE_VAL;
 }
 
+// Helper to convert wide or atom pointer to std::string
+static std::string wide_or_atom_to_utf8(const void* ptr) {
+    if (!ptr) return "";
+    u64 val = reinterpret_cast<u64>(ptr);
+    if (val < 0x10000) {
+        return "#" + std::to_string(val);
+    }
+    const wchar_t* wstr = static_cast<const wchar_t*>(ptr);
+    std::string out;
+    while (*wstr) {
+        wchar_t ch = *wstr++;
+        if (ch < 0x80) out.push_back(static_cast<char>(ch));
+        else if (ch < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (ch >> 6)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (ch >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        }
+    }
+    return out;
+}
+
 // ---- Window classes / creation ----
 void* Win32ApiHle::hle_register_class_a(const void* lpWndClass) {
     if (!lpWndClass) return nullptr;
@@ -808,12 +858,37 @@ void* Win32ApiHle::hle_register_class_a(const void* lpWndClass) {
     return window_manager().register_class(cls_name, wndproc, hinst);
 }
 
+void* Win32ApiHle::hle_register_class_w(const void* lpWndClass) {
+    if (!lpWndClass) return nullptr;
+    const auto* buf = static_cast<const u8*>(lpWndClass);
+    void* wndproc = nullptr;
+    std::memcpy(&wndproc, buf + 8, sizeof(wndproc));
+    const void* cls_name_ptr = nullptr;
+    std::memcpy(&cls_name_ptr, buf + 64, sizeof(cls_name_ptr));
+    void* hinst = nullptr;
+    std::memcpy(&hinst, buf + 24, sizeof(hinst));
+    std::string cls_str = wide_or_atom_to_utf8(cls_name_ptr);
+    if (cls_str.empty()) return nullptr;
+    return window_manager().register_class(cls_str.c_str(), wndproc, hinst);
+}
+
 void* Win32ApiHle::hle_create_window_ex_a(u32 dwExStyle, const char* lpClassName,
              const char* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
              void* hWndParent, void* hMenu, void* hInstance, void* lpParam) {
     (void)dwExStyle; (void)hMenu; (void)lpParam;
     window_manager().initialize();
     return window_manager().create_window_ex(lpClassName, lpWindowName, dwStyle,
+                                             x, y, w, h, hWndParent, hInstance, lpParam, false);
+}
+
+void* Win32ApiHle::hle_create_window_ex_w(u32 dwExStyle, const wchar_t* lpClassName,
+             const wchar_t* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
+             void* hWndParent, void* hMenu, void* hInstance, void* lpParam) {
+    (void)dwExStyle; (void)hMenu; (void)lpParam;
+    std::string cls_str = wide_or_atom_to_utf8(lpClassName);
+    std::string win_str = wide_or_atom_to_utf8(lpWindowName);
+    window_manager().initialize();
+    return window_manager().create_window_ex(cls_str.c_str(), win_str.c_str(), dwStyle,
                                              x, y, w, h, hWndParent, hInstance, lpParam, false);
 }
 
@@ -832,17 +907,44 @@ BOOL Win32ApiHle::hle_update_window(HWND hWnd) {
 s64 Win32ApiHle::hle_def_window_proc_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
     return window_manager().def_window_proc(hWnd, msg, wParam, lParam);
 }
+s64 Win32ApiHle::hle_def_window_proc_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().def_window_proc(hWnd, msg, wParam, lParam);
+}
 void Win32ApiHle::hle_post_quit_message(int nExitCode) {
     window_manager().post_quit_message(nExitCode);
 }
 BOOL Win32ApiHle::hle_post_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
     return window_manager().post_message_a(hWnd, msg, wParam, lParam) ? TRUE_VAL : FALSE_VAL;
 }
+BOOL Win32ApiHle::hle_post_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().post_message_a(hWnd, msg, wParam, lParam) ? TRUE_VAL : FALSE_VAL;
+}
 s64 Win32ApiHle::hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
     return window_manager().send_message_a(hWnd, msg, wParam, lParam);
 }
-void* Win32ApiHle::hle_get_dc(HWND hWnd) { return window_manager().get_dc(hWnd); }
-int   Win32ApiHle::hle_release_dc(HWND hWnd, void* hDC) { return window_manager().release_dc(hWnd, hDC); }
+s64 Win32ApiHle::hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().send_message_a(hWnd, msg, wParam, lParam);
+}
+// ---- GDI window DC ----
+void* Win32ApiHle::hle_get_dc(HWND hWnd) {
+    // A window DC: back the window's framebuffer; present on ReleaseDC.
+    struct { int r[4]; } rect{0,0,320,240};
+    window_manager().get_client_rect(hWnd, rect.r);
+    int w = rect.r[2] - rect.r[0], h = rect.r[3] - rect.r[1];
+    u8* fb = window_manager().surface_buffer(hWnd, w, h);
+    auto* d = new GdiDc();
+    d->tag = 0x47444943;
+    d->w = w; d->h = h;
+    d->fb = fb; d->fb_size = 0;   // owned by the window manager
+    d->window_backed = true;
+    return d;
+}
+int Win32ApiHle::hle_release_dc(HWND hWnd, void* hDC) {
+    auto* d = gdi_dc_of(hDC);
+    if (d && d->window_backed) window_manager().surface_present(hWnd);
+    delete d;
+    return 1;
+}
 
 // ---- Message pump ----
 int Win32ApiHle::hle_get_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax) {
@@ -1619,6 +1721,89 @@ BOOL Win32ApiHle::hle_set_pixel_format(void* hdc, int format, const void* ppfd) 
     return TRUE_VAL;
 }
 
+// ------------------------------------------------------------
+// GDI32 software surface (real drawing into a per-surface RBGA buffer).
+// A "DC" is a GdiDc* carrying its own RGBA framebuffer; a window DC wraps the
+// window manager's per-window backbuffer and presents on ReleaseDC.
+// ------------------------------------------------------------
+void* Win32ApiHle::hle_create_compatible_dc(void* hdc) {
+    (void)hdc;
+    auto* d = new GdiDc();
+    d->tag = 0x47444943;
+    return d;
+}
+
+void* Win32ApiHle::hle_create_compatible_bitmap(void* hdc, int w, int h) {
+    (void)hdc;
+    auto* b = new GdiBitmap();
+    b->tag = 0x4744424D;
+    b->w = w; b->h = h;
+    u32 n = static_cast<u32>(w) * static_cast<u32>(h) * 4;
+    b->fb = static_cast<u8*>(calloc(n, 1));
+    b->fb_size = n;
+    return b;
+}
+
+void* Win32ApiHle::hle_select_object(void* hdc, void* obj) {
+    auto* d = gdi_dc_of(hdc);
+    auto* b = gdi_bmp_of(obj);
+    if (!d || !b) return nullptr;
+    d->fb = b->fb; d->fb_size = b->fb_size; d->w = b->w; d->h = b->h;
+    return nullptr;   // previous object (none tracked)
+}
+
+BOOL Win32ApiHle::hle_delete_object(void* hobj) {
+    auto* b = gdi_bmp_of(hobj);
+    if (!b) return FALSE_VAL;
+    free(b->fb);
+    delete b;
+    return TRUE_VAL;
+}
+
+BOOL Win32ApiHle::hle_delete_dc(void* hdc) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return FALSE_VAL;
+    if (!d->window_backed) free(d->fb);
+    delete d;
+    return TRUE_VAL;
+}
+
+// COLORREF -> RGBA (ABGR little-endian; GDI COLORREF is 0x00BBGGRR).
+static void colorref_to_rgba(u32 cref, u8* out) {
+    out[0] = static_cast<u8>(cref & 0xFF);          // R
+    out[1] = static_cast<u8>((cref >> 8) & 0xFF);   // G
+    out[2] = static_cast<u8>((cref >> 16) & 0xFF);  // B
+    out[3] = 0xFF;
+}
+
+u32 Win32ApiHle::hle_set_pixel(void* hdc, int x, int y, u32 color) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d || !d->fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return -1;
+    u8* p = d->fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
+    colorref_to_rgba(color, p);
+    return color;
+}
+
+BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
+                              void* src_dc, int sx, int sy, u32 rop) {
+    auto* dst = gdi_dc_of(dst_dc);
+    auto* src = gdi_dc_of(src_dc);
+    if (!dst || !src || !dst->fb || !src->fb) return FALSE_VAL;
+    (void)rop;   // SRCCOPY (0x00CC0020) and normal copies only for now
+    for (int r = 0; r < dh; ++r) {
+        int syy = sy + r, dyy = dy + r;
+        if (dyy < 0 || syy < 0 || dyy >= dst->h || syy >= src->h) continue;
+        for (int c = 0; c < dw; ++c) {
+            int sxx = sx + c, dxx = dx + c;
+            if (dxx < 0 || sxx < 0 || dxx >= dst->w || sxx >= src->w) continue;
+            const u8* s = src->fb + (static_cast<u32>(syy) * src->w + static_cast<u32>(sxx)) * 4;
+            u8* p = dst->fb + (static_cast<u32>(dyy) * dst->w + static_cast<u32>(dxx)) * 4;
+            p[0]=s[0]; p[1]=s[1]; p[2]=s[2]; p[3]=0xFF;
+        }
+    }
+    return TRUE_VAL;
+}
+
 int Win32ApiHle::hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd) {
     (void)hdc; (void)iPixelFormat; (void)nBytes; (void)ppfd;
     return 1;
@@ -2044,12 +2229,9 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "InvalidateRect", reinterpret_cast<void*>(&generic_stub_success));
     register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&generic_stub_zero));
 
-    register_function("GDI32.DLL", "SelectObject", reinterpret_cast<void*>(&generic_stub_success));
     register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("GDI32.DLL", "GetDIBits", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("GDI32.DLL", "GetDeviceCaps", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("GDI32.DLL", "DeleteObject", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("GDI32.DLL", "DeleteDC", reinterpret_cast<void*>(&generic_stub_success));
 
     // AVRT.DLL & DWMAPI.DLL
     register_function("AVRT.DLL", "AvSetMmThreadCharacteristicsW", reinterpret_cast<void*>(&generic_stub_success));
@@ -2253,6 +2435,15 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "SetPixelFormat",      reinterpret_cast<void*>(&hle_set_pixel_format));
     register_function("GDI32.DLL", "DescribePixelFormat", reinterpret_cast<void*>(&hle_describe_pixel_format));
     register_function("GDI32.DLL", "SwapBuffers",         reinterpret_cast<void*>(&hle_swap_buffers));
+    register_function("GDI32.DLL", "GetDC",                reinterpret_cast<void*>(&hle_get_dc));
+    register_function("GDI32.DLL", "ReleaseDC",            reinterpret_cast<void*>(&hle_release_dc));
+    register_function("GDI32.DLL", "CreateCompatibleDC",   reinterpret_cast<void*>(&hle_create_compatible_dc));
+    register_function("GDI32.DLL", "CreateCompatibleBitmap", reinterpret_cast<void*>(&hle_create_compatible_bitmap));
+    register_function("GDI32.DLL", "SelectObject",         reinterpret_cast<void*>(&hle_select_object));
+    register_function("GDI32.DLL", "DeleteObject",         reinterpret_cast<void*>(&hle_delete_object));
+    register_function("GDI32.DLL", "DeleteDC",             reinterpret_cast<void*>(&hle_delete_dc));
+    register_function("GDI32.DLL", "SetPixel",             reinterpret_cast<void*>(&hle_set_pixel));
+    register_function("GDI32.DLL", "BitBlt",               reinterpret_cast<void*>(&hle_bit_blt));
 
     // OPENGL32.DLL & VULKAN-1.DLL
     register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));
@@ -2286,10 +2477,13 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "AdjustWindowRect",   reinterpret_cast<void*>(&hle_adjust_window_rect));
     register_function("USER32.DLL", "AdjustWindowRectEx", reinterpret_cast<void*>(&hle_adjust_window_rect_ex));
     register_function("USER32.DLL", "SetWindowPos",       reinterpret_cast<void*>(&hle_set_window_pos));
-    register_function("USER32.DLL", "CreateWindowExW",    reinterpret_cast<void*>(&hle_create_window_ex_a));
-    register_function("USER32.DLL", "DefWindowProcW",     reinterpret_cast<void*>(&hle_def_window_proc_a));
-    register_function("USER32.DLL", "RegisterClassW",     reinterpret_cast<void*>(&hle_register_class_a));
-    register_function("USER32.DLL", "RegisterClassExW",   reinterpret_cast<void*>(&hle_register_class_a));
+    register_function("USER32.DLL", "CreateWindowExW",    reinterpret_cast<void*>(&hle_create_window_ex_w));
+    register_function("USER32.DLL", "CreateWindowW",      reinterpret_cast<void*>(&hle_create_window_ex_w));
+    register_function("USER32.DLL", "DefWindowProcW",     reinterpret_cast<void*>(&hle_def_window_proc_w));
+    register_function("USER32.DLL", "RegisterClassW",     reinterpret_cast<void*>(&hle_register_class_w));
+    register_function("USER32.DLL", "RegisterClassExW",   reinterpret_cast<void*>(&hle_register_class_w));
+    register_function("USER32.DLL", "PostMessageW",       reinterpret_cast<void*>(&hle_post_message_w));
+    register_function("USER32.DLL", "SendMessageW",       reinterpret_cast<void*>(&hle_send_message_w));
     register_function("USER32.DLL", "SetCursor",          reinterpret_cast<void*>(&generic_stub_null));
     register_function("USER32.DLL", "GetForegroundWindow",reinterpret_cast<void*>(&generic_stub_null));
     register_function("USER32.DLL", "SetForegroundWindow",reinterpret_cast<void*>(&generic_stub_success));

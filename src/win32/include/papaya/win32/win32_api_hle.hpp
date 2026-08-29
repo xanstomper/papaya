@@ -178,16 +178,23 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_translate_message(const void* lpMsg);
     // Window creation / management (X11-backed)
     static PAPAYA_MS_ABI void* hle_register_class_a(const void* lpWndClass);
+    static PAPAYA_MS_ABI void* hle_register_class_w(const void* lpWndClass);
     static PAPAYA_MS_ABI void* hle_create_window_ex_a(u32 dwExStyle, const char* lpClassName,
                              const char* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
+                             void* hWndParent, void* hMenu, void* hInstance, void* lpParam);
+    static PAPAYA_MS_ABI void* hle_create_window_ex_w(u32 dwExStyle, const wchar_t* lpClassName,
+                             const wchar_t* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
                              void* hWndParent, void* hMenu, void* hInstance, void* lpParam);
     static PAPAYA_MS_ABI BOOL  hle_destroy_window(HWND hWnd);
     static PAPAYA_MS_ABI BOOL  hle_show_window(HWND hWnd, int nCmdShow);
     static PAPAYA_MS_ABI BOOL  hle_update_window(HWND hWnd);
     static PAPAYA_MS_ABI s64   hle_def_window_proc_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI s64   hle_def_window_proc_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI void  hle_post_quit_message(int nExitCode);
     static PAPAYA_MS_ABI BOOL  hle_post_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI BOOL  hle_post_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI s64   hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI s64   hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI void* hle_get_dc(HWND hWnd);
     static PAPAYA_MS_ABI int   hle_release_dc(HWND hWnd, void* hDC);
 
@@ -360,6 +367,14 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_set_pixel_format(void* hdc, int format, const void* ppfd);
     static PAPAYA_MS_ABI int   hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd);
     static PAPAYA_MS_ABI BOOL  hle_swap_buffers(void* hdc);
+    static PAPAYA_MS_ABI void* hle_create_compatible_dc(void* hdc);
+    static PAPAYA_MS_ABI void* hle_create_compatible_bitmap(void* hdc, int w, int h);
+    static PAPAYA_MS_ABI void* hle_select_object(void* hdc, void* obj);
+    static PAPAYA_MS_ABI BOOL  hle_delete_object(void* hobj);
+    static PAPAYA_MS_ABI BOOL  hle_delete_dc(void* hdc);
+    static PAPAYA_MS_ABI u32   hle_set_pixel(void* hdc, int x, int y, u32 color);
+    static PAPAYA_MS_ABI BOOL  hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
+                                           void* src_dc, int sx, int sy, u32 rop);
 
     // OpenGL & Vulkan dynamic loaders
     static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);

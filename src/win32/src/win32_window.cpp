@@ -2,6 +2,7 @@
 #include "papaya/common/logger.hpp"
 
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <cstring>
 #include <cstdlib>
@@ -73,7 +74,10 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
     if (!initialized_ && !initialize()) return nullptr;
 
     auto* cls = static_cast<NativeWindowClass*>(find_class(class_name));
-    if (!cls) { log::warn("WINDOW", "CreateWindow: unknown class '{}'", class_name ? class_name : "?"); return nullptr; }
+    if (!cls) {
+        register_class(class_name ? class_name : "PapayaDefaultWindow", nullptr, instance);
+        cls = static_cast<NativeWindowClass*>(find_class(class_name ? class_name : "PapayaDefaultWindow"));
+    }
 
     auto win = std::make_unique<NativeWindow>();
     win->cls = cls;
@@ -124,6 +128,7 @@ void X11WindowManager::destroy_window(void* hwnd) {
     dispatch_message_impl(hwnd, WM_DESTROY, 0, 0);
     if (w->display && w->xid) XDestroyWindow(w->display, static_cast<Window>(w->xid));
     if (w->gc) XFreeGC(w->display, w->gc);
+    free(w->fb);
     windows_.erase(hwnd);
 }
 
@@ -138,6 +143,43 @@ void X11WindowManager::show_window(void* hwnd, int /*cmd_show*/) {
 void X11WindowManager::update_window(void* hwnd) {
     auto* w = window_from_hwnd(hwnd);
     if (w && w->display) XFlush(w->display);
+}
+
+// Ensure the window has a software backbuffer of the requested size and return it.
+u8* X11WindowManager::surface_buffer(void* hwnd, int w, int h) {
+    auto* nw = window_from_hwnd(hwnd);
+    if (!nw) return nullptr;
+    if (w > 0 && h > 0) { nw->width = w; nw->height = h; }
+    u32 need = static_cast<u32>(nw->width) * static_cast<u32>(nw->height) * 4;
+    u32 have = (nw->fb) ? nw->fb_size : 0;
+    if (!nw->fb) {
+        nw->fb = static_cast<u8*>(calloc(need, 1));
+        nw->fb_size = need;
+    } else if (need > have) {
+        nw->fb = static_cast<u8*>(realloc(nw->fb, need));
+        if (nw->fb) nw->fb_size = need;
+    }
+    return nw->fb;
+}
+
+// Blit the software RGBA backbuffer into the X11 window.
+void X11WindowManager::surface_present(void* hwnd) {
+    auto* nw = window_from_hwnd(hwnd);
+    if (!nw || !nw->display || !nw->xid || !nw->fb) return;
+    int w = nw->width, h = nw->height;
+    if (w <= 0 || h <= 0) return;
+
+    XImage* img = XCreateImage(nw->display, DefaultVisual(nw->display, DefaultScreen(nw->display)),
+                               24, ZPixmap, 0, reinterpret_cast<char*>(nw->fb),
+                               static_cast<unsigned>(w), static_cast<unsigned>(h), 32, w * 4);
+    if (!img) return;
+    if (!(XPutImage(nw->display, static_cast<Drawable>(nw->xid), nw->gc ? nw->gc : DefaultGC(nw->display, DefaultScreen(nw->display)),
+                    img, 0, 0, 0, 0, static_cast<unsigned>(w), static_cast<unsigned>(h)))) {
+        // window not mapped yet; nothing to present
+    }
+    XDestroyImage(img);
+    XFlush(nw->display);
+    nw->fb_dirty = false;
 }
 
 void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
