@@ -76,6 +76,33 @@ target_link_libraries(test_threading_sync PRIVATE
     papaya-hv
 )
 
+add_executable(test_xvd_crypto
+    test_xvd_crypto.cpp
+)
+
+target_link_libraries(test_xvd_crypto PRIVATE
+    papaya-common
+    papaya-storage
+)
+
+add_executable(test_audio_engine
+    test_audio_engine.cpp
+)
+
+target_link_libraries(test_audio_engine PRIVATE
+    papaya-common
+    papaya-audio
+)
+
+add_executable(test_emulator_runtime
+    test_emulator_runtime.cpp
+)
+
+target_link_libraries(test_emulator_runtime PRIVATE
+    papaya-common
+    papaya-frontend
+)
+
 add_test(NAME KvmBootTest COMMAND test_kvm_boot)
 add_test(NAME GpuPm4Test COMMAND test_gpu_pm4)
 add_test(NAME PeLoaderTest COMMAND test_pe_loader)
@@ -84,3 +111,6 @@ add_test(NAME LongModePeBootTest COMMAND test_long_mode_pe_boot)
 add_test(NAME GcnStateTest COMMAND test_gcn_state)
 add_test(NAME ShaderTranslatorTest COMMAND test_shader_translator)
 add_test(NAME ThreadingSyncTest COMMAND test_threading_sync)
+add_test(NAME XvdCryptoTest COMMAND test_xvd_crypto)
+add_test(NAME AudioEngineTest COMMAND test_audio_engine)
+add_test(NAME EmulatorRuntimeTest COMMAND test_emulator_runtime)

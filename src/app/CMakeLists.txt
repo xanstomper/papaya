@@ -15,4 +15,5 @@ target_link_libraries(papaya PRIVATE
     papaya-gpu
     papaya-audio
     papaya-input
+    papaya-frontend
 )

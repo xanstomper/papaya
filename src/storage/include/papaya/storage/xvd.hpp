@@ -2,14 +2,16 @@
 
 #include "papaya/common/types.hpp"
 #include "papaya/common/error.hpp"
+#include "papaya/storage/xvd_crypto.hpp"
 #include <string>
 #include <vector>
 #include <filesystem>
 #include <array>
+#include <fstream>
+#include <memory>
 
 namespace papaya::storage {
 
-// Magic headers: "msxvd\0\0\0" or "XVD\0"
 constexpr u32 XVD_MAGIC_SIGNATURE = 0x6476736D; // "msvd" in little endian
 
 #pragma pack(push, 1)
@@ -39,6 +41,7 @@ public:
     ~XvdContainer();
 
     Result<> open(const std::filesystem::path& path);
+    Result<> set_decryption_key(const AesXtsKey& key);
     Result<std::vector<u8>> read_sector(u64 sector_index, u32 sector_count = 1);
     
     const XvdHeader& get_header() const { return header_; }
@@ -48,9 +51,13 @@ public:
 
 private:
     std::filesystem::path file_path_;
+    mutable std::ifstream file_stream_;
     XvdHeader header_{};
     bool is_open_{false};
     bool is_encrypted_{false};
+    bool has_key_{false};
+    AesXtsKey decryption_key_{};
+    std::vector<u32> block_allocation_table_;
 };
 
 } // namespace papaya::storage

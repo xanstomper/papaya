@@ -15,6 +15,7 @@ public:
 
     virtual PlatformBackend get_backend_type() const = 0;
     virtual Result<> initialize() = 0;
+    virtual bool is_initialized() const = 0;
     virtual Result<> configure_memory(const MemoryMap& mem_map) = 0;
     virtual Result<std::shared_ptr<IVcpu>> create_vcpu(u32 vcpu_id) = 0;
     virtual u32 get_max_vcpus() const = 0;

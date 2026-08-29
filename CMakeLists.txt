@@ -37,6 +37,7 @@ add_subdirectory(src/hle)
 add_subdirectory(src/gpu)
 add_subdirectory(src/audio)
 add_subdirectory(src/input)
+add_subdirectory(src/frontend)
 add_subdirectory(src/app)
 
 if (PAPAYA_BUILD_TESTS)

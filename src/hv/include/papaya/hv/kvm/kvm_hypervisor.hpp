@@ -12,6 +12,7 @@ public:
 
     PlatformBackend get_backend_type() const override { return PlatformBackend::Kvm; }
     Result<> initialize() override;
+    bool is_initialized() const override { return vm_fd_ >= 0; }
     Result<> configure_memory(const MemoryMap& mem_map) override;
     Result<std::shared_ptr<IVcpu>> create_vcpu(u32 vcpu_id) override;
     u32 get_max_vcpus() const override;
