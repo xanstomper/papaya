@@ -35,6 +35,7 @@ add_subdirectory(src/audio)
 add_subdirectory(src/input)
 add_subdirectory(src/frontend)
 add_subdirectory(src/rom)
+add_subdirectory(src/win32)
 add_subdirectory(src/orchestrator)
 add_subdirectory(src/app)
 

@@ -16,6 +16,7 @@ target_link_libraries(papaya-frontend PUBLIC
     papaya-kernel
     papaya-audio
     papaya-input
+    papaya-win32
 )
 
 target_compile_features(papaya-frontend PUBLIC cxx_std_23)

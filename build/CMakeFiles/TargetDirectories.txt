@@ -41,6 +41,10 @@
 /home/jewboy420/papaya/build/src/rom/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/src/rom/CMakeFiles/edit_cache.dir
 /home/jewboy420/papaya/build/src/rom/CMakeFiles/rebuild_cache.dir
+/home/jewboy420/papaya/build/src/win32/CMakeFiles/papaya-win32.dir
+/home/jewboy420/papaya/build/src/win32/CMakeFiles/test.dir
+/home/jewboy420/papaya/build/src/win32/CMakeFiles/edit_cache.dir
+/home/jewboy420/papaya/build/src/win32/CMakeFiles/rebuild_cache.dir
 /home/jewboy420/papaya/build/src/orchestrator/CMakeFiles/papaya-orchestrator.dir
 /home/jewboy420/papaya/build/src/orchestrator/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/src/orchestrator/CMakeFiles/edit_cache.dir
@@ -65,6 +69,7 @@
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_android_storage_bridge.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_rom_game_loop.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_orchestrator.dir
+/home/jewboy420/papaya/build/tests/CMakeFiles/test_pe_loader.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/edit_cache.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/rebuild_cache.dir
