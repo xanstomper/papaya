@@ -11,6 +11,7 @@ target_link_libraries(papaya PRIVATE
     papaya-kernel
     papaya-audio
     papaya-input
+    papaya-rom
     papaya-frontend
 )
 

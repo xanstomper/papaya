@@ -37,6 +37,10 @@
 /home/jewboy420/papaya/build/src/frontend/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/src/frontend/CMakeFiles/edit_cache.dir
 /home/jewboy420/papaya/build/src/frontend/CMakeFiles/rebuild_cache.dir
+/home/jewboy420/papaya/build/src/rom/CMakeFiles/papaya-rom.dir
+/home/jewboy420/papaya/build/src/rom/CMakeFiles/test.dir
+/home/jewboy420/papaya/build/src/rom/CMakeFiles/edit_cache.dir
+/home/jewboy420/papaya/build/src/rom/CMakeFiles/rebuild_cache.dir
 /home/jewboy420/papaya/build/src/app/CMakeFiles/papaya.dir
 /home/jewboy420/papaya/build/src/app/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/src/app/CMakeFiles/edit_cache.dir
@@ -52,6 +56,10 @@
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_ntsync_iouring.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_audio_input.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test_full_runtime_stack.dir
+/home/jewboy420/papaya/build/tests/CMakeFiles/test_rom_loader.dir
+/home/jewboy420/papaya/build/tests/CMakeFiles/test_steam_rom_bridge.dir
+/home/jewboy420/papaya/build/tests/CMakeFiles/test_android_storage_bridge.dir
+/home/jewboy420/papaya/build/tests/CMakeFiles/test_rom_game_loop.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/test.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/edit_cache.dir
 /home/jewboy420/papaya/build/tests/CMakeFiles/rebuild_cache.dir

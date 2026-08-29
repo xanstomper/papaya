@@ -26,6 +26,11 @@ enum class ErrorCode {
     IoUringInitFailed,
     AudioInitFailed,
     InputInitFailed,
+    RomInvalidMagic,
+    RomUnsupportedFormat,
+    RomCorruptHeader,
+    RomSectorReadFailed,
+    AndroidSafOpenFailed,
     UnsupportedOperation
 };
 
@@ -48,6 +53,11 @@ inline std::string_view error_to_string(ErrorCode code) {
         case ErrorCode::IoUringInitFailed: return "Linux io_uring Engine Init Failed";
         case ErrorCode::AudioInitFailed: return "Audio Server Connection Failed";
         case ErrorCode::InputInitFailed: return "Virtual XInput Mapper Init Failed";
+        case ErrorCode::RomInvalidMagic: return "ROM/ISO Image Invalid Magic Signature";
+        case ErrorCode::RomUnsupportedFormat: return "Unsupported ROM or Disc Image Format";
+        case ErrorCode::RomCorruptHeader: return "Corrupted Disc Header / TOC Partition";
+        case ErrorCode::RomSectorReadFailed: return "Disc Sector (LBA) Read Failed";
+        case ErrorCode::AndroidSafOpenFailed: return "Android Storage Access Framework (SAF) URI Open Failed";
         case ErrorCode::UnsupportedOperation: return "Unsupported Operation";
         default: return "Unknown Error";
     }

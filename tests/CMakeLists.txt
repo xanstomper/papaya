@@ -87,6 +87,39 @@ target_link_libraries(test_full_runtime_stack PRIVATE
     papaya-frontend
 )
 
+add_executable(test_rom_loader
+    test_rom_loader.cpp
+)
+target_link_libraries(test_rom_loader PRIVATE
+    papaya-common
+    papaya-rom
+)
+
+add_executable(test_steam_rom_bridge
+    test_steam_rom_bridge.cpp
+)
+target_link_libraries(test_steam_rom_bridge PRIVATE
+    papaya-common
+    papaya-rom
+)
+
+add_executable(test_android_storage_bridge
+    test_android_storage_bridge.cpp
+)
+target_link_libraries(test_android_storage_bridge PRIVATE
+    papaya-common
+    papaya-rom
+)
+
+add_executable(test_rom_game_loop
+    test_rom_game_loop.cpp
+)
+target_link_libraries(test_rom_game_loop PRIVATE
+    papaya-common
+    papaya-rom
+    papaya-frontend
+)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)
@@ -98,3 +131,7 @@ add_test(NAME MemoryWatchdogTest COMMAND test_memory_watchdog)
 add_test(NAME NtSyncIoUringTest COMMAND test_ntsync_iouring)
 add_test(NAME AudioInputTest COMMAND test_audio_input)
 add_test(NAME FullRuntimeStackTest COMMAND test_full_runtime_stack)
+add_test(NAME RomLoaderTest COMMAND test_rom_loader)
+add_test(NAME SteamRomBridgeTest COMMAND test_steam_rom_bridge)
+add_test(NAME AndroidStorageBridgeTest COMMAND test_android_storage_bridge)
+add_test(NAME RomGameLoopTest COMMAND test_rom_game_loop)

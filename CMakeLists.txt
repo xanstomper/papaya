@@ -34,6 +34,7 @@ add_subdirectory(src/kernel)
 add_subdirectory(src/audio)
 add_subdirectory(src/input)
 add_subdirectory(src/frontend)
+add_subdirectory(src/rom)
 add_subdirectory(src/app)
 
 if (PAPAYA_BUILD_TESTS)

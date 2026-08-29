@@ -1,345 +1,336 @@
-Start testing: Aug 29 02:05 EDT
+Start testing: Aug 29 02:18 EDT
 ----------------------------------------------------------
-1/11 Testing: SteamStubTest
-1/11 Test: SteamStubTest
+1/15 Testing: SteamStubTest
+1/15 Test: SteamStubTest
 Command: "/home/jewboy420/papaya/build/tests/test_steam_stub"
 Directory: /home/jewboy420/papaya/build/tests
-"SteamStubTest" start time: Aug 29 02:05 EDT
+"SteamStubTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_steam_stub[0m
-[32m[02:05:31] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 1086940, Player: 'Odin2Gamer', SteamID: 0x1100001031AAD4E][0m
-[32m[02:05:31] [INFO] [STEAM] SteamAPI_RestartAppIfNecessary called for AppID 1086940 - returning false (no restart needed)[0m
-[32m[02:05:31] [INFO] [STEAM] Achievement Unlocked: 'ACH_FIRST_KILL' for AppID 1086940[0m
-[32m[02:05:31] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_steam_stub PASSED ALL CHECKS! <<<[0m
+[32m[02:18:29] [INFO] [TEST] Running unit test: test_steam_stub[0m
+[32m[02:18:29] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 1086940, Player: 'Odin2Gamer', SteamID: 0x1100001031AAD4E][0m
+[32m[02:18:29] [INFO] [STEAM] SteamAPI_RestartAppIfNecessary called for AppID 1086940 - returning false (no restart needed)[0m
+[32m[02:18:29] [INFO] [STEAM] Achievement Unlocked: 'ACH_FIRST_KILL' for AppID 1086940[0m
+[32m[02:18:29] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:18:29] [INFO] [TEST] >>> test_steam_stub PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SteamStubTest" end time: Aug 29 02:05 EDT
+"SteamStubTest" end time: Aug 29 02:18 EDT
 "SteamStubTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/11 Testing: CpuPagesTest
-2/11 Test: CpuPagesTest
+2/15 Testing: CpuPagesTest
+2/15 Test: CpuPagesTest
 Command: "/home/jewboy420/papaya/build/tests/test_cpu_pages"
 Directory: /home/jewboy420/papaya/build/tests
-"CpuPagesTest" start time: Aug 29 02:05 EDT
+"CpuPagesTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_cpu_pages[0m
-[32m[02:05:31] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:05:31] [INFO] [TEST] >>> test_cpu_pages PASSED ALL CHECKS! <<<[0m
+[32m[02:18:29] [INFO] [TEST] Running unit test: test_cpu_pages[0m
+[32m[02:18:29] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:18:29] [INFO] [TEST] >>> test_cpu_pages PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.02 sec
 ----------------------------------------------------------
 Test Passed.
-"CpuPagesTest" end time: Aug 29 02:05 EDT
+"CpuPagesTest" end time: Aug 29 02:18 EDT
 "CpuPagesTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-3/11 Testing: PotatoGpuTest
-3/11 Test: PotatoGpuTest
+3/15 Testing: PotatoGpuTest
+3/15 Test: PotatoGpuTest
 Command: "/home/jewboy420/papaya/build/tests/test_potato_gpu"
 Directory: /home/jewboy420/papaya/build/tests
-"PotatoGpuTest" start time: Aug 29 02:05 EDT
+"PotatoGpuTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_potato_gpu[0m
-[32m[02:05:31] [INFO] [TEST] Potato Mode stripped 1 textures and saved 63 MB VRAM[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_potato_gpu PASSED ALL CHECKS! <<<[0m
+[32m[02:18:29] [INFO] [TEST] Running unit test: test_potato_gpu[0m
+[32m[02:18:29] [INFO] [TEST] Potato Mode stripped 1 textures and saved 63 MB VRAM[0m
+[32m[02:18:29] [INFO] [TEST] >>> test_potato_gpu PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"PotatoGpuTest" end time: Aug 29 02:05 EDT
+"PotatoGpuTest" end time: Aug 29 02:18 EDT
 "PotatoGpuTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-4/11 Testing: ShaderStrippingTest
-4/11 Test: ShaderStrippingTest
+4/15 Testing: ShaderStrippingTest
+4/15 Test: ShaderStrippingTest
 Command: "/home/jewboy420/papaya/build/tests/test_shader_stripping"
 Directory: /home/jewboy420/papaya/build/tests
-"ShaderStrippingTest" start time: Aug 29 02:05 EDT
+"ShaderStrippingTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_shader_stripping[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_shader_stripping PASSED ALL CHECKS! <<<[0m
+[32m[02:18:29] [INFO] [TEST] Running unit test: test_shader_stripping[0m
+[32m[02:18:29] [INFO] [TEST] >>> test_shader_stripping PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"ShaderStrippingTest" end time: Aug 29 02:05 EDT
+"ShaderStrippingTest" end time: Aug 29 02:18 EDT
 "ShaderStrippingTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-5/11 Testing: SwapchainUpscalerTest
-5/11 Test: SwapchainUpscalerTest
+5/15 Testing: SwapchainUpscalerTest
+5/15 Test: SwapchainUpscalerTest
 Command: "/home/jewboy420/papaya/build/tests/test_swapchain_upscaler"
 Directory: /home/jewboy420/papaya/build/tests
-"SwapchainUpscalerTest" start time: Aug 29 02:05 EDT
+"SwapchainUpscalerTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_swapchain_upscaler[0m
-[32m[02:05:31] [INFO] [UPSCALER] Forcing Internal Render Target: 960x540 -> Present Target: 1920x1080 (4.0x reduction)[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_swapchain_upscaler PASSED ALL CHECKS! <<<[0m
+[32m[02:18:29] [INFO] [TEST] Running unit test: test_swapchain_upscaler[0m
+[32m[02:18:29] [INFO] [UPSCALER] Forcing Internal Render Target: 960x540 -> Present Target: 1920x1080 (4.0x reduction)[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_swapchain_upscaler PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.06 sec
+Test time =   0.05 sec
 ----------------------------------------------------------
 Test Passed.
-"SwapchainUpscalerTest" end time: Aug 29 02:05 EDT
+"SwapchainUpscalerTest" end time: Aug 29 02:18 EDT
 "SwapchainUpscalerTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-6/11 Testing: HardwareSpooferTest
-6/11 Test: HardwareSpooferTest
+6/15 Testing: HardwareSpooferTest
+6/15 Test: HardwareSpooferTest
 Command: "/home/jewboy420/papaya/build/tests/test_hardware_spoofer"
 Directory: /home/jewboy420/papaya/build/tests
-"HardwareSpooferTest" start time: Aug 29 02:05 EDT
+"HardwareSpooferTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_hardware_spoofer[0m
-[32m[02:05:31] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Intel(R) HD Graphics 4000' (Vendor: 0x8086, VRAM: 1024 MB)[0m
-[32m[02:05:31] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Adreno (TM) 740 (Mesa Turnip)' (Vendor: 0x5143, VRAM: 4096 MB)[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_hardware_spoofer PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_hardware_spoofer[0m
+[32m[02:18:30] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Intel(R) HD Graphics 4000' (Vendor: 0x8086, VRAM: 1024 MB)[0m
+[32m[02:18:30] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Adreno (TM) 740 (Mesa Turnip)' (Vendor: 0x5143, VRAM: 4096 MB)[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_hardware_spoofer PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"HardwareSpooferTest" end time: Aug 29 02:05 EDT
+"HardwareSpooferTest" end time: Aug 29 02:18 EDT
 "HardwareSpooferTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-7/11 Testing: AutoConfiguratorTest
-7/11 Test: AutoConfiguratorTest
+7/15 Testing: AutoConfiguratorTest
+7/15 Test: AutoConfiguratorTest
 Command: "/home/jewboy420/papaya/build/tests/test_auto_configurator"
 Directory: /home/jewboy420/papaya/build/tests
-"AutoConfiguratorTest" start time: Aug 29 02:05 EDT
+"AutoConfiguratorTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_auto_configurator[0m
-[32m[02:05:31] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_auto_configurator PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_auto_configurator[0m
+[32m[02:18:30] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_auto_configurator PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"AutoConfiguratorTest" end time: Aug 29 02:05 EDT
+"AutoConfiguratorTest" end time: Aug 29 02:18 EDT
 "AutoConfiguratorTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-8/11 Testing: MemoryWatchdogTest
-8/11 Test: MemoryWatchdogTest
+8/15 Testing: MemoryWatchdogTest
+8/15 Test: MemoryWatchdogTest
 Command: "/home/jewboy420/papaya/build/tests/test_memory_watchdog"
 Directory: /home/jewboy420/papaya/build/tests
-"MemoryWatchdogTest" start time: Aug 29 02:05 EDT
+"MemoryWatchdogTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_memory_watchdog[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 1.0%)! Flushing texture caches...[0m
-[32m[02:05:31] [INFO] [TEST] Memory watchdog queried 11707 MB RAM, pressure=89.2%[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_memory_watchdog PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_memory_watchdog[0m
+[33m[02:18:30] [WARN] [WATCHDOG] Memory pressure critical (83.3% used, threshold: 1.0%)! Flushing texture caches...[0m
+[32m[02:18:30] [INFO] [TEST] Memory watchdog queried 11707 MB RAM, pressure=83.3%[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_memory_watchdog PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"MemoryWatchdogTest" end time: Aug 29 02:05 EDT
+"MemoryWatchdogTest" end time: Aug 29 02:18 EDT
 "MemoryWatchdogTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-9/11 Testing: NtSyncIoUringTest
-9/11 Test: NtSyncIoUringTest
+9/15 Testing: NtSyncIoUringTest
+9/15 Test: NtSyncIoUringTest
 Command: "/home/jewboy420/papaya/build/tests/test_ntsync_iouring"
 Directory: /home/jewboy420/papaya/build/tests
-"NtSyncIoUringTest" start time: Aug 29 02:05 EDT
+"NtSyncIoUringTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_ntsync_iouring[0m
-[32m[02:05:31] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:05:31] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 128][0m
-[32m[02:05:31] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:05:31] [INFO] [TEST] >>> test_ntsync_iouring PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_ntsync_iouring[0m
+[32m[02:18:30] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:18:30] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 128][0m
+[32m[02:18:30] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:18:30] [INFO] [TEST] >>> test_ntsync_iouring PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"NtSyncIoUringTest" end time: Aug 29 02:05 EDT
+"NtSyncIoUringTest" end time: Aug 29 02:18 EDT
 "NtSyncIoUringTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-10/11 Testing: AudioInputTest
-10/11 Test: AudioInputTest
+10/15 Testing: AudioInputTest
+10/15 Test: AudioInputTest
 Command: "/home/jewboy420/papaya/build/tests/test_audio_input"
 Directory: /home/jewboy420/papaya/build/tests
-"AudioInputTest" start time: Aug 29 02:05 EDT
+"AudioInputTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running unit test: test_audio_input[0m
-[32m[02:05:31] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
-[32m[02:05:31] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
-[32m[02:05:31] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_audio_input PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_audio_input[0m
+[32m[02:18:30] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
+[32m[02:18:30] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
+[32m[02:18:30] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_audio_input PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"AudioInputTest" end time: Aug 29 02:05 EDT
+"AudioInputTest" end time: Aug 29 02:18 EDT
 "AudioInputTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-11/11 Testing: FullRuntimeStackTest
-11/11 Test: FullRuntimeStackTest
+11/15 Testing: FullRuntimeStackTest
+11/15 Test: FullRuntimeStackTest
 Command: "/home/jewboy420/papaya/build/tests/test_full_runtime_stack"
 Directory: /home/jewboy420/papaya/build/tests
-"FullRuntimeStackTest" start time: Aug 29 02:05 EDT
+"FullRuntimeStackTest" start time: Aug 29 02:18 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:05:31] [INFO] [TEST] Running integration test: test_full_runtime_stack[0m
-[32m[02:05:31] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:05:31] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
-[32m[02:05:31] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:05:31] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:05:31] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
-[32m[02:05:31] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
-[32m[02:05:31] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:05:31] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:05:31] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
-[32m[02:05:31] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:05:31] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
-[32m[02:05:31] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
-[32m[02:05:31] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
-[32m[02:05:31] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
-[32m[02:05:31] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: 'test_game.exe'[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[33m[02:05:31] [WARN] [WATCHDOG] Memory pressure critical (89.2% used, threshold: 85.0%)! Flushing texture caches...[0m
-[33m[02:05:31] [WARN] [RUNTIME] Memory watchdog triggered: flushing texture caches[0m
-[32m[02:05:31] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
-[32m[02:05:31] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:05:31] [INFO] [TEST] >>> test_full_runtime_stack PASSED ALL CHECKS! <<<[0m
+[32m[02:18:30] [INFO] [TEST] Running integration test: test_full_runtime_stack[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:18:30] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:18:30] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:18:30] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:18:30] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:18:30] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:18:30] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:18:30] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
+[32m[02:18:30] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
+[32m[02:18:30] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:18:30] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:18:30] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: 'test_game.exe'[0m
+[32m[02:18:30] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
+[32m[02:18:30] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_full_runtime_stack PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"FullRuntimeStackTest" end time: Aug 29 02:05 EDT
+"FullRuntimeStackTest" end time: Aug 29 02:18 EDT
 "FullRuntimeStackTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 29 02:05 EDT
+12/15 Testing: RomLoaderTest
+12/15 Test: RomLoaderTest
+Command: "/home/jewboy420/papaya/build/tests/test_rom_loader"
+Directory: /home/jewboy420/papaya/build/tests
+"RomLoaderTest" start time: Aug 29 02:18 EDT
+Output:
+----------------------------------------------------------
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_rom_loader[0m
+[32m[02:18:30] [INFO] [ROM] Mounted ROM Image [Title: 'PAPAYA_TEST_ISO', Serial: 'SLUS-20062', Format: 0x1, Sectors: 32, Size: 0 MB][0m
+[32m[02:18:30] [INFO] [TEST] >>> test_rom_loader PASSED ALL CHECKS! <<<[0m
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"RomLoaderTest" end time: Aug 29 02:18 EDT
+"RomLoaderTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/15 Testing: SteamRomBridgeTest
+13/15 Test: SteamRomBridgeTest
+Command: "/home/jewboy420/papaya/build/tests/test_steam_rom_bridge"
+Directory: /home/jewboy420/papaya/build/tests
+"SteamRomBridgeTest" start time: Aug 29 02:18 EDT
+Output:
+----------------------------------------------------------
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_steam_rom_bridge[0m
+[32m[02:18:30] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
+[32m[02:18:30] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
+[32m[02:18:30] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 327793340][0m
+[32m[02:18:30] [INFO] [TEST] >>> test_steam_rom_bridge PASSED ALL CHECKS! <<<[0m
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"SteamRomBridgeTest" end time: Aug 29 02:18 EDT
+"SteamRomBridgeTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/15 Testing: AndroidStorageBridgeTest
+14/15 Test: AndroidStorageBridgeTest
+Command: "/home/jewboy420/papaya/build/tests/test_android_storage_bridge"
+Directory: /home/jewboy420/papaya/build/tests
+"AndroidStorageBridgeTest" start time: Aug 29 02:18 EDT
+Output:
+----------------------------------------------------------
+[32m[02:18:30] [INFO] [TEST] Running unit test: test_android_storage_bridge[0m
+[32m[02:18:30] [INFO] [JNI] Android NDK JNI: Initializing Papaya Runtime (Potato: 1, Tier: 2)[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:18:30] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:18:30] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:18:30] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:18:30] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:18:30] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:18:30] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:18:30] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
+[32m[02:18:30] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
+[32m[02:18:30] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: NO, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:18:30] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:18:30] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
+[32m[02:18:30] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:18:30] [INFO] [JNI] Android NDK JNI: Runtime shut down cleanly[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_android_storage_bridge PASSED ALL CHECKS! <<<[0m
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"AndroidStorageBridgeTest" end time: Aug 29 02:18 EDT
+"AndroidStorageBridgeTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/15 Testing: RomGameLoopTest
+15/15 Test: RomGameLoopTest
+Command: "/home/jewboy420/papaya/build/tests/test_rom_game_loop"
+Directory: /home/jewboy420/papaya/build/tests
+"RomGameLoopTest" start time: Aug 29 02:18 EDT
+Output:
+----------------------------------------------------------
+[32m[02:18:30] [INFO] [TEST] Running integration test: test_rom_game_loop[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:18:30] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:18:30] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:18:30] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:18:30] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:18:30] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:18:30] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:18:30] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:18:30] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:18:30] [INFO] [AUDIO] Initializing Low-Latency Audio Bridge [48000Hz, 2 Channels, 512 Frame Buffer][0m
+[32m[02:18:30] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots)[0m
+[32m[02:18:30] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:18:30] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:18:30] [INFO] [ROM] Mounted ROM Image [Title: 'GTA_SAN_ANDREAS', Serial: 'SLUS-20946', Format: 0x1, Sectors: 32, Size: 0 MB][0m
+[32m[02:18:30] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 1157600662 for ROM 'GTA_SAN_ANDREAS' (Serial: 'SLUS-20946')[0m
+[32m[02:18:30] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 1157600662][0m
+[32m[02:18:30] [INFO] [RUNTIME] Mounting and launching ROM image via Steam compatibility layer: './san_andreas_loop.iso'[0m
+[32m[02:18:30] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: './san_andreas_loop.iso'[0m
+[32m[02:18:30] [INFO] [AUDIO] Audio Bridge successfully shut down.[0m
+[32m[02:18:30] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:18:30] [INFO] [TEST] >>> test_rom_game_loop PASSED ALL CHECKS! <<<[0m
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"RomGameLoopTest" end time: Aug 29 02:18 EDT
+"RomGameLoopTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 29 02:18 EDT

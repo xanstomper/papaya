@@ -1,6 +1,8 @@
 #include "papaya/common/logger.hpp"
 #include "papaya/common/types.hpp"
 #include "papaya/frontend/emulator_runtime.hpp"
+#include "papaya/rom/rom_loader.hpp"
+#include "papaya/rom/steam_rom_bridge.hpp"
 #include <iostream>
 #include <string_view>
 
@@ -12,8 +14,8 @@ void print_banner() {
               << " |  __/ (_| | |_) | (_| | |_| | (_| |   \n"
               << " |_|   \\__,_| .__/ \\__,_|\\__, |\\__,_|   \n"
               << "            |_|          |___/          \n"
-              << " Papaya - ARM Steam Compatibility Layer \n"
-              << " High-Performance Handheld & SBC Runtime\n"
+              << " Papaya - ARM Steam & ROM Translation   \n"
+              << " Universal Handheld & SBC Gaming Runtime\n"
               << "\033[0m\n";
 }
 
@@ -21,6 +23,7 @@ void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "Options:\n"
               << "  --game <path.exe>     Path to Windows game executable\n"
+              << "  --rom <path.iso>      Path to ROM/ISO/CSO/CHD disc image to play via Steam\n"
               << "  --appid <id>          Steam AppID (overrides steam_appid.txt)\n"
               << "  --potato              Force aggressive Potato Mode (1x1 textures, 540p upscaled)\n"
               << "  --tier <tier>         Hardware tier: low (RP5), mid, high (Odin2), deck, desktop\n"
@@ -37,6 +40,7 @@ int main(int argc, char* argv[]) {
     bool run_diag = false;
     papaya::frontend::RuntimeConfig config{};
     std::string game_path;
+    std::string rom_path;
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -51,6 +55,8 @@ int main(int argc, char* argv[]) {
             config.headless = true;
         } else if (arg == "--game" && i + 1 < argc) {
             game_path = argv[++i];
+        } else if (arg == "--rom" && i + 1 < argc) {
+            rom_path = argv[++i];
         } else if (arg == "--appid" && i + 1 < argc) {
             config.steam_app_id = static_cast<papaya::u32>(std::stoul(argv[++i]));
         } else if (arg == "--tier" && i + 1 < argc) {
@@ -79,7 +85,7 @@ int main(int argc, char* argv[]) {
         papaya::log::info("DIAG", "Spoofed GPU: '{}' (VRAM: {} MB)",
                           auto_cfg.spoof_profile.device_name, auto_cfg.spoof_profile.dedicated_vram_bytes / papaya::MiB);
         if (argc == 1) {
-            papaya::log::info("DIAG", "Run with --help for game launching options.");
+            papaya::log::info("DIAG", "Run with --help for ROM and game launching options.");
             return 0;
         }
     }
@@ -91,7 +97,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!game_path.empty()) {
+    if (!rom_path.empty()) {
+        papaya::rom::RomImageLoader loader;
+        auto meta_res = loader.open_file(rom_path);
+        if (!meta_res) {
+            papaya::log::error("MAIN", "Failed to open ROM/ISO image: {}", rom_path);
+            return 1;
+        }
+        papaya::rom::SteamRomBridge::bind_rom_to_steam_stub(*meta_res, rom_path, runtime.get_steam());
+        runtime.mount_and_launch_rom(rom_path);
+        runtime.run();
+    } else if (!game_path.empty()) {
         if (!runtime.launch_game(game_path)) {
             papaya::log::error("MAIN", "Failed to launch game: {}", game_path);
             return 1;

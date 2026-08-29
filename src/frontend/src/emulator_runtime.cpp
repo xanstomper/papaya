@@ -100,6 +100,11 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     return {};
 }
 
+Result<> EmulatorRuntime::mount_and_launch_rom(std::string_view rom_path_or_uri) {
+    log::info("RUNTIME", "Mounting and launching ROM image via Steam compatibility layer: '{}'", rom_path_or_uri);
+    return launch_game(rom_path_or_uri);
+}
+
 void EmulatorRuntime::step_frame() {
     if (!is_running_) return;
 

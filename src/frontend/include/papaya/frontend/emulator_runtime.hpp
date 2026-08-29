@@ -16,6 +16,7 @@
 #include "papaya/frontend/window_manager.hpp"
 #include <memory>
 #include <atomic>
+#include <filesystem>
 
 namespace papaya::frontend {
 
@@ -35,6 +36,7 @@ public:
 
     Result<> initialize();
     Result<> launch_game(std::string_view exe_path);
+    Result<> mount_and_launch_rom(std::string_view rom_path_or_uri);
 
     void step_frame();
     void run();

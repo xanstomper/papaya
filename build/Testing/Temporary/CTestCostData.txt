@@ -1,12 +1,16 @@
-SteamStubTest 4 0.00370184
-CpuPagesTest 4 0.00573912
-PotatoGpuTest 3 0.00704256
-ShaderStrippingTest 4 0.00227047
-SwapchainUpscalerTest 4 0.0153077
-HardwareSpooferTest 4 0.00270247
-AutoConfiguratorTest 4 0.00283782
-MemoryWatchdogTest 4 0.00191249
-NtSyncIoUringTest 3 0.00342006
-AudioInputTest 4 0.00230194
-FullRuntimeStackTest 2 0.00672419
+SteamStubTest 5 0.00264807
+CpuPagesTest 5 0.00385334
+PotatoGpuTest 4 0.00194541
+ShaderStrippingTest 5 0.00210125
+SwapchainUpscalerTest 5 0.00966501
+HardwareSpooferTest 5 0.00114679
+AutoConfiguratorTest 5 0.00197968
+MemoryWatchdogTest 5 0.00124052
+NtSyncIoUringTest 4 0.00214136
+AudioInputTest 5 0.00110975
+FullRuntimeStackTest 3 0.00185556
+RomLoaderTest 1 0.0062639
+SteamRomBridgeTest 1 0.00604855
+AndroidStorageBridgeTest 1 0.00928303
+RomGameLoopTest 1 0.00769102
 ---
