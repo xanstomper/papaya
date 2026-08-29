@@ -424,6 +424,10 @@ public:
     static PAPAYA_MS_ABI long   hle_direct_sound_create8(const void* guid, void** ods8_out, void* unk_outer);
     static PAPAYA_MS_ABI long   hle_direct_sound_enumerate_a(void* cb, void* ctx);
 
+    // DirectInput8 (raw keyboard/mouse input)
+    static PAPAYA_MS_ABI long   hle_direct_input8_create(void* hinst, u32 version, const void* iid, void** di8_out, void* unk_outer);
+    static PAPAYA_MS_ABI long   hle_direct_input_create_a(void* hinst, u32 version, const void* iid, void** pdid_out, void* unk_outer);
+
     // OpenGL & Vulkan dynamic loaders
     static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);
     static PAPAYA_MS_ABI void* hle_vk_get_instance_proc_addr(void* instance, const char* pName);

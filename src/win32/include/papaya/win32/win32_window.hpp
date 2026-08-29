@@ -82,6 +82,8 @@ public:
     // Lifecycle
     bool initialize();
     void shutdown();
+    // Access to the X display (for reading keyboard/mouse state etc.)
+    _XDisplay* display() { return display_; }
 
     // Window classes
     void* register_class(const char* name, void* wndproc, void* hinstance);

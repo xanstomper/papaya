@@ -1,6 +1,7 @@
 #include "papaya/win32/win32_api_hle.hpp"
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_dsound.hpp"
+#include "papaya/win32/win32_dinput.hpp"
 #include "papaya/win32/win32_registry.hpp"
 #include "papaya/win32/win32_audio.hpp"
 #include "papaya/win32/win32_window.hpp"
@@ -2241,6 +2242,16 @@ long Win32ApiHle::hle_direct_sound_enumerate_a(void* cb, void* ctx) {
     return 0; // DS_OK (no devices enumerated; games tolerate this)
 }
 
+// ---- DirectInput8 -----------------------------------------------------------
+long Win32ApiHle::hle_direct_input8_create(void* hinst, u32 version, const void* iid, void** di8_out, void* unk_outer) {
+    (void)version; (void)iid;
+    return dinput8_create(hinst, version, iid, di8_out, unk_outer);
+}
+long Win32ApiHle::hle_direct_input_create_a(void* hinst, u32 version, const void* iid, void** pdid_out, void* unk_outer) {
+    (void)version; (void)iid;
+    return dinput8_create(hinst, version, iid, pdid_out, unk_outer);
+}
+
 int Win32ApiHle::hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd) {
     (void)hdc; (void)iPixelFormat; (void)nBytes; (void)ppfd;
     return 1;
@@ -3136,7 +3147,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("dsound.dll", "DirectSoundCreate8", reinterpret_cast<void*>(&hle_direct_sound_create8));
     register_function("dsound.dll", "DirectSoundEnumerateA", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
     register_function("dsound.dll", "DirectSoundEnumerateW", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
-    register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&hle_direct_input8_create));
+    register_function("dinput.dll", "DirectInputCreateA", reinterpret_cast<void*>(&hle_direct_input_create_a));
+    register_function("dinput.dll", "DirectInputCreateW", reinterpret_cast<void*>(&hle_direct_input_create_a));
+    register_function("dinput.dll", "DirectInputCreateEx", reinterpret_cast<void*>(&hle_direct_input_create_a));
 
     return {};
 }
