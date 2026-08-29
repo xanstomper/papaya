@@ -464,6 +464,9 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_copy_file_a(const char* lpExisting, const char* lpNew, BOOL bFailIfExists);
     static PAPAYA_MS_ABI BOOL  hle_move_file_a(const char* lpExisting, const char* lpNew);
     static PAPAYA_MS_ABI u32   hle_get_temp_path_a(u32 nBufferLength, char* lpBuffer);
+    static PAPAYA_MS_ABI BOOL  hle_copy_file_w(const wchar_t* lpExisting, const wchar_t* lpNew, BOOL bFailIfExists);
+    static PAPAYA_MS_ABI BOOL  hle_set_environment_variable_a(const char* lpName, const char* lpValue);
+    static PAPAYA_MS_ABI HANDLE hle_open_file(const char* lpFileName, u32* lpReOpenBuff, u32 uStyle, u32 uExclusive);
     static PAPAYA_MS_ABI u32   hle_get_temp_file_name_a(const char* lpPathName, const char* lpPrefixStr, u32 uUnique, char* lpTempFileName);
     static PAPAYA_MS_ABI u32   hle_get_windows_directory_a(char* lpBuffer, u32 uSize);
     static PAPAYA_MS_ABI u32   hle_get_system_directory_a(char* lpBuffer, u32 uSize);

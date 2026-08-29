@@ -2659,6 +2659,38 @@ BOOL Win32ApiHle::hle_move_file_a(const char* lpExisting, const char* lpNew) {
     return (rename(src.c_str(), dst.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
 }
 
+BOOL Win32ApiHle::hle_copy_file_w(const wchar_t* lpExisting, const wchar_t* lpNew, BOOL bFailIfExists) {
+    if (!lpExisting || !lpNew) return FALSE_VAL;
+    std::string src = wchar_to_utf8(lpExisting);
+    std::string dst = wchar_to_utf8(lpNew);
+    std::replace(src.begin(), src.end(), '\\', '/');
+    std::replace(dst.begin(), dst.end(), '\\', '/');
+    int fd_in  = open(src.c_str(), O_RDONLY);
+    int oflags = O_WRONLY | O_CREAT | (bFailIfExists ? O_EXCL : O_TRUNC);
+    int fd_out = open(dst.c_str(), oflags, 0666);
+    if (fd_in < 0 || fd_out < 0) { if (fd_in>=0) close(fd_in); if (fd_out>=0) close(fd_out); return FALSE_VAL; }
+    char buf[65536]; ssize_t nn;
+    while ((nn = read(fd_in, buf, sizeof(buf))) > 0) write(fd_out, buf, static_cast<size_t>(nn));
+    close(fd_in); close(fd_out);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_set_environment_variable_a(const char* lpName, const char* lpValue) {
+    if (!lpName) return FALSE_VAL;
+    if (lpValue) { setenv(lpName, lpValue, 1); return TRUE_VAL; }
+    unsetenv(lpName);
+    return TRUE_VAL;
+}
+HANDLE Win32ApiHle::hle_open_file(const char* lpFileName, u32* lpReOpenBuff, u32 uStyle, u32 uExclusive) {
+    (void)lpReOpenBuff; (void)uStyle; (void)uExclusive;
+    // OF_READ(0) etc: open readonly; OF_CREATE bit 0x1000.
+    int flags = O_RDONLY;
+    if (uStyle & 0x1000) flags = O_RDONLY | O_CREAT;   // OF_CREATE
+    if (uStyle & 0x2000) flags = O_WRONLY | O_CREAT | O_TRUNC;  // OF_TRUNC
+    int fd = open(lpFileName ? lpFileName : "", flags, 0666);
+    if (fd < 0) return reinterpret_cast<HANDLE>(-1);
+    return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(fd));
+}
+
 u32 Win32ApiHle::hle_get_temp_path_a(u32 nBufferLength, char* lpBuffer) {
     static const char* tmp = "/tmp/";
     if (lpBuffer && nBufferLength > 5) std::strncpy(lpBuffer, tmp, nBufferLength);
@@ -4241,6 +4273,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "GetEnvironmentStringsW", reinterpret_cast<void*>(&hle_get_environment_strings_w));
     register_function("KERNEL32.DLL", "FreeEnvironmentStringsW", reinterpret_cast<void*>(&hle_free_environment_strings_w));
     register_function("KERNEL32.DLL", "SetEnvironmentVariableW", reinterpret_cast<void*>(&hle_set_environment_variable_w));
+    register_function("KERNEL32.DLL", "SetEnvironmentVariableA", reinterpret_cast<void*>(&hle_set_environment_variable_a));
     register_function("KERNEL32.DLL", "GetEnvironmentVariableW", reinterpret_cast<void*>(&hle_get_environment_variable_w));
     register_function("KERNEL32.DLL", "GetOEMCP", reinterpret_cast<void*>(&hle_get_oemcp));
     register_function("KERNEL32.DLL", "GetACP", reinterpret_cast<void*>(&hle_get_acp));
@@ -4596,6 +4629,8 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "RemoveDirectoryA",  reinterpret_cast<void*>(&hle_remove_directory_a));
     register_function("KERNEL32.DLL", "DeleteFileA",       reinterpret_cast<void*>(&hle_delete_file_a));
     register_function("KERNEL32.DLL", "CopyFileA",         reinterpret_cast<void*>(&hle_copy_file_a));
+    register_function("KERNEL32.DLL", "CopyFileW",         reinterpret_cast<void*>(&hle_copy_file_w));
+    register_function("KERNEL32.DLL", "OpenFile",          reinterpret_cast<void*>(&hle_open_file));
     register_function("KERNEL32.DLL", "MoveFileA",         reinterpret_cast<void*>(&hle_move_file_a));
     register_function("KERNEL32.DLL", "GetTempPathA",      reinterpret_cast<void*>(&hle_get_temp_path_a));
     register_function("KERNEL32.DLL", "GetTempFileNameA",  reinterpret_cast<void*>(&hle_get_temp_file_name_a));
