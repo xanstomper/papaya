@@ -483,6 +483,14 @@ public:
     static PAPAYA_MS_ABI void  hle_reg_disable_predefined_cache();
     static PAPAYA_MS_ABI u32   hle_set_error_mode(u32 uMode);
     static PAPAYA_MS_ABI void  hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args);
+    // Hardware profile + ShellExecute + drag-drop + IME (game-startup probes)
+    static PAPAYA_MS_ABI BOOL  hle_get_current_hw_profile_a(void* pProfile);
+    static PAPAYA_MS_ABI s64   hle_shell_execute_w(void* hwnd, const wchar_t* verb, const wchar_t* file, const wchar_t* params, const wchar_t* dir, int show);
+    static PAPAYA_MS_ABI void  hle_drag_accept_files(void* hwnd, BOOL accept);
+    static PAPAYA_MS_ABI u32   hle_drag_query_file_w(void* hdrop, u32 ifile, wchar_t* lpsz, u32 cch);
+    static PAPAYA_MS_ABI void* hle_imm_get_context(void* hwnd);
+    static PAPAYA_MS_ABI BOOL  hle_imm_release_context(void* hwnd, void* himc);
+    static PAPAYA_MS_ABI s64   hle_imm_get_composition_string_w(void* himc, u32 index, void* buf, u32 buflen);
 
     // WINMM
     static PAPAYA_MS_ABI u32   hle_time_get_time();

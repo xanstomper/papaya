@@ -2693,6 +2693,52 @@ long Win32ApiHle::hle_reg_get_value_a(u64 hKey, const char* lpSubKey, const char
 }
 void Win32ApiHle::hle_reg_disable_predefined_cache() {}
 
+// ---- Hardware profile / ShellExecute / drag-drop / IME -----------------------
+// HW_PROFILEINFOA: dwDockInfo(0), szHwProfileGuid(4, 39 bytes), szHwProfileName(43, 80 bytes).
+BOOL Win32ApiHle::hle_get_current_hw_profile_a(void* pProfile) {
+    if (!pProfile) return FALSE_VAL;
+    auto* b = static_cast<u8*>(pProfile);
+    std::memset(b, 0, sizeof(u32) + 39 + 80);
+    const char* guid = "{8bd6eb9e-ca78-4a86-9d4a-5c9f5a9c1234}";
+    std::strcpy(reinterpret_cast<char*>(b) + 4, guid);
+    const char* name = "Papaya";
+    u8* base = b + 4 + 39;
+    for (int i = 0; name[i]; ++i) base[i] = static_cast<u8>(name[i]);
+    return TRUE_VAL;
+}
+s64 Win32ApiHle::hle_shell_execute_w(void* hwnd, const wchar_t* verb, const wchar_t* file,
+                                     const wchar_t* params, const wchar_t* dir, int show) {
+    (void)hwnd; (void)verb; (void)params; (void)dir; (void)show;
+    // Launch a URL / file via the host browser/open handler.
+    if (!file) return 33;   // SE_ERR_NOASSOC-ish
+    std::string f = wchar_to_utf8(file);
+    char* args[] = { const_cast<char*>("xdg-open"), const_cast<char*>(f.c_str()), nullptr };
+    pid_t pid = fork();
+    if (pid == 0) { execvp("xdg-open", args); _exit(0); }
+    return (pid >= 0) ? 32 : 33;   // SE_ERR_SUCCESS=32, else error
+}
+void Win32ApiHle::hle_drag_accept_files(void* hwnd, BOOL accept) {
+    (void)hwnd; (void)accept;   // no drag-drop plumbing yet; accept silently
+}
+u32 Win32ApiHle::hle_drag_query_file_w(void* hdrop, u32 ifile, wchar_t* lpsz, u32 cch) {
+    (void)hdrop; (void)ifile;
+    if (lpsz && cch) lpsz[0] = 0;
+    return 0;   // no dropped files
+}
+void* Win32ApiHle::hle_imm_get_context(void* hwnd) {
+    (void)hwnd;
+    return reinterpret_cast<void*>(0x1);   // non-null dummy HIMC
+}
+BOOL Win32ApiHle::hle_imm_release_context(void* hwnd, void* himc) {
+    (void)hwnd; (void)himc;
+    return TRUE_VAL;
+}
+s64 Win32ApiHle::hle_imm_get_composition_string_w(void* himc, u32 index, void* buf, u32 buflen) {
+    (void)himc; (void)index;
+    if (buf && buflen >= 2) static_cast<wchar_t*>(buf)[0] = 0;
+    return 0;
+}
+
 u32 Win32ApiHle::hle_set_error_mode(u32 uMode) {
     return uMode; // Return previous mode (same as passed)
 }
@@ -4116,24 +4162,24 @@ Result<> Win32ApiHle::initialize() {
     register_function("ADVAPI32.dll", "RegCloseKey", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "RegGetValueW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&hle_get_current_hw_profile_a));
     register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
     register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&generic_stub_success));
     register_function("ADVAPI32.dll", "GetSidSubAuthority", reinterpret_cast<void*>(&hle_get_sid_sub_authority));
     register_function("ADVAPI32.dll", "GetSidSubAuthorityCount", reinterpret_cast<void*>(&hle_get_sid_sub_authority_count));
 
-    register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&hle_shell_execute_w));
     register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&hle_command_line_to_argv_w));
     register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("SHELL32.dll", "SHGetKnownFolderPath", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("SHELL32.dll", "DragQueryFileW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&hle_drag_accept_files));
+    register_function("SHELL32.dll", "DragQueryFileW", reinterpret_cast<void*>(&hle_drag_query_file_w));
 
     // IMM32.DLL
-    register_function("IMM32.dll", "ImmGetContext", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("IMM32.dll", "ImmReleaseContext", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("IMM32.dll", "ImmGetContext", reinterpret_cast<void*>(&hle_imm_get_context));
+    register_function("IMM32.dll", "ImmReleaseContext", reinterpret_cast<void*>(&hle_imm_release_context));
     register_function("IMM32.dll", "ImmSetCandidateWindow", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("IMM32.dll", "ImmGetCompositionStringW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("IMM32.dll", "ImmGetCompositionStringW", reinterpret_cast<void*>(&hle_imm_get_composition_string_w));
     register_function("IMM32.dll", "ImmSetCompositionWindow", reinterpret_cast<void*>(&generic_stub_success));
     register_function("IMM32.dll", "ImmAssociateContext", reinterpret_cast<void*>(&generic_stub_null));
 
