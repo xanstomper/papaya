@@ -3,8 +3,11 @@
 #include <unistd.h>
 #include <fstream>
 #include <sstream>
+#include <chrono>
 
 namespace papaya::profile {
+
+static std::chrono::steady_clock::time_point g_last_flush_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
 
 MemoryWatchdog::MemoryWatchdog(f32 pressure_threshold)
     : pressure_threshold_(pressure_threshold) {}
@@ -31,11 +34,17 @@ SystemMemoryInfo MemoryWatchdog::query_memory_status() {
 }
 
 bool MemoryWatchdog::poll_and_enforce() {
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - g_last_flush_time).count() < 3000) {
+        return is_critical_;
+    }
+
     auto mem = query_memory_status();
 
     if (mem.memory_pressure_ratio >= pressure_threshold_) {
         is_critical_ = true;
         flush_events_++;
+        g_last_flush_time = now;
         log::warn("WATCHDOG", "Memory pressure critical ({:.1f}% used, threshold: {:.1f}%)! Flushing texture caches...",
                   mem.memory_pressure_ratio * 100.0f, pressure_threshold_ * 100.0f);
 

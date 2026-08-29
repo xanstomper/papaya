@@ -96,6 +96,8 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         steam_stub_->initialize();
     }
 
+    log::info("RUNTIME", "Engaging Papaya Game Execution Loop for '{}' (AppID: {})",
+              game_p.filename().string(), steam_stub_->get_app_id());
     is_running_ = true;
     return {};
 }
@@ -131,17 +133,32 @@ void EmulatorRuntime::run() {
     is_running_ = true;
     auto last_time = std::chrono::steady_clock::now();
     u64 last_frame = 0;
+    const auto target_frame_duration = std::chrono::microseconds(16666); // 60 FPS frame pacing (16.66ms)
+
+    log::info("RUNTIME", ">>> Papaya Engine Loop Active @ 60 FPS Target Pacing <<<");
 
     while (is_running_ && !window_mgr_->should_close()) {
+        auto frame_start = std::chrono::steady_clock::now();
+
         step_frame();
 
         auto now = std::chrono::steady_clock::now();
         auto elapsed_s = std::chrono::duration<f64>(now - last_time).count();
         if (elapsed_s >= 1.0) {
             u64 cur_frame = frame_count_.load();
-            current_fps_ = static_cast<f64>(cur_frame - last_frame) / elapsed_s;
+            f64 fps_val = static_cast<f64>(cur_frame - last_frame) / elapsed_s;
+            current_fps_ = fps_val;
             last_frame = cur_frame;
             last_time = now;
+            u64 saved_mb = potato_interceptor_->get_stats().saved_vram_bytes.load() / (1024 * 1024);
+            log::info("RUNTIME", "Performance: {:.1f} FPS | Total Frames: {} | VRAM Saved: {} MB",
+                      fps_val, cur_frame, saved_mb);
+        }
+
+        // Frame pacing sleep
+        auto frame_elapsed = std::chrono::steady_clock::now() - frame_start;
+        if (frame_elapsed < target_frame_duration) {
+            std::this_thread::sleep_for(target_frame_duration - frame_elapsed);
         }
     }
 }
