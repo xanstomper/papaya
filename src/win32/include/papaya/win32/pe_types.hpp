@@ -139,7 +139,8 @@ struct ImageOptionalHeader32 {
     u32 size_of_uninitialized_data;
     u32 address_of_entry_point;
     u32 base_of_code;
-    u32 image_base;              // 32-bit base!
+    u32 base_of_data;          // PE32 only — not present in PE32+
+    u32 image_base;            // 32-bit base!
     u32 section_alignment;
     u32 file_alignment;
     u16 major_operating_system_version;

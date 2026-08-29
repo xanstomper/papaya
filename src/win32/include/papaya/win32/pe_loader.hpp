@@ -8,9 +8,6 @@
 #include <span>
 #include <vector>
 #include <memory>
-#include <map>
-#include <mutex>
-#include <signal.h>
 
 namespace papaya::win32 {
 
@@ -50,18 +47,9 @@ private:
 
     Result<> map_sections(const u8* file_raw, const ImageNtHeadersUnified& nt, void* allocated_base);
 
-    // Applies per-section mprotect after mapping (page-granular, includes headers R+X)
+    // Applies per-section mprotect (page-granular, includes headers R+X)
     Result<> apply_section_protections(void* allocated_base, u64 size_of_image,
                                        const std::vector<ImageSectionHeader>& sections);
-
-    // Split-fault emulation: switch protection at a page, restart the faulting x86-64
-    // instruction via single-step trap flag.
-    Result<> handle_guard_page_fault(u8* fault_addr, void* ctx);
-
-    // Install a SIGSEGV handler that services guard-page write faults (WC pages) and
-    // no-access faults (RO pages), flipping page protection and single-stepping past.
-    void install_fault_handler();
-    static void fault_handler(int sig, siginfo_t* info, void* ctx);
 
     Result<> apply_relocations(void* allocated_base, u64 size_of_image,
                                const ImageNtHeadersUnified& nt, u64 original_image_base);
@@ -71,12 +59,6 @@ private:
     std::shared_ptr<Win32ApiHle> hle_;
     WinTeb64* teb_{nullptr};
     WinPeb64* peb_{nullptr};
-
-    // Guard-page bookkeeping for split-fault WC/RO emulation (page_start -> prot)
-    std::map<u64, u32> guard_pages_;
-    static std::map<u64, u32> s_guard_pages;      // static mirror for the signal handler
-    static std::mutex s_guard_mutex;
-    static thread_local void* s_active_loader;
 };
 
 } // namespace papaya::win32

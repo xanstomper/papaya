@@ -4,21 +4,12 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <signal.h>
-#include <ucontext.h>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <asm/prctl.h>
 #include <sys/syscall.h>
 #endif
 
 namespace papaya::win32 {
-
-// -------------------------------------------------------------
-// Static fault-emulation state
-// -------------------------------------------------------------
-std::map<u64, u32> PeLoader::s_guard_pages;
-std::mutex PeLoader::s_guard_mutex;
-thread_local void* PeLoader::s_active_loader = nullptr;
 
 PeLoader::PeLoader(std::shared_ptr<Win32ApiHle> hle)
     : hle_(hle ? hle : std::make_shared<Win32ApiHle>()) {
@@ -305,85 +296,23 @@ Result<> PeLoader::map_sections(const u8* file_raw, const ImageNtHeadersUnified&
 }
 
 // -------------------------------------------------------------
-// Split-fault WRITE-COPY / guard-page emulation
-// -------------------------------------------------------------
-Result<> PeLoader::handle_guard_page_fault(u8* fault_addr, void* ctx) {
-    const u64 page = reinterpret_cast<u64>(fault_addr) & ~static_cast<u64>(0xFFF);
-
-    {
-        std::lock_guard<std::mutex> lock(s_guard_mutex);
-        auto it = s_guard_pages.find(page);
-        if (it == s_guard_pages.end()) return ErrorCode::UnsupportedOperation;
-        u32 prot = it->second;
-
-        int host_prot = PROT_READ;
-        if (prot & PAGE_READWRITE)  host_prot |= PROT_WRITE;
-        if (prot & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
-            host_prot |= PROT_EXEC;
-
-        if (mprotect(reinterpret_cast<void*>(page), 0x1000, host_prot) != 0)
-            return ErrorCode::UnsupportedOperation;
-    }
-
-    // Restart the faulting instruction with the trap flag set so we can restore
-    // the guard after exactly one instruction executes.
-    auto* uc = static_cast<ucontext_t*>(ctx);
-    uc->uc_mcontext.gregs[REG_EFL] |= 0x100; // set TF
-
-    // Restore pass: after the single step, a SIGTRAP will arrive; we handle it in
-    // the same handler by detecting pending guard pages for this thread.
-    // Simpler and robust: mark page for restore-on-next-fault instead of
-    // single-stepping restore. The page stays permissive for process lifetime —
-    // correct for games that never re-protect memory.
-    return {};
-}
-
-void PeLoader::fault_handler(int sig, siginfo_t* info, void* ctx) {
-    if (sig != SIGSEGV || !info || !info->si_addr) return;
-    auto* loader = static_cast<PeLoader*>(s_active_loader);
-    if (!loader) return; // not our fault — let default action kill us
-
-    // Only service faults that hit guard pages we manage
-    {
-        std::lock_guard<std::mutex> lock(s_guard_mutex);
-        u64 page = reinterpret_cast<u64>(info->si_addr) & ~static_cast<u64>(0xFFF);
-        if (s_guard_pages.find(page) == s_guard_pages.end()) return;
-    }
-
-    auto res = loader->handle_guard_page_fault(static_cast<u8*>(info->si_addr), ctx);
-    if (!res) {
-        log::error("PE_LOADER", "Guard-page fault at 0x{:X} could not be serviced",
-                   reinterpret_cast<u64>(info->si_addr));
-    }
-}
-
-void PeLoader::install_fault_handler() {
-    struct sigaction sa{};
-    sa.sa_sigaction = &PeLoader::fault_handler;
-    sa.sa_flags = SA_SIGINFO | SA_RESTART;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGSEGV, &sa, nullptr);
-
-    std::lock_guard<std::mutex> lock(s_guard_mutex);
-    s_guard_pages = guard_pages_;
-}
-
-// -------------------------------------------------------------
-// Per-section protections
+// Per-section protections (direct mapping, no SIGSEGV COW tricks)
 // -------------------------------------------------------------
 Result<> PeLoader::apply_section_protections(void* allocated_base, u64 size_of_image,
                                              const std::vector<ImageSectionHeader>& sections) {
     u8* base = reinterpret_cast<u8*>(allocated_base);
     const long page_size = sysconf(_SC_PAGESIZE);
     const u64 ps = static_cast<u64>(page_size);
+    // Pages we turned RW may share a page with an RX section (section_alignment
+    // is page-granular in practice, so this is uncommon); union via a second pass
+    // would be ideal, but we favor correctness-over-strictness: give writable
+    // sections RW and executable sections RX, accepting any overlap as RWX.
 
     for (const auto& sec : sections) {
         u32 chars = sec.characteristics;
-        int prot = 0;
+        int prot = PROT_READ; // headers cover read
         if (chars & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
-        if (chars & IMAGE_SCN_MEM_READ)    prot |= PROT_READ;
         if (chars & IMAGE_SCN_MEM_WRITE)   prot |= PROT_WRITE;
-        if (prot == 0) prot = PROT_READ; // data sections without explicit READ
 
         u64 start = reinterpret_cast<u64>(base) + sec.virtual_address;
         u64 end   = start + (sec.misc.virtual_size ? sec.misc.virtual_size : sec.size_of_raw_data);
@@ -393,36 +322,13 @@ Result<> PeLoader::apply_section_protections(void* allocated_base, u64 size_of_i
             p_end = reinterpret_cast<u64>(base) + size_of_image;
         if (p_end <= p_start) continue;
 
-        // Sections sharing a page with a more permissive section get the union;
-        // simple model: apply max prot. Track WC (write-copy) sections as guards.
-        bool writecopy = (prot & PROT_WRITE) && !(chars & 0x04000000); // !IMAGE_SCN_MEM_DISCARDABLE
-        if (prot & PROT_WRITE) {
-            // Keep writable pages RWX-free: RW is enough; EXEC+WRITE stays (JIT zones)
-            if (!(chars & IMAGE_SCN_MEM_EXECUTE)) prot = PROT_READ | PROT_WRITE;
-        }
-
-        if (writecopy) {
-            // Emulate COW lazily: start read-only, promote on fault
-            std::lock_guard<std::mutex> lock(s_guard_mutex);
-            for (u64 pg = p_start; pg < p_end; pg += ps) {
-                guard_pages_[pg] = PAGE_READWRITE;
-                s_guard_pages[pg] = PAGE_READWRITE;
-            }
-            if (mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, PROT_READ) != 0) {
-                log::warn("PE_LOADER", "mprotect RO for WC section failed — leaving RW");
-                mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, PROT_READ | PROT_WRITE);
-            }
-        } else {
-            if (mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, prot) != 0) {
-                log::warn("PE_LOADER", "mprotect(0x{:X}, {}) failed — skipping section protection",
-                          p_start, p_end - p_start);
-            }
+        if (mprotect(reinterpret_cast<void*>(p_start), p_end - p_start, prot) != 0) {
+            log::warn("PE_LOADER", "mprotect(0x{:X}, {:#x}) = {} failed — skipping",
+                      p_start, static_cast<unsigned>(p_end - p_start), prot);
         }
     }
 
-    install_fault_handler();
-    log::info("PE_LOADER", "Per-section protections applied ({} sections, {} guard pages)",
-              sections.size(), guard_pages_.size());
+    log::info("PE_LOADER", "Per-section protections applied ({} sections)", sections.size());
     return {};
 }
 
@@ -610,8 +516,6 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
         return env_res.error();
     }
 
-    s_active_loader = this;
-
     if (!image.is_64bit) {
 #if defined(__x86_64__) || defined(_M_X64)
         // -------------------------------------------------------------
@@ -639,7 +543,6 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
             stack32 = mmap(nullptr, stack_size, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
         if (stack32 == MAP_FAILED) {
-            s_active_loader = nullptr;
             return ErrorCode::MemoryMappingFailed;
         }
 
@@ -703,10 +606,8 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
         // Reaching here means the far-return back-channel fired (stub returned
         // via far return). Unwind handled above.
         munmap(stack32, stack_size);
-        s_active_loader = nullptr;
         return 0;
 #else
-        s_active_loader = nullptr;
         return ErrorCode::UnsupportedOperation;
 #endif
     }
@@ -724,23 +625,11 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
         log::warn("PE_LOADER", "Caught unhandled exception during in-process PE execution");
     }
 
-    s_active_loader = nullptr;
     return exit_code;
 }
 
 void PeLoader::unload_image(LoadedPeImage& image) {
     if (image.image_base && image.size_of_image > 0) {
-        // Drop guard pages before munmap so late faults don't touch freed VMAs
-        {
-            std::lock_guard<std::mutex> lock(s_guard_mutex);
-            u64 lo = reinterpret_cast<u64>(image.image_base);
-            u64 hi = lo + image.size_of_image;
-            for (auto it = s_guard_pages.begin(); it != s_guard_pages.end();) {
-                if (it->first >= lo && it->first < hi) it = s_guard_pages.erase(it);
-                else ++it;
-            }
-            guard_pages_.clear();
-        }
         munmap(image.image_base, image.size_of_image);
         image.image_base = nullptr;
         image.size_of_image = 0;
