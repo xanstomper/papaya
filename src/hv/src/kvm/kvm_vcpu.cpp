@@ -1,5 +1,6 @@
 #include "papaya/hv/kvm/kvm_vcpu.hpp"
 #include "papaya/hv/kvm/kvm_hypervisor.hpp"
+#include "papaya/hv/kvm/kvm_long_mode.hpp"
 #include "papaya/common/logger.hpp"
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -102,6 +103,10 @@ Result<> KvmVcpu::setup_initial_state(GuestPhysAddr entry_point, GuestPhysAddr s
     regs.rflags = 0x2; // Standard reserved bit
 
     return set_registers(regs);
+}
+
+Result<> KvmVcpu::setup_long_mode(GuestVirtAddr entry_point, GuestVirtAddr stack_top) {
+    return KvmLongMode::switch_vcpu_to_long_mode(vcpu_fd_, entry_point, stack_top);
 }
 
 Result<VcpuExitInfo> KvmVcpu::run_once() {

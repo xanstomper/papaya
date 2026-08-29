@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
     papaya::ConsoleTarget target = papaya::ConsoleTarget::XboxOne;
     std::string xvd_path;
     std::string boot_path;
+    std::string mount_vpath;
+    std::string mount_hpath;
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg = argv[i];
@@ -62,6 +64,9 @@ int main(int argc, char* argv[]) {
             xvd_path = argv[++i];
         } else if (arg == "--boot" && i + 1 < argc) {
             boot_path = argv[++i];
+        } else if (arg == "--mount" && i + 2 < argc) {
+            mount_vpath = argv[++i];
+            mount_hpath = argv[++i];
         } else if (arg == "--target" && i + 1 < argc) {
             std::string_view tgt = argv[++i];
             if (tgt == "seriess") target = papaya::ConsoleTarget::XboxSeriesS;
@@ -85,6 +90,9 @@ int main(int argc, char* argv[]) {
 
     // 1. Storage & VFS
     auto vfs = std::make_shared<papaya::storage::VirtualFileSystem>();
+    if (!mount_vpath.empty() && !mount_hpath.empty()) {
+        vfs->mount(mount_vpath, mount_hpath);
+    }
     if (!xvd_path.empty()) {
         auto xvd = std::make_unique<papaya::storage::XvdContainer>();
         if (xvd->open(xvd_path)) {
@@ -139,8 +147,12 @@ int main(int argc, char* argv[]) {
     papaya::log::info("MAIN", "All Papaya subsystems successfully initialized and ready.");
 
     if (!boot_path.empty()) {
-        papaya::log::info("MAIN", "Booting target title: {}", boot_path);
-        kernel->load_title_executable(boot_path);
+        papaya::log::info("MAIN", "Loading target title executable: {}", boot_path);
+        auto load_res = kernel->load_title_executable(boot_path, mem_map->get_ram_base(), mem_map->get_total_ram_size());
+        if (load_res) {
+            papaya::log::info("MAIN", "Title mapped at 0x{:X}, Entry Point: 0x{:X}, Imports: {}",
+                              load_res->loaded_base, load_res->entry_point, load_res->imports.size());
+        }
     }
 
     return 0;

@@ -16,5 +16,39 @@ target_link_libraries(test_gpu_pm4 PRIVATE
     papaya-gpu
 )
 
+add_executable(test_pe_loader
+    test_pe_loader.cpp
+)
+
+target_link_libraries(test_pe_loader PRIVATE
+    papaya-common
+    papaya-storage
+)
+
+add_executable(test_hle_thunk
+    test_hle_thunk.cpp
+)
+
+target_link_libraries(test_hle_thunk PRIVATE
+    papaya-common
+    papaya-storage
+    papaya-hle
+    papaya-hv
+)
+
+add_executable(test_long_mode_pe_boot
+    test_long_mode_pe_boot.cpp
+)
+
+target_link_libraries(test_long_mode_pe_boot PRIVATE
+    papaya-common
+    papaya-storage
+    papaya-hle
+    papaya-hv
+)
+
 add_test(NAME KvmBootTest COMMAND test_kvm_boot)
 add_test(NAME GpuPm4Test COMMAND test_gpu_pm4)
+add_test(NAME PeLoaderTest COMMAND test_pe_loader)
+add_test(NAME HleThunkTest COMMAND test_hle_thunk)
+add_test(NAME LongModePeBootTest COMMAND test_long_mode_pe_boot)

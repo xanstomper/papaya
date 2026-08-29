@@ -16,12 +16,13 @@ public:
     Result<> set_registers(const CpuRegisters& regs) override;
     Result<CpuRegisters> get_registers() const override;
     Result<> setup_initial_state(GuestPhysAddr entry_point, GuestPhysAddr stack_top) override;
+    Result<> setup_long_mode(GuestVirtAddr entry_point, GuestVirtAddr stack_top) override;
     Result<VcpuExitInfo> run_once() override;
     void request_interrupt(u8 vector) override;
 
-private:
-    Result<> setup_long_mode_segments();
+    int get_vcpu_fd() const { return vcpu_fd_; }
 
+private:
     KvmHypervisor& hv_;
     u32 vcpu_id_{0};
     int vcpu_fd_{-1};

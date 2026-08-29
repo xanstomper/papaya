@@ -43,6 +43,7 @@ public:
     virtual Result<> set_registers(const CpuRegisters& regs) = 0;
     virtual Result<CpuRegisters> get_registers() const = 0;
     virtual Result<> setup_initial_state(GuestPhysAddr entry_point, GuestPhysAddr stack_top) = 0;
+    virtual Result<> setup_long_mode(GuestVirtAddr entry_point, GuestVirtAddr stack_top) = 0;
     virtual Result<VcpuExitInfo> run_once() = 0;
     virtual void request_interrupt(u8 vector) = 0;
 };

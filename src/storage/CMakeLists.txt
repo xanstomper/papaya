@@ -1,6 +1,7 @@
 add_library(papaya-storage STATIC
     src/xvd.cpp
     src/vfs.cpp
+    src/pe_loader.cpp
 )
 
 target_include_directories(papaya-storage PUBLIC
