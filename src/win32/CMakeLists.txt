@@ -10,6 +10,7 @@ target_include_directories(papaya-win32 PUBLIC
 target_link_libraries(papaya-win32 PUBLIC
     papaya-common
     papaya-steam
+    papaya-input
 )
 
 target_compile_features(papaya-win32 PUBLIC cxx_std_23)

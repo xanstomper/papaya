@@ -134,6 +134,8 @@ add_executable(test_pe_loader
 target_link_libraries(test_pe_loader PRIVATE
     papaya-common
     papaya-win32
+    papaya-steam
+    papaya-input
 )
 
 add_test(NAME SteamStubTest COMMAND test_steam_stub)

@@ -884,19 +884,19 @@ build src/rom/rebuild_cache: phony src/rom/CMakeFiles/rebuild_cache.util
 #############################################
 # Order-only phony target for papaya-win32
 
-build cmake_object_order_depends_target_papaya-win32: phony || cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-steam
+build cmake_object_order_depends_target_papaya-win32: phony || cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-input cmake_object_order_depends_target_papaya-steam
 
 build src/win32/CMakeFiles/papaya-win32.dir/src/win32_api_hle.cpp.o: CXX_COMPILER__papaya-win32_unscanned_Release /home/jewboy420/papaya/src/win32/src/win32_api_hle.cpp || cmake_object_order_depends_target_papaya-win32
   DEP_FILE = src/win32/CMakeFiles/papaya-win32.dir/src/win32_api_hle.cpp.o.d
   FLAGS = -O3 -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wno-unused-parameter -pthread -O3
-  INCLUDES = -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/steam/include
+  INCLUDES = -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/steam/include -I/home/jewboy420/papaya/src/input/include
   OBJECT_DIR = src/win32/CMakeFiles/papaya-win32.dir
   OBJECT_FILE_DIR = src/win32/CMakeFiles/papaya-win32.dir/src
 
 build src/win32/CMakeFiles/papaya-win32.dir/src/pe_loader.cpp.o: CXX_COMPILER__papaya-win32_unscanned_Release /home/jewboy420/papaya/src/win32/src/pe_loader.cpp || cmake_object_order_depends_target_papaya-win32
   DEP_FILE = src/win32/CMakeFiles/papaya-win32.dir/src/pe_loader.cpp.o.d
   FLAGS = -O3 -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wno-unused-parameter -pthread -O3
-  INCLUDES = -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/steam/include
+  INCLUDES = -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/steam/include -I/home/jewboy420/papaya/src/input/include
   OBJECT_DIR = src/win32/CMakeFiles/papaya-win32.dir
   OBJECT_FILE_DIR = src/win32/CMakeFiles/papaya-win32.dir/src
 
@@ -908,7 +908,7 @@ build src/win32/CMakeFiles/papaya-win32.dir/src/pe_loader.cpp.o: CXX_COMPILER__p
 #############################################
 # Link the static library src/win32/libpapaya-win32.a
 
-build src/win32/libpapaya-win32.a: CXX_STATIC_LIBRARY_LINKER__papaya-win32_Release src/win32/CMakeFiles/papaya-win32.dir/src/win32_api_hle.cpp.o src/win32/CMakeFiles/papaya-win32.dir/src/pe_loader.cpp.o || src/common/libpapaya-common.a src/steam/libpapaya-steam.a
+build src/win32/libpapaya-win32.a: CXX_STATIC_LIBRARY_LINKER__papaya-win32_Release src/win32/CMakeFiles/papaya-win32.dir/src/win32_api_hle.cpp.o src/win32/CMakeFiles/papaya-win32.dir/src/pe_loader.cpp.o || src/common/libpapaya-common.a src/input/libpapaya-input.a src/steam/libpapaya-steam.a
   LANGUAGE_COMPILE_FLAGS = -O3 -DNDEBUG
   OBJECT_DIR = src/win32/CMakeFiles/papaya-win32.dir
   POST_BUILD = :
@@ -1052,9 +1052,9 @@ build src/app/CMakeFiles/papaya.dir/main.cpp.o: CXX_COMPILER__papaya_unscanned_R
 #############################################
 # Link the executable src/app/papaya
 
-build src/app/papaya: CXX_EXECUTABLE_LINKER__papaya_Release src/app/CMakeFiles/papaya.dir/main.cpp.o | src/common/libpapaya-common.a src/steam/libpapaya-steam.a src/cpu/libpapaya-cpu.a src/gpu/libpapaya-gpu.a src/profile/libpapaya-profile.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build src/app/papaya: CXX_EXECUTABLE_LINKER__papaya_Release src/app/CMakeFiles/papaya.dir/main.cpp.o | src/common/libpapaya-common.a src/steam/libpapaya-steam.a src/cpu/libpapaya-cpu.a src/gpu/libpapaya-gpu.a src/profile/libpapaya-profile.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/steam/libpapaya-steam.a  src/cpu/libpapaya-cpu.a  src/gpu/libpapaya-gpu.a  src/profile/libpapaya-profile.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/steam/libpapaya-steam.a  src/cpu/libpapaya-cpu.a  src/gpu/libpapaya-gpu.a  src/profile/libpapaya-profile.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = src/app/CMakeFiles/papaya.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1455,9 +1455,9 @@ build tests/CMakeFiles/test_full_runtime_stack.dir/test_full_runtime_stack.cpp.o
 #############################################
 # Link the executable tests/test_full_runtime_stack
 
-build tests/test_full_runtime_stack: CXX_EXECUTABLE_LINKER__test_full_runtime_stack_Release tests/CMakeFiles/test_full_runtime_stack.dir/test_full_runtime_stack.cpp.o | src/common/libpapaya-common.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_full_runtime_stack: CXX_EXECUTABLE_LINKER__test_full_runtime_stack_Release tests/CMakeFiles/test_full_runtime_stack.dir/test_full_runtime_stack.cpp.o | src/common/libpapaya-common.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_full_runtime_stack.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1488,9 +1488,9 @@ build tests/CMakeFiles/test_rom_loader.dir/test_rom_loader.cpp.o: CXX_COMPILER__
 #############################################
 # Link the executable tests/test_rom_loader
 
-build tests/test_rom_loader: CXX_EXECUTABLE_LINKER__test_rom_loader_Release tests/CMakeFiles/test_rom_loader.dir/test_rom_loader.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_rom_loader: CXX_EXECUTABLE_LINKER__test_rom_loader_Release tests/CMakeFiles/test_rom_loader.dir/test_rom_loader.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_rom_loader.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1521,9 +1521,9 @@ build tests/CMakeFiles/test_steam_rom_bridge.dir/test_steam_rom_bridge.cpp.o: CX
 #############################################
 # Link the executable tests/test_steam_rom_bridge
 
-build tests/test_steam_rom_bridge: CXX_EXECUTABLE_LINKER__test_steam_rom_bridge_Release tests/CMakeFiles/test_steam_rom_bridge.dir/test_steam_rom_bridge.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_steam_rom_bridge: CXX_EXECUTABLE_LINKER__test_steam_rom_bridge_Release tests/CMakeFiles/test_steam_rom_bridge.dir/test_steam_rom_bridge.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_steam_rom_bridge.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1554,9 +1554,9 @@ build tests/CMakeFiles/test_android_storage_bridge.dir/test_android_storage_brid
 #############################################
 # Link the executable tests/test_android_storage_bridge
 
-build tests/test_android_storage_bridge: CXX_EXECUTABLE_LINKER__test_android_storage_bridge_Release tests/CMakeFiles/test_android_storage_bridge.dir/test_android_storage_bridge.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_android_storage_bridge: CXX_EXECUTABLE_LINKER__test_android_storage_bridge_Release tests/CMakeFiles/test_android_storage_bridge.dir/test_android_storage_bridge.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_android_storage_bridge.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1587,9 +1587,9 @@ build tests/CMakeFiles/test_rom_game_loop.dir/test_rom_game_loop.cpp.o: CXX_COMP
 #############################################
 # Link the executable tests/test_rom_game_loop
 
-build tests/test_rom_game_loop: CXX_EXECUTABLE_LINKER__test_rom_game_loop_Release tests/CMakeFiles/test_rom_game_loop.dir/test_rom_game_loop.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_rom_game_loop: CXX_EXECUTABLE_LINKER__test_rom_game_loop_Release tests/CMakeFiles/test_rom_game_loop.dir/test_rom_game_loop.cpp.o | src/common/libpapaya-common.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/input/libpapaya-input.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/input/libpapaya-input.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_rom_game_loop.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1620,9 +1620,9 @@ build tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o: CXX_COMPIL
 #############################################
 # Link the executable tests/test_orchestrator
 
-build tests/test_orchestrator: CXX_EXECUTABLE_LINKER__test_orchestrator_Release tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o | src/common/libpapaya-common.a src/orchestrator/libpapaya-orchestrator.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/input/libpapaya-input.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/orchestrator/libpapaya-orchestrator.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_orchestrator: CXX_EXECUTABLE_LINKER__test_orchestrator_Release tests/CMakeFiles/test_orchestrator.dir/test_orchestrator.cpp.o | src/common/libpapaya-common.a src/orchestrator/libpapaya-orchestrator.a src/rom/libpapaya-rom.a src/frontend/libpapaya-frontend.a src/cpu/libpapaya-cpu.a src/profile/libpapaya-profile.a src/gpu/libpapaya-gpu.a src/kernel/libpapaya-kernel.a src/audio/libpapaya-audio.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/audio/libpapaya-audio.a src/common/libpapaya-common.a src/cpu/libpapaya-cpu.a src/frontend/libpapaya-frontend.a src/gpu/libpapaya-gpu.a src/input/libpapaya-input.a src/kernel/libpapaya-kernel.a src/orchestrator/libpapaya-orchestrator.a src/profile/libpapaya-profile.a src/rom/libpapaya-rom.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/orchestrator/libpapaya-orchestrator.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/input/libpapaya-input.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/orchestrator/libpapaya-orchestrator.a  src/rom/libpapaya-rom.a  src/frontend/libpapaya-frontend.a  src/cpu/libpapaya-cpu.a  src/profile/libpapaya-profile.a  src/gpu/libpapaya-gpu.a  src/kernel/libpapaya-kernel.a  src/audio/libpapaya-audio.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_orchestrator.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1636,12 +1636,12 @@ build tests/test_orchestrator: CXX_EXECUTABLE_LINKER__test_orchestrator_Release 
 #############################################
 # Order-only phony target for test_pe_loader
 
-build cmake_object_order_depends_target_test_pe_loader: phony || cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-steam cmake_object_order_depends_target_papaya-win32
+build cmake_object_order_depends_target_test_pe_loader: phony || cmake_object_order_depends_target_papaya-common cmake_object_order_depends_target_papaya-input cmake_object_order_depends_target_papaya-steam cmake_object_order_depends_target_papaya-win32
 
 build tests/CMakeFiles/test_pe_loader.dir/test_pe_loader.cpp.o: CXX_COMPILER__test_pe_loader_unscanned_Release /home/jewboy420/papaya/tests/test_pe_loader.cpp || cmake_object_order_depends_target_test_pe_loader
   DEP_FILE = tests/CMakeFiles/test_pe_loader.dir/test_pe_loader.cpp.o.d
   FLAGS = -O3 -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wno-unused-parameter -pthread -O3
-  INCLUDES = -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/steam/include
+  INCLUDES = -I/home/jewboy420/papaya/src/common/include -I/home/jewboy420/papaya/src/win32/include -I/home/jewboy420/papaya/src/steam/include -I/home/jewboy420/papaya/src/input/include
   OBJECT_DIR = tests/CMakeFiles/test_pe_loader.dir
   OBJECT_FILE_DIR = tests/CMakeFiles/test_pe_loader.dir
 
@@ -1653,9 +1653,9 @@ build tests/CMakeFiles/test_pe_loader.dir/test_pe_loader.cpp.o: CXX_COMPILER__te
 #############################################
 # Link the executable tests/test_pe_loader
 
-build tests/test_pe_loader: CXX_EXECUTABLE_LINKER__test_pe_loader_Release tests/CMakeFiles/test_pe_loader.dir/test_pe_loader.cpp.o | src/common/libpapaya-common.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/common/libpapaya-common.a || src/common/libpapaya-common.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
+build tests/test_pe_loader: CXX_EXECUTABLE_LINKER__test_pe_loader_Release tests/CMakeFiles/test_pe_loader.dir/test_pe_loader.cpp.o | src/common/libpapaya-common.a src/win32/libpapaya-win32.a src/steam/libpapaya-steam.a src/input/libpapaya-input.a src/common/libpapaya-common.a || src/common/libpapaya-common.a src/input/libpapaya-input.a src/steam/libpapaya-steam.a src/win32/libpapaya-win32.a
   FLAGS = -O3 -DNDEBUG
-  LINK_LIBRARIES = src/common/libpapaya-common.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/common/libpapaya-common.a
+  LINK_LIBRARIES = src/common/libpapaya-common.a  src/win32/libpapaya-win32.a  src/steam/libpapaya-steam.a  src/input/libpapaya-input.a  src/common/libpapaya-common.a
   OBJECT_DIR = tests/CMakeFiles/test_pe_loader.dir
   POST_BUILD = :
   PRE_LINK = :

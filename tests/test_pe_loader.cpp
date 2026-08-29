@@ -58,7 +58,12 @@ int main() {
     pe_buf[512] = 0xC3;
 
     // 2. Load PE with PeLoader
-    auto hle = std::make_shared<Win32ApiHle>();
+    auto steam_stub = std::make_shared<steam::SteamApiStub>();
+    steam_stub->initialize();
+    auto input_mgr = std::make_shared<input::VirtualXInputManager>();
+    input_mgr->initialize();
+
+    auto hle = std::make_shared<Win32ApiHle>(steam_stub, input_mgr);
     PeLoader loader(hle);
 
     auto load_res = loader.load_from_memory(pe_buf);
@@ -74,15 +79,40 @@ int main() {
     u8* ep = reinterpret_cast<u8*>(img.entry_point);
     TEST_CHECK(*ep == 0xC3);
 
-    // 3. Test HLE Dispatch Table
-    void* valloc_fn = hle->resolve_symbol("KERNEL32.DLL", "VirtualAlloc");
-    TEST_CHECK(valloc_fn != nullptr);
+    // 3. Test Full HLE Syscall Dispatch Table
+    TEST_CHECK(hle->resolve_symbol("KERNEL32.DLL", "VirtualAlloc") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("KERNEL32.DLL", "CreateThread") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("KERNEL32.DLL", "TlsAlloc") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("KERNEL32.DLL", "CreateFileA") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("KERNEL32.DLL", "InitializeCriticalSection") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("USER32.DLL", "GetSystemMetrics") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("XINPUT1_4.DLL", "XInputGetState") != nullptr);
+    TEST_CHECK(hle->resolve_symbol("STEAM_API64.DLL", "SteamAPI_Init") != nullptr);
 
-    void* sleep_fn = hle->resolve_symbol("KERNEL32.DLL", "Sleep");
-    TEST_CHECK(sleep_fn != nullptr);
+    // 4. Test Critical Section
+    Win32CriticalSection cs{};
+    Win32ApiHle::hle_init_critical_section(&cs);
+    Win32ApiHle::hle_enter_critical_section(&cs);
+    Win32ApiHle::hle_leave_critical_section(&cs);
+    Win32ApiHle::hle_delete_critical_section(&cs);
 
+    // 5. Test Events
+    HANDLE ev = Win32ApiHle::hle_create_event_a(nullptr, FALSE_VAL, FALSE_VAL, nullptr);
+    TEST_CHECK(ev != nullptr);
+    TEST_CHECK(Win32ApiHle::hle_set_event(ev) == TRUE_VAL);
+    TEST_CHECK(Win32ApiHle::hle_wait_for_single_object(ev, 100) == 0); // WAIT_OBJECT_0
+    Win32ApiHle::hle_close_handle(ev);
+
+    // 6. Test TLS
+    u32 tls_idx = Win32ApiHle::hle_tls_alloc();
+    TEST_CHECK(tls_idx != 0xFFFFFFFF);
+    TEST_CHECK(Win32ApiHle::hle_tls_set_value(tls_idx, reinterpret_cast<void*>(0x12345678)) == TRUE_VAL);
+    TEST_CHECK(Win32ApiHle::hle_tls_get_value(tls_idx) == reinterpret_cast<void*>(0x12345678));
+    Win32ApiHle::hle_tls_free(tls_idx);
+
+    // 7. Test QPC
     s64 qpc = 0;
-    TEST_CHECK(Win32ApiHle::hle_query_performance_counter(&qpc) == 1);
+    TEST_CHECK(Win32ApiHle::hle_query_performance_counter(&qpc) == TRUE_VAL);
     TEST_CHECK(qpc > 0);
 
     loader.unload_image(img);
