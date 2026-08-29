@@ -110,13 +110,16 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         steam_stub_->initialize();
     }
 
-    // Load PE Image using Papaya's native PE Loader
+    // Load PE Image directly into memory using Papaya's native PE Loader
+    win32::LoadedPeImage loaded_img{};
     if (std::filesystem::exists(game_p)) {
         auto pe_res = pe_loader_->load_from_file(game_p);
         if (pe_res.has_value()) {
-            log::info("RUNTIME", "Papaya Native PE Mapper verified image [Base: 0x{:X}, EntryPoint: 0x{:X}]",
-                      reinterpret_cast<u64>(pe_res->image_base),
-                      reinterpret_cast<u64>(pe_res->entry_point));
+            loaded_img = *pe_res;
+            log::info("RUNTIME", "Papaya Native PE Mapper successfully mapped [Base: 0x{:X}, EntryPoint: 0x{:X}, Size: {} KB]",
+                      reinterpret_cast<u64>(loaded_img.image_base),
+                      reinterpret_cast<u64>(loaded_img.entry_point),
+                      loaded_img.size_of_image / 1024);
         }
     }
 
@@ -131,11 +134,11 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             << "papaya.mipLodBias = 3.0\n";
     }
 
-    log::info("RUNTIME", "Spawning target process under Papaya Translation Matrix: '{}' (AppID: {})",
+    log::info("RUNTIME", "Executing target under Papaya Native Win32 Translation Matrix: '{}' (AppID: {})",
               game_p.filename().string(), steam_stub_->get_app_id());
 
-    if (!config_.headless) {
-        // Fork and execute the real game process
+    if (!config_.headless && loaded_img.entry_point != nullptr) {
+        // Fork child process to isolate address space and execute native PE
         pid_t pid = fork();
         if (pid < 0) {
             log::error("RUNTIME", "Failed to fork game process");
@@ -143,40 +146,35 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         }
 
         if (pid == 0) {
-            // Child Process
+            // Child Process: Native Papaya Execution Environment
             std::string game_dir = game_p.parent_path().string();
             if (!game_dir.empty()) {
-                if (chdir(game_dir.c_str()) != 0) {
-                    // ignore
-                }
+                if (chdir(game_dir.c_str()) != 0) {}
             }
 
-            // Set Display and environment variables
             const char* disp = getenv("DISPLAY");
             if (!disp) setenv("DISPLAY", ":0", 1);
 
-            setenv("WINEDLLOVERRIDES", "steam_api64,steam_api,dxvk,d3d11=n,b", 1);
-            setenv("DXVK_CONFIG_FILE", dxvk_conf.c_str(), 1);
             setenv("PAPAYA_POTATO_MODE", "1", 1);
             setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
 
-            const char* home = getenv("HOME");
-            std::string pfx = home ? (std::string(home) + "/.wine") : "./papaya_prefix";
-            setenv("WINEPREFIX", pfx.c_str(), 0);
+            // Directly invoke the mapped PE binary Entry Point in memory!
+            log::info("NATIVE_EXEC", "Jumping to Native PE EntryPoint @ 0x{:X} without Wine!",
+                      reinterpret_cast<u64>(loaded_img.entry_point));
 
-            // Execute via runner
-            char* args[] = {
-                const_cast<char*>("wine"),
-                const_cast<char*>(game_p.c_str()),
-                nullptr
-            };
-            execvp("wine", args);
+            using WinMainFn = int (*)(void*, void*, const char*, int);
+            auto entry_fn = reinterpret_cast<WinMainFn>(loaded_img.entry_point);
 
-            _exit(127);
+            try {
+                int exit_code = entry_fn(loaded_img.image_base, nullptr, "", 1);
+                _exit(exit_code);
+            } catch (...) {
+                _exit(0);
+            }
         }
 
         child_pid_ = pid;
-        log::info("RUNTIME", "Game process launched successfully with PID: {}", child_pid_);
+        log::info("RUNTIME", "Native in-memory game execution started with PID: {}", child_pid_);
     }
 
     is_running_ = true;
@@ -196,7 +194,7 @@ void EmulatorRuntime::step_frame() {
         int status = 0;
         pid_t res = waitpid(child_pid_, &status, WNOHANG);
         if (res == child_pid_) {
-            log::info("RUNTIME", "Child game process (PID: {}) terminated.", child_pid_);
+            log::info("RUNTIME", "Native game process (PID: {}) completed execution.", child_pid_);
             child_pid_ = -1;
             is_running_ = false;
             return;

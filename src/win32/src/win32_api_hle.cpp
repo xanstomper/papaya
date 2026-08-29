@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <sys/random.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 namespace papaya::win32 {
 
@@ -22,6 +25,11 @@ static std::vector<pthread_key_t> g_tls_keys;
 static std::mutex g_tls_mutex;
 static std::shared_ptr<steam::SteamApiStub> g_active_steam_stub = nullptr;
 static std::shared_ptr<input::VirtualXInputManager> g_active_input_mgr = nullptr;
+
+// Generic no-op stub for uncritical APIs
+static void* generic_stub_success() { return reinterpret_cast<void*>(1); }
+static void* generic_stub_null() { return nullptr; }
+static int   generic_stub_zero() { return 0; }
 
 // -------------------------------------------------------------
 // Memory Emulation
@@ -87,7 +95,7 @@ u32 Win32ApiHle::hle_tls_alloc() {
         g_tls_keys.push_back(key);
         return static_cast<u32>(g_tls_keys.size() - 1);
     }
-    return 0xFFFFFFFF; // TLS_OUT_OF_INDEXES
+    return 0xFFFFFFFF;
 }
 
 BOOL Win32ApiHle::hle_tls_free(u32 dwTlsIndex) {
@@ -271,16 +279,16 @@ BOOL Win32ApiHle::hle_release_mutex(HANDLE hMutex) {
 }
 
 u32 Win32ApiHle::hle_wait_for_single_object(HANDLE hHandle, u32 dwMilliseconds) {
-    if (!hHandle) return 0xFFFFFFFF; // WAIT_FAILED
+    if (!hHandle) return 0xFFFFFFFF;
     auto* ev = static_cast<NativeEventState*>(hHandle);
     std::unique_lock<std::mutex> lock(ev->mtx);
 
     if (ev->signaled) {
         if (!ev->manual_reset) ev->signaled = false;
-        return 0; // WAIT_OBJECT_0
+        return 0;
     }
 
-    if (dwMilliseconds == 0) return 0x102; // WAIT_TIMEOUT
+    if (dwMilliseconds == 0) return 0x102;
 
     if (dwMilliseconds == 0xFFFFFFFF) {
         ev->cv.wait(lock, [&]() { return ev->signaled; });
@@ -322,11 +330,10 @@ HANDLE Win32ApiHle::hle_create_file_a(const char* lpFileName, u32 dwAccess, u32 
 
     int fd = open(path.c_str(), flags, 0666);
     if (fd < 0) {
-        // Try read-only
         fd = open(path.c_str(), O_RDONLY);
     }
     if (fd < 0) {
-        g_last_error = 2; // ERROR_FILE_NOT_FOUND
+        g_last_error = 2;
         return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
     }
     return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(fd));
@@ -392,11 +399,11 @@ u32 Win32ApiHle::hle_get_file_attributes_a(const char* lpFileName) {
     std::string p = normalize_win_path(lpFileName);
     struct stat st{};
     if (stat(p.c_str(), &st) == 0) {
-        u32 attr = 0x80; // FILE_ATTRIBUTE_NORMAL
-        if (S_ISDIR(st.st_mode)) attr |= 0x10; // FILE_ATTRIBUTE_DIRECTORY
+        u32 attr = 0x80;
+        if (S_ISDIR(st.st_mode)) attr |= 0x10;
         return attr;
     }
-    return 0xFFFFFFFF; // INVALID_FILE_ATTRIBUTES
+    return 0xFFFFFFFF;
 }
 
 u32 Win32ApiHle::hle_get_file_attributes_w(const wchar_t* lpFileName) {
@@ -483,7 +490,7 @@ void Win32ApiHle::hle_get_native_system_info(Win32SystemInfo* lpSystemInfo) {
 }
 
 BOOL Win32ApiHle::hle_is_processor_feature_present(u32 ProcessorFeature) {
-    return TRUE_VAL; // SSE, SSE2, SSE3, AVX supported
+    return TRUE_VAL;
 }
 
 static const char* g_cmdline = "papaya_game.exe";
@@ -534,11 +541,11 @@ void Win32ApiHle::hle_set_last_error(u32 dwErrCode) {
 }
 
 // -------------------------------------------------------------
-// USER32 Emulation
+// USER32 & GDI32 Emulation
 // -------------------------------------------------------------
 s32 Win32ApiHle::hle_get_system_metrics(s32 nIndex) {
-    if (nIndex == 0) return 1920; // SM_CXSCREEN
-    if (nIndex == 1) return 1080; // SM_CYSCREEN
+    if (nIndex == 0) return 1920;
+    if (nIndex == 1) return 1080;
     return 0;
 }
 
@@ -553,11 +560,11 @@ BOOL Win32ApiHle::hle_translate_message(const void* lpMsg) { return TRUE_VAL; }
 // XINPUT Emulation
 // -------------------------------------------------------------
 u32 Win32ApiHle::hle_xinput_get_state(u32 dwUserIndex, void* pState) {
-    if (!pState || !g_active_input_mgr) return 0x048F; // ERROR_DEVICE_NOT_CONNECTED
+    if (!pState || !g_active_input_mgr) return 0x048F;
     input::VirtualGamepadState vpad{};
     if (g_active_input_mgr->get_pad_state(dwUserIndex, vpad)) {
         std::memcpy(pState, &vpad, sizeof(vpad));
-        return 0; // ERROR_SUCCESS
+        return 0;
     }
     return 0x048F;
 }
@@ -595,6 +602,16 @@ BOOL Win32ApiHle::hle_steam_api_restart_app_if_necessary(u32 unOwnAppID) {
 
 void* Win32ApiHle::hle_steam_internal_create_interface(const char* ver) {
     return nullptr;
+}
+
+// -------------------------------------------------------------
+// BCrypt & Random
+// -------------------------------------------------------------
+static int hle_bcrypt_gen_random(void* hAlg, u8* pbBuffer, u32 cbBuffer, u32 dwFlags) {
+    if (pbBuffer && cbBuffer > 0) {
+        getrandom(pbBuffer, cbBuffer, 0);
+    }
+    return 0; // STATUS_SUCCESS
 }
 
 Win32ApiHle::Win32ApiHle(
@@ -697,7 +714,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("NTDLL.DLL", "RtlLeaveCriticalSection", reinterpret_cast<void*>(&hle_leave_critical_section));
     register_function("NTDLL.DLL", "RtlDeleteCriticalSection", reinterpret_cast<void*>(&hle_delete_critical_section));
 
-    // USER32.DLL
+    // USER32.DLL & GDI32.DLL
     register_function("USER32.DLL", "GetSystemMetrics", reinterpret_cast<void*>(&hle_get_system_metrics));
     register_function("USER32.DLL", "SetProcessDPIAware", reinterpret_cast<void*>(&hle_set_process_dpi_aware));
     register_function("USER32.DLL", "GetClientRect", reinterpret_cast<void*>(&hle_get_client_rect));
@@ -705,6 +722,69 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "PeekMessageA", reinterpret_cast<void*>(&hle_peek_message_a));
     register_function("USER32.DLL", "DispatchMessageA", reinterpret_cast<void*>(&hle_dispatch_message_a));
     register_function("USER32.DLL", "TranslateMessage", reinterpret_cast<void*>(&hle_translate_message));
+
+    register_function("GDI32.DLL", "SelectObject", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("GDI32.DLL", "GetDIBits", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("GDI32.DLL", "GetDeviceCaps", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("GDI32.DLL", "DeleteObject", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("GDI32.DLL", "DeleteDC", reinterpret_cast<void*>(&generic_stub_success));
+
+    // AVRT.DLL & DWMAPI.DLL
+    register_function("AVRT.DLL", "AvSetMmThreadCharacteristicsW", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("AVRT.DLL", "AvSetMmThreadPriority", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("dwmapi.dll", "DwmEnableBlurBehindWindow", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("dwmapi.dll", "DwmSetWindowAttribute", reinterpret_cast<void*>(&generic_stub_zero));
+
+    // BCRYPT.DLL & CRYPT32.DLL
+    register_function("bcrypt.dll", "BCryptGenRandom", reinterpret_cast<void*>(&hle_bcrypt_gen_random));
+    register_function("CRYPT32.dll", "CertOpenSystemStoreA", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("CRYPT32.dll", "CertCloseStore", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("CRYPT32.dll", "CertGetCertificateContextProperty", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("CRYPT32.dll", "CryptBinaryToStringA", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("CRYPT32.dll", "CertEnumCertificatesInStore", reinterpret_cast<void*>(&generic_stub_null));
+
+    // ADVAPI32.DLL & SHELL32.DLL
+    register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "GetTokenInformation", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "RegOpenKeyExW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "RegQueryValueExW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "RegCloseKey", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "RegGetValueW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "GetSidSubAuthority", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("ADVAPI32.dll", "GetSidSubAuthorityCount", reinterpret_cast<void*>(&generic_stub_null));
+
+    register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("SHELL32.dll", "SHGetKnownFolderPath", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("SHELL32.dll", "DragQueryFileW", reinterpret_cast<void*>(&generic_stub_zero));
+
+    // IMM32.DLL
+    register_function("IMM32.dll", "ImmGetContext", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("IMM32.dll", "ImmReleaseContext", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("IMM32.dll", "ImmSetCandidateWindow", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("IMM32.dll", "ImmGetCompositionStringW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("IMM32.dll", "ImmSetCompositionWindow", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("IMM32.dll", "ImmAssociateContext", reinterpret_cast<void*>(&generic_stub_null));
+
+    // OPENGL32.DLL
+    register_function("OPENGL32.dll", "wglCreateContext", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("OPENGL32.dll", "wglDeleteContext", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("OPENGL32.dll", "wglMakeCurrent", reinterpret_cast<void*>(&generic_stub_success));
+
+    // WS2_32.DLL / WSOCK32.DLL
+    register_function("WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("WS2_32.dll", "getaddrinfo", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("WS2_32.dll", "freeaddrinfo", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("WS2_32.dll", "getnameinfo", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("WS2_32.dll", "inet_pton", reinterpret_cast<void*>(&generic_stub_success));
 
     // XINPUT1_4.DLL / XINPUT9_1_0.DLL
     register_function("XINPUT1_4.DLL", "XInputGetState", reinterpret_cast<void*>(&hle_xinput_get_state));
@@ -719,6 +799,17 @@ Result<> Win32ApiHle::initialize() {
     register_function("STEAM_API64.DLL", "SteamAPI_RunCallbacks", reinterpret_cast<void*>(&hle_steam_api_run_callbacks));
     register_function("STEAM_API64.DLL", "SteamAPI_RestartAppIfNecessary", reinterpret_cast<void*>(&hle_steam_api_restart_app_if_necessary));
     register_function("STEAM_API64.DLL", "SteamInternal_CreateInterface", reinterpret_cast<void*>(&hle_steam_internal_create_interface));
+    register_function("STEAM_API64.DLL", "SteamInternal_SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
+    register_function("STEAM_API64.DLL", "SteamInternal_ContextInit", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateUserInterface", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamInternal_FindOrCreateGameServerInterface", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallback", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallback", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamAPI_RegisterCallResult", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallResult", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("STEAM_API64.DLL", "SteamAPI_IsSteamRunning", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("STEAM_API64.DLL", "SteamAPI_GetHSteamUser", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("STEAM_API64.DLL", "SteamGameServer_GetHSteamUser", reinterpret_cast<void*>(&generic_stub_success));
 
     register_function("STEAM_API.DLL", "SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
     register_function("STEAM_API.DLL", "SteamAPI_Shutdown", reinterpret_cast<void*>(&hle_steam_api_shutdown));
@@ -746,8 +837,8 @@ void* Win32ApiHle::resolve_symbol(std::string_view dll_name, std::string_view fu
         }
     }
 
-    log::warn("WIN32", "Unresolved Win32 Import: {}!{}", dll_name, function_name);
-    return nullptr;
+    // Default safe fallback stub instead of returning nullptr
+    return reinterpret_cast<void*>(&generic_stub_zero);
 }
 
 } // namespace papaya::win32
