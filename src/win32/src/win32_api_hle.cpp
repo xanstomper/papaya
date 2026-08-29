@@ -1915,6 +1915,51 @@ s64 Win32ApiHle::hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) 
 s64 Win32ApiHle::hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
     return window_manager().send_message_a(hWnd, msg, wParam, lParam);
 }
+
+// ---- Window/class message helpers -------------------------------------------
+u32 Win32ApiHle::hle_register_window_message_a(const char* lpString) {
+    // Return a stable, unique-ish message id per name (>= 0xC000, the
+    // RegisterWindowMessage reserved range).
+    u32 h = 0xC000;
+    if (lpString) for (const char* p = lpString; *p; ++p) h = h * 31 + static_cast<u8>(*p);
+    return h & 0x3FFF;   // 0xC000..0xFFFF
+}
+void* Win32ApiHle::hle_load_icon_a(void* hInstance, const char* lpIconName) {
+    (void)hInstance; (void)lpIconName;
+    static u8 icon; return &icon;   // non-null HICON handle
+}
+void* Win32ApiHle::hle_load_cursor_a(void* hInstance, const char* lpCursorName) {
+    (void)hInstance; (void)lpCursorName;
+    static u8 cur; return &cur;   // non-null HCURSOR handle
+}
+s64 Win32ApiHle::hle_get_class_long_a(HWND hWnd, int nIndex) {
+    (void)hWnd; (void)nIndex;
+    return 0;
+}
+s64 Win32ApiHle::hle_set_class_long_a(HWND hWnd, int nIndex, s64 dwNewLong) {
+    (void)hWnd; (void)nIndex;
+    return dwNewLong;
+}
+s64 Win32ApiHle::hle_get_window_long_a(HWND hWnd, int nIndex) {
+    (void)hWnd; (void)nIndex;
+    return 0;
+}
+s64 Win32ApiHle::hle_set_window_long_a(HWND hWnd, int nIndex, s64 dwNewLong) {
+    (void)hWnd; (void)nIndex;
+    return dwNewLong;
+}
+BOOL Win32ApiHle::hle_system_parameters_info_a(u32 uiAction, u32 uiParam, void* pvParam, u32 fWinIni) {
+    (void)uiParam; (void)fWinIni;
+    // SPIF_* actions games probe: SPI_GETSCREENSAVEACTIVE(0x10), etc. Report sane values.
+    switch (uiAction) {
+        case 0x10:  // SPI_GETSCREENSAVEACTIVE
+            if (pvParam) *static_cast<u32*>(pvParam) = 0;
+            return TRUE_VAL;
+        default:
+            return FALSE_VAL;
+    }
+}
+
 // ---- GDI window DC ----
 void* Win32ApiHle::hle_get_dc(HWND hWnd) {
     // A window DC: back the window's framebuffer; present on ReleaseDC.
@@ -4494,6 +4539,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "PostQuitMessage", reinterpret_cast<void*>(&hle_post_quit_message));
     register_function("USER32.DLL", "PostMessageA", reinterpret_cast<void*>(&hle_post_message_a));
     register_function("USER32.DLL", "SendMessageA", reinterpret_cast<void*>(&hle_send_message_a));
+    register_function("USER32.DLL", "RegisterWindowMessageA", reinterpret_cast<void*>(&hle_register_window_message_a));
+    register_function("USER32.DLL", "LoadIconA", reinterpret_cast<void*>(&hle_load_icon_a));
+    register_function("USER32.DLL", "LoadCursorA", reinterpret_cast<void*>(&hle_load_cursor_a));
+    register_function("USER32.DLL", "GetClassLongA", reinterpret_cast<void*>(&hle_get_class_long_a));
+    register_function("USER32.DLL", "SetClassLongA", reinterpret_cast<void*>(&hle_set_class_long_a));
+    register_function("USER32.DLL", "GetWindowLongA", reinterpret_cast<void*>(&hle_get_window_long_a));
+    register_function("USER32.DLL", "SetWindowLongA", reinterpret_cast<void*>(&hle_set_window_long_a));
+    register_function("USER32.DLL", "GetWindowLongPtrA", reinterpret_cast<void*>(&hle_get_window_long_a));
+    register_function("USER32.DLL", "SetWindowLongPtrA", reinterpret_cast<void*>(&hle_set_window_long_a));
+    register_function("USER32.DLL", "SystemParametersInfoA", reinterpret_cast<void*>(&hle_system_parameters_info_a));
     register_function("USER32.DLL", "GetDC", reinterpret_cast<void*>(&hle_get_dc));
     register_function("USER32.DLL", "ReleaseDC", reinterpret_cast<void*>(&hle_release_dc));
     register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&hle_begin_paint));

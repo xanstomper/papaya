@@ -313,6 +313,14 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_post_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI BOOL  hle_post_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI s64   hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI u32   hle_register_window_message_a(const char* lpString);
+    static PAPAYA_MS_ABI void* hle_load_icon_a(void* hInstance, const char* lpIconName);
+    static PAPAYA_MS_ABI void* hle_load_cursor_a(void* hInstance, const char* lpCursorName);
+    static PAPAYA_MS_ABI s64   hle_get_class_long_a(HWND hWnd, int nIndex);
+    static PAPAYA_MS_ABI s64   hle_set_class_long_a(HWND hWnd, int nIndex, s64 dwNewLong);
+    static PAPAYA_MS_ABI s64   hle_get_window_long_a(HWND hWnd, int nIndex);
+    static PAPAYA_MS_ABI s64   hle_set_window_long_a(HWND hWnd, int nIndex, s64 dwNewLong);
+    static PAPAYA_MS_ABI BOOL  hle_system_parameters_info_a(u32 uiAction, u32 uiParam, void* pvParam, u32 fWinIni);
     static PAPAYA_MS_ABI s64   hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI void* hle_get_dc(HWND hWnd);
     static PAPAYA_MS_ABI int   hle_release_dc(HWND hWnd, void* hDC);
