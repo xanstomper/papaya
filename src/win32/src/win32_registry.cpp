@@ -161,6 +161,29 @@ s32 registry_delete_value(void* key, const char* name) {
     return static_cast<s32>(n->values.erase(std::string(name)) > 0 ? 0 : -2);
 }
 
+s32 registry_enum_value(void* key, u32 index, char* name_out, u32 name_cap, u32* type_out, void* data, u32* cb_inout) {
+    if (!key || !name_out) return -87;
+    auto* n = static_cast<RegNode*>(key);
+    auto it = n->values.begin();
+    for (u32 i = 0; i < index && it != n->values.end(); ++i) ++it;
+    if (it == n->values.end()) return -259;   // ERROR_NO_MORE_ITEMS
+    // Copy the value name (truncated to name_cap-1).
+    const std::string& vn = it->first;
+    u32 nlen = vn.size() + 1;
+    u32 copy = (nlen < name_cap) ? nlen : (name_cap ? name_cap - 1 : 0);
+    std::memcpy(name_out, vn.c_str(), copy);
+    if (name_cap) name_out[name_cap - 1] = 0;
+    if (type_out) *type_out = it->second.type;
+    // Copy the value data if a buffer+size is given.
+    if (data && cb_inout) {
+        u32 want = static_cast<u32>(it->second.data.size());
+        u32 give = (want < *cb_inout) ? want : *cb_inout;
+        std::memcpy(data, it->second.data.data(), give);
+        *cb_inout = want;
+    }
+    return 0;
+}
+
 void registry_seed() {
     // Seed a few common game-probed values so startup config reads succeed.
     // HKLM\Software\Microsoft\... and HKLM\Software\Valve\Steam are common.

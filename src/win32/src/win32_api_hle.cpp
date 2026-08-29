@@ -2727,6 +2727,31 @@ long Win32ApiHle::hle_reg_delete_value_a(u64 hKey, const char* lpValueName) {
     if (hKey < 0x100) return -87;
     return registry_delete_value(reinterpret_cast<void*>(hKey), lpValueName ? lpValueName : "");
 }
+long Win32ApiHle::hle_reg_enum_value_a(u64 hKey, u32 dwIndex, char* lpName, u32* lpcchName,
+                                       u32* lpType, u8* lpData, u32* lpcbData) {
+    if (hKey < 0x100 || !lpName || !lpcchName) return -87;
+    u32 cap = *lpcchName;
+    long rc = registry_enum_value(reinterpret_cast<void*>(hKey), dwIndex, lpName, cap, lpType, lpData, lpcbData);
+    if (rc == 0) {
+        // lpcchName receives the length of the name (excluding NUL).
+        *lpcchName = static_cast<u32>(std::strlen(lpName));
+    }
+    return rc;
+}
+long Win32ApiHle::hle_reg_enum_value_w(u64 hKey, u32 dwIndex, wchar_t* lpName, u32* lpcchName,
+                                       u32* lpType, u8* lpData, u32* lpcbData) {
+    if (hKey < 0x100 || !lpName || !lpcchName) return -87;
+    char tmp[512];
+    long rc = registry_enum_value(reinterpret_cast<void*>(hKey), dwIndex, tmp, sizeof(tmp), lpType, lpData, lpcbData);
+    if (rc == 0) {
+        // Convert the UTF-8 name to wide chars, bounded by the caller's buffer.
+        u32 cap = *lpcchName, i = 0, o = 0;
+        while (tmp[i] && o + 1 < cap) lpName[o++] = static_cast<wchar_t>(static_cast<u8>(tmp[i++]));
+        lpName[o] = 0;
+        *lpcchName = o;
+    }
+    return rc;
+}
 long Win32ApiHle::hle_reg_get_value_a(u64 hKey, const char* lpSubKey, const char* lpValue, u32 dwFlags, u32* pdwType, u8* pvData, u32* pcbData) {
     (void)dwFlags;
     u64 k2 = hKey;
@@ -4263,7 +4288,8 @@ Result<> Win32ApiHle::initialize() {
     // ADVAPI32.DLL & SHELL32.DLL
     register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&hle_open_process_token));
     register_function("ADVAPI32.dll", "GetTokenInformation", reinterpret_cast<void*>(&hle_get_token_information));
-    register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("ADVAPI32.dll", "RegEnumValueW", reinterpret_cast<void*>(&hle_reg_enum_value_w));
+    register_function("ADVAPI32.dll", "RegEnumValueA", reinterpret_cast<void*>(&hle_reg_enum_value_a));
     register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&hle_get_current_hw_profile_a));
     register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
     register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&generic_stub_success));

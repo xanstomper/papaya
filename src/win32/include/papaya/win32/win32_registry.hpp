@@ -24,6 +24,9 @@ s32 registry_set_value(void* key, const char* name, u32 type, const void* data, 
 s32 registry_query_value(void* key, const char* name, u32* type_out, void* data, u32* cb_inout);
 s32 registry_get_value(void* key, const char* name, u32* type_out, void* data, u32* cb_inout);
 s32 registry_delete_value(void* key, const char* name);
+// Enumerate the i-th value in a key. Returns 0 (ERROR_SUCCESS) and fills
+// name_out/type_out on success, or -259 (ERROR_NO_MORE_ITEMS) past the end.
+s32 registry_enum_value(void* key, u32 index, char* name_out, u32 name_cap, u32* type_out, void* data, u32* cb_inout);
 // Populate a few standard keys games commonly probe.
 void registry_seed();
 

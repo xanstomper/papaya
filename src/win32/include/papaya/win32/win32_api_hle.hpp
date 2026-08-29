@@ -490,6 +490,8 @@ public:
     static PAPAYA_MS_ABI long  hle_reg_query_value_ex_w(u64 hKey, const wchar_t* lpValueName, u32 reserved, u32* lpType, u8* lpData, u32* lpcbData);
     static PAPAYA_MS_ABI long  hle_reg_close_key(u64 hKey);
     static PAPAYA_MS_ABI long  hle_reg_delete_value_a(u64 hKey, const char* lpValueName);
+    static PAPAYA_MS_ABI long  hle_reg_enum_value_a(u64 hKey, u32 dwIndex, char* lpName, u32* lpcchName, u32* lpType, u8* lpData, u32* lpcbData);
+    static PAPAYA_MS_ABI long  hle_reg_enum_value_w(u64 hKey, u32 dwIndex, wchar_t* lpName, u32* lpcchName, u32* lpType, u8* lpData, u32* lpcbData);
     static PAPAYA_MS_ABI long  hle_reg_get_value_a(u64 hKey, const char* lpSubKey, const char* lpValue, u32 dwFlags, u32* pdwType, u8* pvData, u32* pcbData);
     static PAPAYA_MS_ABI void  hle_reg_disable_predefined_cache();
     static PAPAYA_MS_ABI u32   hle_set_error_mode(u32 uMode);
