@@ -219,18 +219,22 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             << "papaya.mipLodBias = 3.0\n";
     }
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        log::error("RUNTIME", "Failed to fork game process");
-        return ErrorCode::UnsupportedOperation;
-    }
-
-    if (pid == 0) {
-        // Child execution process
-        std::string game_dir = game_p.parent_path().string();
-        if (!game_dir.empty()) {
-            if (chdir(game_dir.c_str()) != 0) {}
+    // Interactive mode forks a real child process to run the game/ROM. Headless
+    // (benchmark/unit-test) runs execute in-process so the runtime's
+    // step_frame/frame_count stay deterministic and testable.
+    if (!config_.headless && std::filesystem::exists(game_p)) {
+        pid_t pid = fork();
+        if (pid < 0) {
+            log::error("RUNTIME", "Failed to fork game process");
+            return ErrorCode::UnsupportedOperation;
         }
+
+        if (pid == 0) {
+            // Child execution process
+            std::string game_dir = game_p.parent_path().string();
+            if (!game_dir.empty()) {
+                if (chdir(game_dir.c_str()) != 0) {}
+            }
 
         const char* disp = getenv("DISPLAY");
         if (!disp) setenv("DISPLAY", ":0", 1);
@@ -289,8 +293,9 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         _exit(127);
     }
 
-    child_pid_ = pid;
-    log::info("RUNTIME", "Game execution spawned successfully with PID: {}", child_pid_);
+        child_pid_ = pid;
+        log::info("RUNTIME", "Game execution spawned successfully with PID: {}", child_pid_);
+    }
 
     is_running_ = true;
     return {};
