@@ -102,6 +102,7 @@ public:
     // present it into the X11 window. Used by the GDI32 HLE drawing functions.
     u8*    surface_buffer(void* hwnd, int w, int h);
     void   surface_present(void* hwnd);
+    void*  first_window();
 
     // Message pump
     int   get_message(void* lpMsg, void* hwnd, u32 min, u32 max);
@@ -122,13 +123,12 @@ public:
     // Accumulate an X11 event into the guest queue (translates to a MSG).
     void pump_x11_events();
 
-    int  get_exit_code() const { return exit_code_; }
-
-private:
     NativeWindow* window_from_hwnd(void* hwnd) {
         auto it = windows_.find(hwnd);
         return it == windows_.end() ? nullptr : it->second.get();
     }
+
+private:
     void push_message(const Win32Message& msg) { {
         std::lock_guard<std::mutex> lk(q_mutex_);
         queue_.push_back(msg);

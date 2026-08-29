@@ -182,6 +182,10 @@ void X11WindowManager::surface_present(void* hwnd) {
     nw->fb_dirty = false;
 }
 
+void* X11WindowManager::first_window() {
+    return windows_.empty() ? nullptr : windows_.begin()->first;
+}
+
 void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
     auto* w = window_from_hwnd(hwnd);
     if (!w || !lpRect) return;

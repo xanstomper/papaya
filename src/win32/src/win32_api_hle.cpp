@@ -1,4 +1,6 @@
 #include "papaya/win32/win32_api_hle.hpp"
+#include "papaya/win32/win32_d3d.hpp"
+#include "papaya/win32/win32_window.hpp"
 #include "papaya/win32/pe_loader.hpp"
 #include "papaya/common/logger.hpp"
 #include <sys/mman.h>
@@ -23,6 +25,7 @@
 #include <sys/random.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <X11/Xlib.h>
 #include <errno.h>
 #include <dlfcn.h>
 
@@ -1804,6 +1807,40 @@ BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
     return TRUE_VAL;
 }
 
+// ------------------------------------------------------------
+// DXGI & D3D11 software surface
+// ------------------------------------------------------------
+long Win32ApiHle::hle_d3d11_create_device(void* adapter, u32 driver, u32 flags,
+                                          const void* feature_levels, u32 nlev, u32 sdk,
+                                          void** device_out, void* feature_out, void** ctx_out) {
+    (void)adapter; (void)driver; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
+    return d3d11_create_device(device_out, ctx_out) ? 0 /* S_OK */ : (long)0x8007000E; // E_OUTOFMEMORY
+}
+
+long Win32ApiHle::hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, u32 flags,
+                                                        const void* feature_levels, u32 nlev, u32 sdk,
+                                                        void* swapchain_desc, void** swapchain_out,
+                                                        void** device_out, void* feature_out, void** ctx_out) {
+    (void)adapter; (void)driver; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
+    // DXGI_SWAP_CHAIN_DESC (x64): Width@0, Height@4, ..., OutputWindow@48.
+    void* hwnd = swapchain_desc ? *reinterpret_cast<void**>(static_cast<u8*>(swapchain_desc) + 48) : nullptr;
+    u32 w = swapchain_desc ? *reinterpret_cast<u32*>(swapchain_desc) : 320;
+    u32 h = swapchain_desc ? *reinterpret_cast<u32*>(static_cast<u8*>(swapchain_desc) + 4) : 240;
+    void* dev = d3d11_create_device(device_out, ctx_out);
+    if (!dev) return (long)0x8007000E;
+    void* sc = d3d11_create_swapchain(hwnd ? hwnd : window_manager().first_window(), w, h);
+    if (swapchain_out) *swapchain_out = sc;
+    return 0; // S_OK
+}
+
+long Win32ApiHle::hle_create_dxgi_factory(void* riid, void** factory_out) {
+    (void)riid;
+    // DXGI factory: minimal — used to create a swapchain on a window. We return a
+    // benign token (the swapchain handles the real work).
+    if (factory_out) *factory_out = reinterpret_cast<void*>(1); // non-null fake factory
+    return 0; // S_OK
+}
+
 int Win32ApiHle::hle_describe_pixel_format(void* hdc, int iPixelFormat, u32 nBytes, void* ppfd) {
     (void)hdc; (void)iPixelFormat; (void)nBytes; (void)ppfd;
     return 1;
@@ -1835,16 +1872,73 @@ void* Win32ApiHle::hle_wgl_get_proc_address(const char* lpszProc) {
     return reinterpret_cast<void*>(&generic_stub_success);
 }
 
+struct VkWin32SurfaceCreateInfoKHR_T {
+    uint32_t sType;
+    const void* pNext;
+    uint32_t flags;
+    void* hinstance;
+    void* hwnd;
+};
+
+struct VkXlibSurfaceCreateInfoKHR_T {
+    uint32_t sType;
+    const void* pNext;
+    uint32_t flags;
+    void* dpy;
+    uint64_t window;
+};
+
+static PAPAYA_MS_ABI int hle_vk_create_win32_surface_khr(void* instance, const VkWin32SurfaceCreateInfoKHR_T* pCreateInfo, const void* pAllocator, void** pSurface) {
+    if (!pCreateInfo || !pSurface) return -1;
+    void* hwnd = pCreateInfo->hwnd;
+    auto* win = window_manager().window_from_hwnd(hwnd);
+    void* dpy = win ? win->display : nullptr;
+    uint64_t xid = win ? win->xid : 0;
+    if (!dpy) {
+        dpy = XOpenDisplay(nullptr);
+    }
+
+    typedef int (*vk_create_xlib_surface_fn)(void*, const VkXlibSurfaceCreateInfoKHR_T*, const void*, void**);
+    static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
+    if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
+    static auto xlib_fn = reinterpret_cast<vk_create_xlib_surface_fn>(libvk ? dlsym(libvk, "vkCreateXlibSurfaceKHR") : nullptr);
+    if (xlib_fn) {
+        VkXlibSurfaceCreateInfoKHR_T xlib_info{};
+        xlib_info.sType = 1000004000; // VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR
+        xlib_info.dpy = dpy;
+        xlib_info.window = xid;
+        int res = xlib_fn(instance, &xlib_info, pAllocator, pSurface);
+        log::info("VK_LAYER", "Intercepted vkCreateWin32SurfaceKHR -> vkCreateXlibSurfaceKHR [hwnd: {}, xid: 0x{:X}, res: {}]",
+                  reinterpret_cast<u64>(hwnd), xid, res);
+        return res;
+    }
+    return 0;
+}
+
+static PAPAYA_MS_ABI uint32_t hle_vk_get_physical_device_win32_presentation_support_khr(void* physicalDevice, uint32_t queueFamilyIndex) {
+    (void)physicalDevice; (void)queueFamilyIndex;
+    return 1; // VK_TRUE
+}
+
 void* Win32ApiHle::hle_vk_get_instance_proc_addr(void* instance, const char* pName) {
     if (!pName) return nullptr;
+    if (std::strcmp(pName, "vkCreateWin32SurfaceKHR") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_create_win32_surface_khr);
+    }
+    if (std::strcmp(pName, "vkGetPhysicalDeviceWin32PresentationSupportKHR") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_get_physical_device_win32_presentation_support_khr);
+    }
     static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
     if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
     if (libvk) {
         typedef void* (*vk_get_proc_fn)(void*, const char*);
         static auto vk_proc = reinterpret_cast<vk_get_proc_fn>(dlsym(libvk, "vkGetInstanceProcAddr"));
         if (vk_proc) {
-            return vk_proc(instance, pName);
+            void* p = vk_proc(instance, pName);
+            if (p) return p;
         }
+        void* sym = dlsym(libvk, pName);
+        if (sym) return sym;
     }
     return reinterpret_cast<void*>(&generic_stub_success);
 }
@@ -2448,6 +2542,8 @@ Result<> Win32ApiHle::initialize() {
     // OPENGL32.DLL & VULKAN-1.DLL
     register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));
     register_function("vulkan-1.dll", "vkGetInstanceProcAddr", reinterpret_cast<void*>(&hle_vk_get_instance_proc_addr));
+    register_function("vulkan-1.dll", "vkCreateWin32SurfaceKHR", reinterpret_cast<void*>(&hle_vk_create_win32_surface_khr));
+    register_function("vulkan-1.dll", "vkGetPhysicalDeviceWin32PresentationSupportKHR", reinterpret_cast<void*>(&hle_vk_get_physical_device_win32_presentation_support_khr));
 
     // WS2_32.DLL
     register_function("WS2_32.dll", "WSAStartup",         reinterpret_cast<void*>(&hle_wsa_startup));
@@ -2496,11 +2592,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "ReleaseCapture",     reinterpret_cast<void*>(&generic_stub_success));
 
     // DXGI.DLL & D3D11.DLL & DINPUT8.DLL
-    register_function("DXGI.DLL", "CreateDXGIFactory",    reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("DXGI.DLL", "CreateDXGIFactory1",   reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("DXGI.DLL", "CreateDXGIFactory2",   reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("D3D11.DLL", "D3D11CreateDevice",   reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("D3D11.DLL", "D3D11CreateDeviceAndSwapChain", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("DXGI.DLL", "CreateDXGIFactory",    reinterpret_cast<void*>(&hle_create_dxgi_factory));
+    register_function("DXGI.DLL", "CreateDXGIFactory1",   reinterpret_cast<void*>(&hle_create_dxgi_factory));
+    register_function("DXGI.DLL", "CreateDXGIFactory2",   reinterpret_cast<void*>(&hle_create_dxgi_factory));
+    register_function("D3D11.DLL", "D3D11CreateDevice",   reinterpret_cast<void*>(&hle_d3d11_create_device));
+    register_function("D3D11.DLL", "D3D11CreateDeviceAndSwapChain", reinterpret_cast<void*>(&hle_d3d11_create_device_and_swapchain));
     register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&generic_stub_zero));
 
     return {};

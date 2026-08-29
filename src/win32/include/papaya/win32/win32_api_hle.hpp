@@ -376,6 +376,16 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
                                            void* src_dc, int sx, int sy, u32 rop);
 
+    // DXGI & D3D11 software surface
+    static PAPAYA_MS_ABI long   hle_d3d11_create_device(void* adapter, u32 driver, u32 flags,
+                                                        const void* feature_levels, u32 nlev, u32 sdk,
+                                                        void** device_out, void* feature_out, void** ctx_out);
+    static PAPAYA_MS_ABI long   hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, u32 flags,
+                                                                      const void* feature_levels, u32 nlev, u32 sdk,
+                                                                      void* swapchain_desc, void** swapchain_out,
+                                                                      void** device_out, void* feature_out, void** ctx_out);
+    static PAPAYA_MS_ABI long   hle_create_dxgi_factory(void* riid, void** factory_out);
+
     // OpenGL & Vulkan dynamic loaders
     static PAPAYA_MS_ABI void* hle_wgl_get_proc_address(const char* lpszProc);
     static PAPAYA_MS_ABI void* hle_vk_get_instance_proc_addr(void* instance, const char* pName);
