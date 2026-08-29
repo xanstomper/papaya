@@ -1,0 +1,34 @@
+#pragma once
+
+#include "papaya/common/types.hpp"
+#include "papaya/common/error.hpp"
+#include "papaya/hv/hypervisor.hpp"
+#include "papaya/storage/vfs.hpp"
+#include "papaya/hle/syscalls.hpp"
+#include <memory>
+#include <vector>
+
+namespace papaya::hle {
+
+class Kernel {
+public:
+    Kernel(std::shared_ptr<hv::IHypervisor> hypervisor, std::shared_ptr<storage::VirtualFileSystem> vfs);
+    ~Kernel();
+
+    Result<> initialize();
+    Result<> load_title_executable(std::string_view exe_path);
+
+    SyscallDispatcher& get_syscall_dispatcher() { return dispatcher_; }
+    std::shared_ptr<hv::IHypervisor> get_hypervisor() const { return hypervisor_; }
+    std::shared_ptr<storage::VirtualFileSystem> get_vfs() const { return vfs_; }
+
+private:
+    void register_standard_syscalls();
+
+    std::shared_ptr<hv::IHypervisor> hypervisor_;
+    std::shared_ptr<storage::VirtualFileSystem> vfs_;
+    SyscallDispatcher dispatcher_;
+    std::vector<std::shared_ptr<hv::IVcpu>> vcpus_;
+};
+
+} // namespace papaya::hle
