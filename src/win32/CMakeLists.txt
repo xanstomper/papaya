@@ -3,6 +3,7 @@ add_library(papaya-win32 STATIC
     src/win32_window.cpp
     src/win32_seh.cpp
     src/win32_d3d.cpp
+    src/win32_audio.cpp
     src/pe_loader.cpp
 )
 

@@ -266,6 +266,7 @@ public:
 
     // KERNEL32 additions
     static PAPAYA_MS_ABI void  hle_get_startup_info_a(void*);
+    static PAPAYA_MS_ABI void  hle_get_startup_info_w(void*);
     static PAPAYA_MS_ABI void* hle_set_unhandled_exception_filter(void*);
     static PAPAYA_MS_ABI size_t hle_virtual_query(void*, int, void*, size_t);
 
@@ -351,6 +352,14 @@ public:
     static PAPAYA_MS_ABI u32   hle_time_get_time();
     static PAPAYA_MS_ABI u32   hle_time_begin_period(u32 uPeriod);
     static PAPAYA_MS_ABI u32   hle_time_end_period(u32 uPeriod);
+    static PAPAYA_MS_ABI BOOL  hle_play_sound_a(const char* pszSound, void* hmod, u32 flags);
+    static PAPAYA_MS_ABI BOOL  hle_play_sound_w(const wchar_t* pszSound, void* hmod, u32 flags);
+    static PAPAYA_MS_ABI u32   hle_wave_out_get_num_devs();
+    static PAPAYA_MS_ABI u32   hle_wave_out_open(u32* phwo, const void* pwfx, u32 cb, void* callbk, void* inst, u32 flags);
+    static PAPAYA_MS_ABI u32   hle_wave_out_write(u32 hwo, const void* pwh, u32 cbwh);
+    static PAPAYA_MS_ABI u32   hle_wave_out_close(u32 hwo);
+    static PAPAYA_MS_ABI u32   hle_wave_out_set_volume(u32 hwo, u32 dwVolume);
+    static PAPAYA_MS_ABI u32   hle_wave_in_get_num_devs();
 
     // SHELL32
     static PAPAYA_MS_ABI s32   hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath);
