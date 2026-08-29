@@ -589,6 +589,7 @@ public:
     static PAPAYA_MS_ABI u64   hle_socket(int af, int type, int protocol);
     static PAPAYA_MS_ABI int   hle_closesocket(u64 s);
     static PAPAYA_MS_ABI int   hle_connect(u64 s, const void* name, int namelen);
+    static PAPAYA_MS_ABI int   hle_wsaconnect(u64 s, const void* name, int namelen, const void* lpCallerData, void* lpCalleeData, const void* lpSQOS, const void* lpGQOS);
     static PAPAYA_MS_ABI int   hle_send(u64 s, const char* buf, int len, int flags);
     static PAPAYA_MS_ABI int   hle_recv(u64 s, char* buf, int len, int flags);
     static PAPAYA_MS_ABI u16   hle_htons(u16 hostshort);

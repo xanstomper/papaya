@@ -3651,6 +3651,22 @@ int Win32ApiHle::hle_connect(u64 s, const void* name, int namelen) {
     return ::connect(static_cast<int>(s), static_cast<const struct sockaddr*>(name), static_cast<socklen_t>(namelen));
 }
 
+int Win32ApiHle::hle_wsaconnect(u64 s, const void* name, int namelen, const void* lpCallerData,
+                                void* lpCalleeData, const void* lpSQOS, const void* lpGQOS) {
+    (void)lpCalleeData; (void)lpSQOS; (void)lpGQOS;
+    int fd = static_cast<int>(s);
+    int rc = ::connect(fd, static_cast<const struct sockaddr*>(name), static_cast<socklen_t>(namelen));
+    if (rc != 0) return rc;   // SOCKET_ERROR (-1) as host connect failed
+    // Deliver caller data (WSABUF: len@0, buf@8) if supplied.
+    if (lpCallerData) {
+        auto* wb = static_cast<const u64*>(lpCallerData);
+        u32 len = static_cast<u32>(wb[0]);
+        const void* buf = reinterpret_cast<const void*>(wb[1]);
+        if (len && buf) ::send(fd, static_cast<const char*>(buf), len, 0);
+    }
+    return 0;
+}
+
 int Win32ApiHle::hle_send(u64 s, const char* buf, int len, int flags) {
     return static_cast<int>(::send(static_cast<int>(s), buf, static_cast<size_t>(len), flags));
 }
@@ -4201,7 +4217,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("OPENGL32.dll", "wglMakeCurrent", reinterpret_cast<void*>(&hle_wgl_make_current));
 
     // WS2_32.DLL / WSOCK32.DLL
-    register_function("WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("WS2_32.dll", "WSAConnect", reinterpret_cast<void*>(&hle_wsaconnect));
     register_function("WS2_32.dll", "getaddrinfo", reinterpret_cast<void*>(&hle_getaddrinfo));
     register_function("WS2_32.dll", "freeaddrinfo", reinterpret_cast<void*>(&hle_freeaddrinfo));
     register_function("WS2_32.dll", "getnameinfo", reinterpret_cast<void*>(&hle_getnameinfo));
