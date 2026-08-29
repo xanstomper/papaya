@@ -613,6 +613,24 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         if (tls_.enabled) teb_->tls_slots[0] = tls_.storage;
     }
 
+    // -------------------------------------------------------------
+    // KUSER_SHARED_DATA at fixed address 0x7FFE0000 (standard Windows NT)
+    // -------------------------------------------------------------
+    void* kuser = mmap(reinterpret_cast<void*>(0x7FFE0000), 4096,
+                       PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (kuser != MAP_FAILED) {
+        std::memset(kuser, 0, 4096);
+        u8* kp = static_cast<u8*>(kuser);
+        *reinterpret_cast<u32*>(kp + 0x0260) = 10;    // NtMajorVersion (Windows 10)
+        *reinterpret_cast<u32*>(kp + 0x0264) = 0;     // NtMinorVersion
+        *reinterpret_cast<u32*>(kp + 0x0268) = 19045; // NtBuildNumber
+        *reinterpret_cast<u32*>(kp + 0x02D4) = 8;     // ActiveProcessorCount
+        *reinterpret_cast<u64*>(kp + 0x0330) = 0x2B992DDFA232ULL; // Cookie
+        *reinterpret_cast<u64*>(kp + 0x03B0) = 10000000ULL;        // QpcFrequency
+        log::info("PE_LOADER", "Initialized Windows NT KUSER_SHARED_DATA page @ 0x7FFE0000");
+    }
+
 #if defined(__x86_64__) || defined(_M_X64)
     long res = syscall(SYS_arch_prctl, ARCH_SET_GS, teb_);
     if (res != 0) {
@@ -829,11 +847,15 @@ Result<int> PeLoader::execute_native(const LoadedPeImage& image, int argc, char*
               reinterpret_cast<u64>(image.entry_point));
 
     int exit_code = 0;
+    // Arm the SEH fault dispatcher so a guest __C_specific_handler __try/__except
+    // that faults is routed to its __except block instead of crashing.
+    seh_install_fault_handler(true);
     try {
         exit_code = entry_fn(image.image_base, nullptr, "", 1);
     } catch (...) {
         log::warn("PE_LOADER", "Caught unhandled exception during in-process PE execution");
     }
+    seh_install_fault_handler(false);
 
     return exit_code;
 }
@@ -848,16 +870,28 @@ Result<> PeLoader::process_load_config(u8* base_bytes, u64 size_of_image, const 
         u64 dispatch_fptr_va = *reinterpret_cast<u64*>(lc_ptr + 0x50);
         u64 img_base = reinterpret_cast<u64>(base_bytes);
 
-        static auto guard_check_nop = []() {};
-        static const u8 guard_dispatch_stub[] = { 0xff, 0xe0 }; // jmp *rax
-
-        if (check_fptr_va >= img_base && check_fptr_va + 8 <= img_base + size_of_image) {
-            *reinterpret_cast<void**>(check_fptr_va) = reinterpret_cast<void*>(&guard_check_nop);
-            log::info("PE_LOADER", "Patched GuardCFCheckFunctionPointer @ 0x{:X}", check_fptr_va);
+        static void* g_guard_exec_page = nullptr;
+        if (!g_guard_exec_page) {
+            g_guard_exec_page = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (g_guard_exec_page != MAP_FAILED) {
+                u8* p = static_cast<u8*>(g_guard_exec_page);
+                p[0] = 0xC3;           // ret (for guard_check_icall)
+                p[16] = 0xFF; p[17] = 0xE0; // jmp *rax (for guard_dispatch_icall)
+            }
         }
-        if (dispatch_fptr_va >= img_base && dispatch_fptr_va + 8 <= img_base + size_of_image) {
-            *reinterpret_cast<void**>(dispatch_fptr_va) = const_cast<u8*>(guard_dispatch_stub);
-            log::info("PE_LOADER", "Patched GuardCFDispatchFunctionPointer @ 0x{:X}", dispatch_fptr_va);
+
+        if (g_guard_exec_page && g_guard_exec_page != MAP_FAILED) {
+            void* check_stub = static_cast<u8*>(g_guard_exec_page) + 0;
+            void* dispatch_stub = static_cast<u8*>(g_guard_exec_page) + 16;
+
+            if (check_fptr_va >= img_base && check_fptr_va + 8 <= img_base + size_of_image) {
+                *reinterpret_cast<void**>(check_fptr_va) = check_stub;
+                log::info("PE_LOADER", "Patched GuardCFCheckFunctionPointer @ 0x{:X} -> 0x{:X}", check_fptr_va, reinterpret_cast<u64>(check_stub));
+            }
+            if (dispatch_fptr_va >= img_base && dispatch_fptr_va + 8 <= img_base + size_of_image) {
+                *reinterpret_cast<void**>(dispatch_fptr_va) = dispatch_stub;
+                log::info("PE_LOADER", "Patched GuardCFDispatchFunctionPointer @ 0x{:X} -> 0x{:X}", dispatch_fptr_va, reinterpret_cast<u64>(dispatch_stub));
+            }
         }
     }
     return {};

@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <fstream>
+#include <cstring>
 
 namespace papaya::frontend {
 
@@ -280,6 +281,7 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
         if ((mode == ExecutionMode::NativeWin32 || mode == ExecutionMode::NativeEngine) && loaded_img.entry_point != nullptr) {
             log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
             auto ret = pe_loader_->execute_native(loaded_img);
+            for (;;) { pause(); }
             _exit(ret.value_or(0));
         }
 
@@ -314,7 +316,15 @@ void EmulatorRuntime::step_frame() {
         int status = 0;
         pid_t res = waitpid(child_pid_, &status, WNOHANG);
         if (res == child_pid_) {
-            log::info("RUNTIME", "Native game process (PID: {}) completed execution.", child_pid_);
+            if (WIFEXITED(status)) {
+                log::info("RUNTIME", "Native game process (PID: {}) completed execution (exit code: {}).",
+                          child_pid_, WEXITSTATUS(status));
+            } else if (WIFSIGNALED(status)) {
+                log::error("RUNTIME", "Native game process (PID: {}) terminated by signal {} ({}).",
+                           child_pid_, WTERMSIG(status), strsignal(WTERMSIG(status)));
+            } else {
+                log::info("RUNTIME", "Native game process (PID: {}) completed execution.", child_pid_);
+            }
             child_pid_ = -1;
             is_running_ = false;
             return;

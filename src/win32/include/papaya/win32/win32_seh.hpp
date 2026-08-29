@@ -57,6 +57,9 @@ struct GuestDispatcherContext {
 // Registers the loaded image's exception directory + code base for dispatch.
 void seh_register_image(void* image_base, void* pdata, u32 pdata_size);
 
+// Returns the currently registered image base (for the signal dispatcher).
+u64 seh_image_base();
+
 // Finds the RUNTIME_FUNCTION whose [begin_addr,end_addr) RVA range contains the
 // given guest IP. Returns the raw header bytes of the UNWIND_INFO (or nullptr).
 // Out-params: eh_rva = RVA of the EH handler function if the frame has one;
@@ -86,5 +89,12 @@ int seh_raise_exception(u32 code, u64 guest_eip_override);
 // (the fault is unhandled and should propagate / crash).
 bool seh_dispatch_fault(u64 fault_ip_at_exception, u64 image_base,
                         u64* recovery_ip_out);
+
+// Installs (or removes) a SIGSEGV/SIGFPE handler that dispatches guest faults to
+// their __C_specific_handler __except block and resumes via ucontext. Returns the
+// previous disposition; call with install=false to restore and disarm.
+// Strictly guarded against infinite resume loops (a fault that resolves to the
+// same recovery more than once is treated as unhandled).
+void seh_install_fault_handler(bool install);
 
 } // namespace papaya::win32

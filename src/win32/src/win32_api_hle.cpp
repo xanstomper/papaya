@@ -679,6 +679,11 @@ u32 Win32ApiHle::hle_get_module_file_name_w(void* hModule, wchar_t* lpFilename, 
     return 0;
 }
 
+void* Win32ApiHle::hle_encode_pointer(void* ptr) { return ptr; }
+void* Win32ApiHle::hle_decode_pointer(void* ptr) { return ptr; }
+void* Win32ApiHle::hle_encode_system_pointer(void* ptr) { return ptr; }
+void* Win32ApiHle::hle_decode_system_pointer(void* ptr) { return ptr; }
+
 void Win32ApiHle::hle_get_system_info(Win32SystemInfo* lpSystemInfo) {
     if (!lpSystemInfo) return;
     *lpSystemInfo = Win32SystemInfo{};
@@ -690,7 +695,30 @@ void Win32ApiHle::hle_get_native_system_info(Win32SystemInfo* lpSystemInfo) {
 }
 
 BOOL Win32ApiHle::hle_is_processor_feature_present(u32 ProcessorFeature) {
-    return TRUE_VAL;
+    switch (ProcessorFeature) {
+    case 0:  // PF_FLOATING_POINT_PRECISION_ERRATA
+    case 1:  // PF_FLOATING_POINT_EMULATED
+    case 23: // PF_FASTFAIL_AVAILABLE (disable int 0x29 in Linux userspace)
+    case 24: // PF_ARM_V8_INSTRUCTIONS_AVAILABLE
+    case 25: // PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE
+    case 26: // PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE
+    case 27: // PF_CHPE_X86_ARM64
+        return FALSE_VAL;
+    case 2:  // PF_COMPARE_EXCHANGE_DOUBLE
+    case 3:  // PF_MMX_INSTRUCTIONS_AVAILABLE
+    case 6:  // PF_XMMI_INSTRUCTIONS_AVAILABLE (SSE)
+    case 7:  // PF_3DNOW_INSTRUCTIONS_AVAILABLE
+    case 8:  // PF_RDTSC_INSTRUCTION_AVAILABLE
+    case 9:  // PF_PAE_ENABLED
+    case 10: // PF_XMMI64_INSTRUCTIONS_AVAILABLE (SSE2)
+    case 12: // PF_NX_ENABLED
+    case 13: // PF_SSE3_INSTRUCTIONS_AVAILABLE
+    case 14: // PF_COMPARE_EXCHANGE128
+    case 17: // PF_AVX_INSTRUCTIONS_AVAILABLE
+    case 18: // PF_AVX2_INSTRUCTIONS_AVAILABLE
+    default:
+        return TRUE_VAL;
+    }
 }
 
 static const char* g_cmdline = "papaya_game.exe";
@@ -1901,8 +1929,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "GetModuleHandleW", reinterpret_cast<void*>(&hle_get_module_handle_w));
     register_function("KERNEL32.DLL", "LoadLibraryA", reinterpret_cast<void*>(&hle_load_library_a));
     register_function("KERNEL32.DLL", "LoadLibraryW", reinterpret_cast<void*>(&hle_load_library_w));
-    register_function("KERNEL32.DLL", "FreeLibrary", reinterpret_cast<void*>(&hle_free_library));
     register_function("KERNEL32.DLL", "GetModuleFileNameA", reinterpret_cast<void*>(&hle_get_module_file_name_a));
+    register_function("KERNEL32.DLL", "EncodePointer", reinterpret_cast<void*>(&hle_encode_pointer));
+    register_function("KERNEL32.DLL", "DecodePointer", reinterpret_cast<void*>(&hle_decode_pointer));
+    register_function("KERNEL32.DLL", "EncodeSystemPointer", reinterpret_cast<void*>(&hle_encode_system_pointer));
+    register_function("KERNEL32.DLL", "DecodeSystemPointer", reinterpret_cast<void*>(&hle_decode_system_pointer));
 
     register_function("KERNEL32.DLL", "GetSystemInfo", reinterpret_cast<void*>(&hle_get_system_info));
     register_function("KERNEL32.DLL", "GetNativeSystemInfo", reinterpret_cast<void*>(&hle_get_native_system_info));

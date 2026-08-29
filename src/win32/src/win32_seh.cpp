@@ -21,6 +21,8 @@ void seh_register_image(void* image_base, void* pdata, u32 pdata_size) {
     g_seh.active     = (pdata != nullptr && pdata_size > 0);
 }
 
+u64 seh_image_base() { return g_seh.image_base; }
+
 // The __C_specific_handler / __CxxFrameHandler entry has a specific structure:
 // the RUNTIME_FUNCTION's unwind_info_address points at UNWIND_INFO; if
 // EHANDLER (bit 3 of version_flags) is set, the UNWIND_CODE array is followed by
@@ -176,6 +178,76 @@ bool seh_dispatch_fault(u64 fault_ip_at_exception, u64 image_base,
         }
     }
     return false;
+}
+
+// ---- Signal-driven fault dispatch (SIGSEGV / SIGFPE) ----------------------
+// The guest runs as native host code, so ucontext registers ARE the guest's
+// registers. On a guest fault we resolve the enclosing __C_specific_handler
+// scope via .pdata and, if one matches, rewrite ucontext.rip to the __except
+// handler address and return, resuming guest execution at the handler.
+
+#include <signal.h>
+#include <ucontext.h>
+#include <cstdio>
+
+namespace {
+// One frame of resume-loop guard: if a fault at the same IP resolves to the same
+// recovery twice, treat it as unhandled rather than spin forever.
+thread_local u64 last_fault_ip  = 0;
+thread_local u64 last_recovery  = 0;
+
+u64 guest_rip(const ucontext_t* uc) {
+#if defined(__x86_64__)
+    return static_cast<u64>(uc->uc_mcontext.gregs[REG_RIP]);
+#else
+    return static_cast<u64>(uc->uc_mcontext.gregs[REG_EIP]);
+#endif
+}
+void set_guest_rip(ucontext_t* uc, u64 ip) {
+#if defined(__x86_64__)
+    uc->uc_mcontext.gregs[REG_RIP] = static_cast<greg_t>(ip);
+#else
+    uc->uc_mcontext.gregs[REG_EIP] = static_cast<greg_t>(ip);
+#endif
+}
+} // namespace
+
+static void seh_fault_handler(int sig, siginfo_t* si, void* vctx) {
+    (void)sig; (void)si;
+    auto* uc = static_cast<ucontext_t*>(vctx);
+    u64 ip = guest_rip(uc);
+
+    u64 recovery = 0;
+    if (!papaya::win32::seh_dispatch_fault(ip, papaya::win32::seh_image_base(), &recovery)) {
+        return;   // no matching scope -> re-raise (normal crash)
+    }
+
+    // Loop guard: same IP -> same recovery twice = not making progress.
+    if (last_fault_ip == ip && last_recovery == recovery) {
+        return;
+    }
+    last_fault_ip = ip;
+    last_recovery = recovery;
+
+    set_guest_rip(uc, recovery);   // continue at __except handler
+}
+
+void seh_install_fault_handler(bool install) {
+    static struct sigaction old_segv{}, old_fpe{};
+    static bool installed = false;
+    if (install && !installed) {
+        struct sigaction sa{};
+        sa.sa_sigaction = seh_fault_handler;
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &old_segv);
+        sigaction(SIGFPE, &sa, &old_fpe);
+        installed = true;
+    } else if (!install && installed) {
+        sigaction(SIGSEGV, &old_segv, nullptr);
+        sigaction(SIGFPE, &old_fpe, nullptr);
+        installed = false;
+    }
 }
 
 } // namespace papaya::win32

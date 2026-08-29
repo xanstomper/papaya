@@ -148,6 +148,10 @@ public:
     static PAPAYA_MS_ABI void* hle_load_library_w(const wchar_t* lpLibFileName);
     static PAPAYA_MS_ABI BOOL  hle_free_library(void* hLibModule);
     static PAPAYA_MS_ABI u32   hle_get_module_file_name_a(void* hModule, char* lpFilename, u32 nSize);
+    static PAPAYA_MS_ABI void* hle_encode_pointer(void* ptr);
+    static PAPAYA_MS_ABI void* hle_decode_pointer(void* ptr);
+    static PAPAYA_MS_ABI void* hle_encode_system_pointer(void* ptr);
+    static PAPAYA_MS_ABI void* hle_decode_system_pointer(void* ptr);
 
     // KERNEL32: Environment, System & Clock
     static PAPAYA_MS_ABI void  hle_get_system_info(Win32SystemInfo* lpSystemInfo);
