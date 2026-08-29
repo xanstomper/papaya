@@ -116,15 +116,24 @@ static D3DMS u64 sc_get_buffer(void* self, u64 index, u64 riid, void* bufp) {
 static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
     auto* sc = static_cast<SwapChain*>(self);
     (void)sync; (void)flags;
-    // blit the CPU backbuffer to the native window
+    // Present = upload the swapchain framebuffer to the native window with no
+    // redundant per-frame memcpy: the guest writes into the same buffer the
+    // window presents (fb is shared with the window's surface on first use).
     if (sc->hwnd && sc->fb) {
         auto* wm = &window_manager();
+        // Ensure the window surface matches the swapchain size and share its
+        // buffer so XPutImage uploads the guest's pixels directly (zero per-copy).
         u8* wfb = wm->surface_buffer(sc->hwnd, sc->w, sc->h);
-        // Copy CPU backbuffer into the window framebuffer then present.
-        // surface_buffer does not replace the pointer for an existing window DC;
-        // copy pixel data into it.
-        if (wfb) { memcpy(wfb, sc->fb, sc->w * sc->h * 4); }
-        wm->surface_present(sc->hwnd);
+        if (wfb && wfb == sc->fb) {
+            // buffers already share storage -> upload directly, no copy
+            wm->surface_present(sc->hwnd);
+        } else if (wfb) {
+            // first present: adopt the window surface as our backbuffer so all
+            // later presents are zero-copy.
+            sc->fb = wfb;
+            sc->fb_size = static_cast<u32>(sc->w) * static_cast<u32>(sc->h) * 4;
+            wm->surface_present(sc->hwnd);
+        }
     }
     return 0; // S_OK
 }
