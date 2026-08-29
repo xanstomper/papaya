@@ -35,10 +35,49 @@
 #include <X11/Xlib.h>
 #include <errno.h>
 #include <dlfcn.h>
+#include <dirent.h>
+#include <fnmatch.h>
 
 namespace papaya::win32 {
-// UTF-16 -> UTF-8 helper (defined later, used by W-suffix registry/audio).
-static std::string wchar_to_utf8(const wchar_t* w);
+// Proper UTF-16 (Windows WCHAR = 2 bytes) string conversion helpers:
+static size_t win_utf16_len(const void* ptr) {
+    if (!ptr) return 0;
+    const uint16_t* u16 = static_cast<const uint16_t*>(ptr);
+    size_t len = 0;
+    while (*u16++) len++;
+    return len;
+}
+
+static std::string win_utf16_to_utf8(const void* ptr, int cch_wc = -1) {
+    if (!ptr) return "";
+    uintptr_t val = reinterpret_cast<uintptr_t>(ptr);
+    if (val < 0x10000) {
+        return "#" + std::to_string(val);
+    }
+    const uint16_t* u16 = static_cast<const uint16_t*>(ptr);
+    std::string out;
+    size_t count = 0;
+    while (*u16) {
+        if (cch_wc >= 0 && static_cast<int>(count) >= cch_wc) break;
+        uint16_t ch = *u16++;
+        count++;
+        if (ch < 0x80) {
+            out.push_back(static_cast<char>(ch));
+        } else if (ch < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (ch >> 6)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xE0 | (ch >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+        }
+    }
+    return out;
+}
+
+static std::string wchar_to_utf8(const wchar_t* w) {
+    return win_utf16_to_utf8(w);
+}
 
 static Win32ApiHle* g_active_win32_hle = nullptr;
 thread_local u32 g_last_error = 0;
@@ -307,6 +346,7 @@ enum : u32 {
     kHandleEvent  = 0x45564E54,  // "EVNT"
     kHandleMutex  = 0x4D545854,  // "MTXT"
     kHandleSem    = 0x53454D41,  // "SEMA"
+    kHandleFind   = 0x46494E44,  // "FIND"
 };
 static u32 handle_tag(void* h) {
     if (!h) return kHandleNone;
@@ -315,12 +355,19 @@ static u32 handle_tag(void* h) {
     u32 tag = *reinterpret_cast<u32*>(h);
     // Validate against the exact set of known tags (values are not monotonic).
     switch (tag) {
-        case kHandleThread: case kHandleEvent: case kHandleMutex: case kHandleSem:
+        case kHandleThread: case kHandleEvent: case kHandleMutex: case kHandleSem: case kHandleFind:
             return tag;
         default:
             return kHandleNone;
     }
 }
+
+struct NativeFindState {
+    u32 tag{kHandleFind};
+    DIR* dir{nullptr};
+    std::string base_dir;
+    std::string pattern;
+};
 
 struct NativeThreadState {
     u32       tag{kHandleThread};
@@ -485,7 +532,22 @@ struct NativeEventState {
     bool manual_reset{false};
 };
 
+struct NativeSemaphoreState {
+    u32 tag{kHandleSem};
+    std::mutex mtx;
+    std::condition_variable cv;
+    s32 count{0};
+    s32 max_count{1};
+};
+
+struct NativeMutexState {
+    u32 tag{kHandleMutex};
+    std::recursive_mutex mtx;
+    bool owned{false};
+};
+
 HANDLE Win32ApiHle::hle_create_event_a(void* lpSec, BOOL bManualReset, BOOL bInitialState, const char* lpName) {
+    (void)lpSec; (void)lpName;
     auto* ev = new NativeEventState();
     ev->signaled = (bInitialState != 0);
     ev->manual_reset = (bManualReset != 0);
@@ -516,15 +578,24 @@ BOOL Win32ApiHle::hle_reset_event(HANDLE hEvent) {
 }
 
 HANDLE Win32ApiHle::hle_create_mutex_a(void* lpSec, BOOL bInitialOwner, const char* lpName) {
-    auto* mtx = new std::mutex();
+    (void)lpSec; (void)lpName;
+    auto* mtx = new NativeMutexState();
+    if (bInitialOwner) {
+        mtx->mtx.lock();
+        mtx->owned = true;
+    }
     return reinterpret_cast<HANDLE>(mtx);
 }
 
 BOOL Win32ApiHle::hle_release_mutex(HANDLE hMutex) {
     if (!hMutex) return FALSE_VAL;
-    auto* mtx = static_cast<std::mutex*>(hMutex);
-    mtx->unlock();
-    return TRUE_VAL;
+    if (handle_tag(hMutex) == kHandleMutex) {
+        auto* mtx = static_cast<NativeMutexState*>(hMutex);
+        mtx->owned = false;
+        mtx->mtx.unlock();
+        return TRUE_VAL;
+    }
+    return FALSE_VAL;
 }
 
 u32 Win32ApiHle::hle_wait_for_single_object(HANDLE hHandle, u32 dwMilliseconds) {
@@ -540,7 +611,6 @@ u32 Win32ApiHle::hle_wait_for_single_object(HANDLE hHandle, u32 dwMilliseconds) 
     switch (handle_tag(hHandle)) {
         case kHandleThread: {
             auto* th = static_cast<NativeThreadState*>(hHandle);
-            // Wait on a thread handle == join (bounded by timeout).
             u32 delay_ms = (dwMilliseconds == 0xFFFFFFFF) ? 30'000 : (dwMilliseconds ? dwMilliseconds : 0);
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
@@ -567,17 +637,87 @@ u32 Win32ApiHle::hle_wait_for_single_object(HANDLE hHandle, u32 dwMilliseconds) 
             if (res) { if (!ev->manual_reset) ev->signaled = false; return 0; }
             return 0x102;
         }
+        case kHandleSem: {
+            auto* sem = static_cast<NativeSemaphoreState*>(hHandle);
+            std::unique_lock<std::mutex> lock(sem->mtx);
+            if (sem->count > 0) {
+                sem->count--;
+                return 0;
+            }
+            if (dwMilliseconds == 0) return 0x102;
+            if (dwMilliseconds == 0xFFFFFFFF) {
+                sem->cv.wait(lock, [&]() { return sem->count > 0; });
+                sem->count--;
+                return 0;
+            }
+            bool res = sem->cv.wait_for(lock, std::chrono::milliseconds(dwMilliseconds),
+                                       [&]() { return sem->count > 0; });
+            if (res) {
+                sem->count--;
+                return 0;
+            }
+            return 0x102;
+        }
+        case kHandleMutex: {
+            auto* mtx = static_cast<NativeMutexState*>(hHandle);
+            if (dwMilliseconds == 0) {
+                if (mtx->mtx.try_lock()) {
+                    mtx->owned = true;
+                    return 0;
+                }
+                return 0x102;
+            }
+            if (dwMilliseconds == 0xFFFFFFFF) {
+                mtx->mtx.lock();
+                mtx->owned = true;
+                return 0;
+            }
+            auto start = std::chrono::steady_clock::now();
+            while (true) {
+                if (mtx->mtx.try_lock()) {
+                    mtx->owned = true;
+                    return 0;
+                }
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start).count();
+                if (static_cast<u32>(elapsed) >= dwMilliseconds) return 0x102;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
         default:
-            return 0;   // Safe fallback: WAIT_OBJECT_0
+            return 0;
     }
 }
 
 u32 Win32ApiHle::hle_wait_for_multiple_objects(u32 nCount, const HANDLE* lpHandles, BOOL bWaitAll, u32 dwMilliseconds) {
-    for (u32 i = 0; i < nCount; ++i) {
-        u32 res = hle_wait_for_single_object(lpHandles[i], dwMilliseconds);
-        if (res == 0 && !bWaitAll) return i;
+    if (nCount == 0 || !lpHandles) return 0xFFFFFFFF;
+    if (!bWaitAll) {
+        for (u32 i = 0; i < nCount; ++i) {
+            u32 res = hle_wait_for_single_object(lpHandles[i], 0);
+            if (res == 0) return i;
+        }
+        if (dwMilliseconds == 0) return 0x102;
+
+        auto start = std::chrono::steady_clock::now();
+        while (true) {
+            for (u32 i = 0; i < nCount; ++i) {
+                u32 res = hle_wait_for_single_object(lpHandles[i], 0);
+                if (res == 0) return i;
+            }
+            if (dwMilliseconds != 0xFFFFFFFF) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start).count();
+                if (static_cast<u32>(elapsed) >= dwMilliseconds) return 0x102;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    } else {
+        for (u32 i = 0; i < nCount; ++i) {
+            u32 res = hle_wait_for_single_object(lpHandles[i], dwMilliseconds);
+            if (res != 0) return res;
+        }
+        return 0;
     }
-    return 0;
 }
 
 // -------------------------------------------------------------
@@ -587,28 +727,46 @@ static std::string normalize_win_path(const char* p) {
     if (!p) return "";
     std::string s(p);
     std::replace(s.begin(), s.end(), '\\', '/');
+    if (s.size() >= 2 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':') {
+        std::string stripped = s.substr(2);
+        while (!stripped.empty() && stripped[0] == '/') stripped.erase(0, 1);
+        if (access(s.c_str(), F_OK) != 0) {
+            return stripped.empty() ? "." : stripped;
+        }
+    }
     return s;
 }
 
 HANDLE Win32ApiHle::hle_create_file_a(const char* lpFileName, u32 dwAccess, u32 dwShare, void* lpSec, u32 dwDisp, u32 dwFlags, HANDLE hTemplate) {
+    (void)dwShare; (void)lpSec; (void)dwFlags; (void)hTemplate;
     std::string path = normalize_win_path(lpFileName);
-    int flags = O_RDWR;
-    if (dwDisp == 2) flags |= O_CREAT | O_TRUNC;
-    else if (dwDisp == 4) flags |= O_CREAT;
+    int flags = 0;
+    if ((dwAccess & 0x40000000) != 0) { // GENERIC_WRITE
+        flags = (dwAccess & 0x80000000) ? O_RDWR : O_WRONLY;
+    } else {
+        flags = O_RDONLY;
+    }
+
+    if (dwDisp == 1) flags |= O_CREAT | O_EXCL;       // CREATE_NEW
+    else if (dwDisp == 2) flags |= O_CREAT | O_TRUNC;  // CREATE_ALWAYS
+    else if (dwDisp == 4) flags |= O_CREAT;            // OPEN_ALWAYS
+    else if (dwDisp == 5) flags |= O_TRUNC;            // TRUNCATE_EXISTING
 
     int fd = open(path.c_str(), flags, 0666);
-    if (fd < 0) {
+    if (fd < 0 && (flags & O_RDWR)) {
         fd = open(path.c_str(), O_RDONLY);
     }
+    log::info("WIN32", "CreateFile: raw='{}' norm='{}' fd={}", lpFileName ? lpFileName : "null", path, fd);
     if (fd < 0) {
-        g_last_error = 2;
+        g_last_error = 2; // ERROR_FILE_NOT_FOUND
         return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
     }
     return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(fd));
 }
 
 HANDLE Win32ApiHle::hle_create_file_w(const wchar_t* lpFileName, u32 dwAccess, u32 dwShare, void* lpSec, u32 dwDisp, u32 dwFlags, HANDLE hTemplate) {
-    return hle_create_file_a("file.bin", dwAccess, dwShare, lpSec, dwDisp, dwFlags, hTemplate);
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    return hle_create_file_a(narrow.c_str(), dwAccess, dwShare, lpSec, dwDisp, dwFlags, hTemplate);
 }
 
 BOOL Win32ApiHle::hle_read_file(HANDLE hFile, void* lpBuffer, u32 nNumberOfBytesToRead, u32* lpNumberOfBytesRead, void* lpOverlapped) {
@@ -637,11 +795,12 @@ BOOL Win32ApiHle::hle_write_file(HANDLE hFile, const void* lpBuffer, u32 nNumber
 
 BOOL Win32ApiHle::hle_close_handle(HANDLE hObject) {
     if (!hObject) return TRUE_VAL;
-    // Tagged objects (thread/sync): free the wrapper; the underlying pthread
-    // is detached and reaped on exit, so CloseHandle doesn't join.
     switch (handle_tag(hObject)) {
         case kHandleThread: { delete static_cast<NativeThreadState*>(hObject); return TRUE_VAL; }
         case kHandleEvent:  { delete static_cast<NativeEventState*>(hObject); return TRUE_VAL; }
+        case kHandleSem:    { delete static_cast<NativeSemaphoreState*>(hObject); return TRUE_VAL; }
+        case kHandleMutex:  { delete static_cast<NativeMutexState*>(hObject); return TRUE_VAL; }
+        case kHandleFind:   { return hle_find_close(hObject); }
         default: break;
     }
     int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hObject));
@@ -663,59 +822,560 @@ u32 Win32ApiHle::hle_get_file_size(HANDLE hFile, u32* lpFileSizeHigh) {
 
 u32 Win32ApiHle::hle_set_file_pointer(HANDLE hFile, s32 lDistanceToMove, s32* lpDistanceToMoveHigh, u32 dwMoveMethod) {
     int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd < 0) return 0xFFFFFFFF;
     int whence = SEEK_SET;
     if (dwMoveMethod == 1) whence = SEEK_CUR;
     else if (dwMoveMethod == 2) whence = SEEK_END;
-    off_t res = lseek(fd, lDistanceToMove, whence);
-    return static_cast<u32>(res);
+
+    int64_t offset = static_cast<int64_t>(lDistanceToMove);
+    if (lpDistanceToMoveHigh) {
+        offset = static_cast<int64_t>((static_cast<uint64_t>(static_cast<u32>(*lpDistanceToMoveHigh)) << 32) | static_cast<uint64_t>(static_cast<u32>(lDistanceToMove)));
+    }
+    off_t res = lseek(fd, offset, whence);
+    if (res == (off_t)-1) {
+        g_last_error = 1;
+        return 0xFFFFFFFF;
+    }
+    if (lpDistanceToMoveHigh) {
+        *lpDistanceToMoveHigh = static_cast<s32>(static_cast<uint64_t>(res) >> 32);
+    }
+    return static_cast<u32>(res & 0xFFFFFFFF);
+}
+
+BOOL Win32ApiHle::hle_set_file_pointer_ex(HANDLE hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, u32 dwMoveMethod) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd < 0) return FALSE_VAL;
+    int whence = SEEK_SET;
+    if (dwMoveMethod == 1) whence = SEEK_CUR;
+    else if (dwMoveMethod == 2) whence = SEEK_END;
+    off_t res = lseek(fd, liDistanceToMove, whence);
+    if (res == (off_t)-1) {
+        g_last_error = 1;
+        return FALSE_VAL;
+    }
+    if (lpNewFilePointer) *lpNewFilePointer = static_cast<int64_t>(res);
+    return TRUE_VAL;
 }
 
 u32 Win32ApiHle::hle_get_file_attributes_a(const char* lpFileName) {
+    if (!lpFileName) {
+        g_last_error = 2;
+        return 0xFFFFFFFF;
+    }
     std::string p = normalize_win_path(lpFileName);
     struct stat st{};
     if (stat(p.c_str(), &st) == 0) {
-        u32 attr = 0x80;
-        if (S_ISDIR(st.st_mode)) attr |= 0x10;
-        return attr;
+        return S_ISDIR(st.st_mode) ? 0x10 : 0x80;
     }
+    g_last_error = 2;
     return 0xFFFFFFFF;
 }
 
 u32 Win32ApiHle::hle_get_file_attributes_w(const wchar_t* lpFileName) {
-    return 0x80;
+    if (!lpFileName) {
+        g_last_error = 2;
+        return 0xFFFFFFFF;
+    }
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    return hle_get_file_attributes_a(narrow.c_str());
 }
 
-BOOL Win32ApiHle::hle_get_full_path_name_a(const char* lpFileName, u32 nBufferLength, char* lpBuffer, char** lpFilePart) {
+BOOL Win32ApiHle::hle_get_file_attributes_ex_a(const char* lpFileName, int fInfoLevelId, void* lpFileInformation) {
+    if (!lpFileName || !lpFileInformation) {
+        g_last_error = 87; // ERROR_INVALID_PARAMETER
+        return FALSE_VAL;
+    }
     std::string p = normalize_win_path(lpFileName);
-    std::strncpy(lpBuffer, p.c_str(), nBufferLength);
-    return static_cast<BOOL>(p.size());
+    struct stat st{};
+    if (stat(p.c_str(), &st) != 0) {
+        g_last_error = 2; // ERROR_FILE_NOT_FOUND
+        return FALSE_VAL;
+    }
+    auto* data = static_cast<Win32FileAttributeData*>(lpFileInformation);
+    std::memset(data, 0, sizeof(Win32FileAttributeData));
+    data->dwFileAttributes = S_ISDIR(st.st_mode) ? 0x10 : 0x80;
+    data->nFileSizeLow = static_cast<u32>(st.st_size & 0xFFFFFFFF);
+    data->nFileSizeHigh = static_cast<u32>(st.st_size >> 32);
+    return TRUE_VAL;
+}
+
+BOOL Win32ApiHle::hle_get_file_attributes_ex_w(const wchar_t* lpFileName, int fInfoLevelId, void* lpFileInformation) {
+    if (!lpFileName) return FALSE_VAL;
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    return hle_get_file_attributes_ex_a(narrow.c_str(), fInfoLevelId, lpFileInformation);
+}
+
+u32 Win32ApiHle::hle_get_full_path_name_a(const char* lpFileName, u32 nBufferLength, char* lpBuffer, char** lpFilePart) {
+    if (!lpFileName) return 0;
+    std::string p = normalize_win_path(lpFileName);
+    if (lpBuffer && nBufferLength > 0) {
+        std::strncpy(lpBuffer, p.c_str(), nBufferLength - 1);
+        lpBuffer[nBufferLength - 1] = 0;
+        if (lpFilePart) {
+            char* last_slash = std::strrchr(lpBuffer, '/');
+            *lpFilePart = last_slash ? (last_slash + 1) : lpBuffer;
+        }
+    }
+    return static_cast<u32>(p.size());
+}
+
+u32 Win32ApiHle::hle_get_full_path_name_w(const wchar_t* lpFileName, u32 nBufferLength, wchar_t* lpBuffer, wchar_t** lpFilePart) {
+    if (!lpFileName) return 0;
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    std::string p = normalize_win_path(narrow.c_str());
+    if (lpBuffer && nBufferLength > 0) {
+        uint16_t* dst = reinterpret_cast<uint16_t*>(lpBuffer);
+        u32 len = 0;
+        while (len < p.size() && len + 1 < nBufferLength) {
+            dst[len] = static_cast<uint16_t>(p[len]);
+            len++;
+        }
+        dst[len] = 0;
+        if (lpFilePart) {
+            wchar_t* last_slash = nullptr;
+            for (u32 i = 0; i < len; ++i) {
+                if (lpBuffer[i] == L'/' || lpBuffer[i] == L'\\') last_slash = &lpBuffer[i + 1];
+            }
+            *lpFilePart = last_slash ? last_slash : lpBuffer;
+        }
+    }
+    return static_cast<u32>(p.size());
 }
 
 u32 Win32ApiHle::hle_get_current_directory_a(u32 nBufferLength, char* lpBuffer) {
-    if (getcwd(lpBuffer, nBufferLength)) {
-        return static_cast<u32>(std::strlen(lpBuffer));
+    char buf[1024]{};
+    if (getcwd(buf, sizeof(buf))) {
+        u32 len = static_cast<u32>(std::strlen(buf));
+        if (lpBuffer && nBufferLength > len) {
+            std::strncpy(lpBuffer, buf, nBufferLength);
+            return len;
+        }
+        return len + 1;
+    }
+    return 0;
+}
+
+u32 Win32ApiHle::hle_get_current_directory_w(u32 nBufferLength, wchar_t* lpBuffer) {
+    char buf[1024]{};
+    if (getcwd(buf, sizeof(buf))) {
+        u32 len = static_cast<u32>(std::strlen(buf));
+        if (lpBuffer && nBufferLength > len) {
+            uint16_t* dst = reinterpret_cast<uint16_t*>(lpBuffer);
+            for (u32 i = 0; i < len; ++i) dst[i] = static_cast<uint16_t>(buf[i]);
+            dst[len] = 0;
+            return len;
+        }
+        return len + 1;
     }
     return 0;
 }
 
 BOOL Win32ApiHle::hle_set_current_directory_a(const char* lpPathName) {
+    if (!lpPathName) return FALSE_VAL;
     std::string p = normalize_win_path(lpPathName);
     return (chdir(p.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
 }
 
-HANDLE Win32ApiHle::hle_find_first_file_a(const char* lpFileName, Win32FileFindDataA* lpFindFileData) {
-    if (lpFindFileData) {
-        std::strncpy(lpFindFileData->cFileName, "file.dat", 259);
-        lpFindFileData->dwFileAttributes = 0x80;
+BOOL Win32ApiHle::hle_set_current_directory_w(const wchar_t* lpPathName) {
+    if (!lpPathName) return FALSE_VAL;
+    std::string narrow = win_utf16_to_utf8(lpPathName);
+    return hle_set_current_directory_a(narrow.c_str());
+}
+
+BOOL Win32ApiHle::hle_get_file_size_ex(HANDLE hFile, int64_t* lpFileSize) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd < 0 || !lpFileSize) return FALSE_VAL;
+    struct stat st{};
+    if (fstat(fd, &st) == 0) {
+        *lpFileSize = static_cast<int64_t>(st.st_size);
+        return TRUE_VAL;
     }
-    return reinterpret_cast<HANDLE>(0x500);
+    return FALSE_VAL;
+}
+
+BOOL Win32ApiHle::hle_create_directory_w(const wchar_t* lpPathName, void* lpSec) {
+    if (!lpPathName) return FALSE_VAL;
+    std::string narrow = win_utf16_to_utf8(lpPathName);
+    std::string p = normalize_win_path(narrow.c_str());
+    return (mkdir(p.c_str(), 0755) == 0 || errno == EEXIST) ? TRUE_VAL : FALSE_VAL;
+}
+
+BOOL Win32ApiHle::hle_delete_file_w(const wchar_t* lpFileName) {
+    if (!lpFileName) return FALSE_VAL;
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    std::string p = normalize_win_path(narrow.c_str());
+    return (unlink(p.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
+}
+
+BOOL Win32ApiHle::hle_get_file_information_by_handle(HANDLE hFile, void* lpFileInformation) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd < 0 || !lpFileInformation) return FALSE_VAL;
+    struct stat st{};
+    if (fstat(fd, &st) == 0) {
+        struct Win32ByHandleFileInformation {
+            u32 dwFileAttributes;
+            u32 ftCreationTimeLow, ftCreationTimeHigh;
+            u32 ftLastAccessTimeLow, ftLastAccessTimeHigh;
+            u32 ftLastWriteTimeLow, ftLastWriteTimeHigh;
+            u32 dwVolumeSerialNumber;
+            u32 nFileSizeHigh;
+            u32 nFileSizeLow;
+            u32 nNumberOfLinks;
+            u32 nFileIndexHigh;
+            u32 nFileIndexLow;
+        };
+        auto* info = static_cast<Win32ByHandleFileInformation*>(lpFileInformation);
+        std::memset(info, 0, sizeof(*info));
+        info->dwFileAttributes = S_ISDIR(st.st_mode) ? 0x10 : 0x80;
+        info->nFileSizeLow = static_cast<u32>(st.st_size & 0xFFFFFFFF);
+        info->nFileSizeHigh = static_cast<u32>(st.st_size >> 32);
+        info->nNumberOfLinks = static_cast<u32>(st.st_nlink);
+        return TRUE_VAL;
+    }
+    return FALSE_VAL;
+}
+
+u32 Win32ApiHle::hle_get_file_type(HANDLE hFile) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd == 0 || fd == 1 || fd == 2) return 2; // FILE_TYPE_CHAR
+    struct stat st{};
+    if (fstat(fd, &st) == 0) {
+        if (S_ISCHR(st.st_mode)) return 2; // FILE_TYPE_CHAR
+        if (S_ISFIFO(st.st_mode)) return 3; // FILE_TYPE_PIPE
+        return 1; // FILE_TYPE_DISK
+    }
+    return 0; // FILE_TYPE_UNKNOWN
+}
+
+u16 Win32ApiHle::hle_get_user_default_ui_language() { return 0x0409; } // en-US
+u32 Win32ApiHle::hle_get_user_default_lcid() { return 0x0409; }
+int Win32ApiHle::hle_get_locale_info_ex(const wchar_t* lpLocaleName, u32 LCType, wchar_t* lpLCData, int cchData) {
+    if (lpLCData && cchData > 0) lpLCData[0] = 0;
+    return 1;
+}
+int Win32ApiHle::hle_lc_map_string_w(u32 Locale, u32 dwMapFlags, const wchar_t* lpSrcStr, int cchSrc, wchar_t* lpDestStr, int cchDest) {
+    if (!lpSrcStr) return 0;
+    int len = (cchSrc < 0) ? static_cast<int>(std::char_traits<wchar_t>::length(lpSrcStr) + 1) : cchSrc;
+    if (lpDestStr && cchDest >= len) {
+        std::memcpy(lpDestStr, lpSrcStr, len * sizeof(wchar_t));
+        return len;
+    }
+    return len;
+}
+int Win32ApiHle::hle_compare_string_w(u32 Locale, u32 dwCmpFlags, const wchar_t* lpString1, int cchCount1, const wchar_t* lpString2, int cchCount2) {
+    if (!lpString1 || !lpString2) return 2;
+    int len1 = (cchCount1 < 0) ? static_cast<int>(std::char_traits<wchar_t>::length(lpString1)) : cchCount1;
+    int len2 = (cchCount2 < 0) ? static_cast<int>(std::char_traits<wchar_t>::length(lpString2)) : cchCount2;
+    int min_len = std::min(len1, len2);
+    for (int i = 0; i < min_len; ++i) {
+        if (lpString1[i] < lpString2[i]) return 1; // CSTR_LESS_THAN
+        if (lpString1[i] > lpString2[i]) return 3; // CSTR_GREATER_THAN
+    }
+    if (len1 < len2) return 1;
+    if (len1 > len2) return 3;
+    return 2; // CSTR_EQUAL
+}
+int Win32ApiHle::hle_compare_string_ordinal(const wchar_t* lpString1, int cchCount1, const wchar_t* lpString2, int cchCount2, BOOL bIgnoreCase) {
+    return hle_compare_string_w(0, 0, lpString1, cchCount1, lpString2, cchCount2);
+}
+int Win32ApiHle::hle_compare_file_time(const void* lpFileTime1, const void* lpFileTime2) {
+    if (!lpFileTime1 || !lpFileTime2) return 0;
+    const auto* t1 = static_cast<const uint64_t*>(lpFileTime1);
+    const auto* t2 = static_cast<const uint64_t*>(lpFileTime2);
+    if (*t1 < *t2) return -1;
+    if (*t1 > *t2) return 1;
+    return 0;
+}
+BOOL Win32ApiHle::hle_system_time_to_tz_specific_local_time(const void* lpTimeZoneInformation, const void* lpUniversalTime, void* lpLocalTime) {
+    if (lpUniversalTime && lpLocalTime) std::memcpy(lpLocalTime, lpUniversalTime, 16);
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_get_time_zone_information(void* lpTimeZoneInformation) {
+    if (lpTimeZoneInformation) std::memset(lpTimeZoneInformation, 0, 172);
+    return 0; // TIME_ZONE_ID_UNKNOWN
+}
+BOOL Win32ApiHle::hle_get_volume_information_w(const wchar_t* lpRootPathName, wchar_t* lpVolumeNameBuffer, u32 nVolumeNameSize, u32* lpVolumeSerialNumber, u32* lpMaximumComponentLength, u32* lpFileSystemFlags, wchar_t* lpFileSystemNameBuffer, u32 nFileSystemNameSize) {
+    if (lpVolumeSerialNumber) *lpVolumeSerialNumber = 0x12345678;
+    if (lpMaximumComponentLength) *lpMaximumComponentLength = 255;
+    if (lpFileSystemFlags) *lpFileSystemFlags = 0x3; // FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
+    if (lpFileSystemNameBuffer && nFileSystemNameSize >= 4) {
+        uint16_t* dst = reinterpret_cast<uint16_t*>(lpFileSystemNameBuffer);
+        dst[0] = 'N'; dst[1] = 'T'; dst[2] = 'F'; dst[3] = 'S'; dst[4] = 0;
+    }
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_get_disk_free_space_ex_a(const char* lpDirectoryName, uint64_t* lpFreeBytesAvailableToCaller, uint64_t* lpTotalNumberOfBytes, uint64_t* lpTotalNumberOfFreeBytes) {
+    if (lpFreeBytesAvailableToCaller) *lpFreeBytesAvailableToCaller = 100ULL * 1024 * 1024 * 1024;
+    if (lpTotalNumberOfBytes) *lpTotalNumberOfBytes = 500ULL * 1024 * 1024 * 1024;
+    if (lpTotalNumberOfFreeBytes) *lpTotalNumberOfFreeBytes = 100ULL * 1024 * 1024 * 1024;
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_get_logical_drives() { return 0x4; } // Drive C:
+u32 Win32ApiHle::hle_get_temp_file_name_w(const wchar_t* lpPathName, const wchar_t* lpPrefixString, u32 uUnique, wchar_t* lpTempFileName) {
+    if (!lpTempFileName) return 0;
+    const wchar_t* name = L"C:\\temp.tmp";
+    std::memcpy(lpTempFileName, name, 12 * sizeof(wchar_t));
+    return 1;
+}
+BOOL Win32ApiHle::hle_replace_file_w(const wchar_t* lpReplacedFileName, const wchar_t* lpReplacementFileName, const wchar_t* lpBackupFileName, u32 dwReplaceFlags, void* lpExclude, void* lpReserved) {
+    if (!lpReplacedFileName || !lpReplacementFileName) return FALSE_VAL;
+    std::string rep = normalize_win_path(win_utf16_to_utf8(lpReplacedFileName).c_str());
+    std::string src = normalize_win_path(win_utf16_to_utf8(lpReplacementFileName).c_str());
+    return (rename(src.c_str(), rep.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_move_file_ex_w(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName, u32 dwFlags) {
+    if (!lpExistingFileName || !lpNewFileName) return FALSE_VAL;
+    std::string src = normalize_win_path(win_utf16_to_utf8(lpExistingFileName).c_str());
+    std::string dst = normalize_win_path(win_utf16_to_utf8(lpNewFileName).c_str());
+    return (rename(src.c_str(), dst.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_remove_directory_w(const wchar_t* lpPathName) {
+    if (!lpPathName) return FALSE_VAL;
+    std::string p = normalize_win_path(win_utf16_to_utf8(lpPathName).c_str());
+    return (rmdir(p.c_str()) == 0) ? TRUE_VAL : FALSE_VAL;
+}
+u32 Win32ApiHle::hle_get_drive_type_w(const wchar_t* lpRootPathName) { return 3; } // DRIVE_FIXED
+HANDLE Win32ApiHle::hle_get_std_handle(u32 nStdHandle) {
+    if (nStdHandle == static_cast<u32>(-10)) return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0)); // STD_INPUT_HANDLE
+    if (nStdHandle == static_cast<u32>(-11)) return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(1)); // STD_OUTPUT_HANDLE
+    if (nStdHandle == static_cast<u32>(-12)) return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(2)); // STD_ERROR_HANDLE
+    return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(1));
+}
+BOOL Win32ApiHle::hle_set_std_handle(u32 nStdHandle, HANDLE hHandle) { return TRUE_VAL; }
+s32 Win32ApiHle::hle_unhandled_exception_filter(void* ExceptionInfo) { return 1; } // EXCEPTION_EXECUTE_HANDLER
+BOOL Win32ApiHle::hle_set_end_of_file(HANDLE hFile) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd < 0) return FALSE_VAL;
+    off_t pos = lseek(fd, 0, SEEK_CUR);
+    if (pos != (off_t)-1) return (ftruncate(fd, pos) == 0) ? TRUE_VAL : FALSE_VAL;
+    return FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_flush_file_buffers(HANDLE hFile) {
+    int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
+    if (fd >= 0) fsync(fd);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_peek_named_pipe(HANDLE hNamedPipe, void* lpBuffer, u32 nBufferSize, u32* lpBytesRead, u32* lpTotalBytesAvail, u32* lpBytesLeftThisMessage) {
+    if (lpTotalBytesAvail) *lpTotalBytesAvail = 0;
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_create_pipe(HANDLE* hReadPipe, HANDLE* hWritePipe, void* lpPipeAttributes, u32 nSize) {
+    int fds[2];
+    if (pipe(fds) == 0) {
+        if (hReadPipe) *hReadPipe = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(fds[0]));
+        if (hWritePipe) *hWritePipe = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(fds[1]));
+        return TRUE_VAL;
+    }
+    return FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_set_handle_information(HANDLE hObject, u32 dwMask, u32 dwFlags) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_get_exit_code_process(HANDLE hProcess, u32* lpExitCode) {
+    if (lpExitCode) *lpExitCode = 0;
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_get_exit_code_thread(HANDLE hThread, u32* lpExitCode) {
+    if (lpExitCode) *lpExitCode = 0;
+    return TRUE_VAL;
+}
+HANDLE Win32ApiHle::hle_open_process(u32 dwDesiredAccess, BOOL bInheritHandle, u32 dwProcessId) {
+    return reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x7FFF00000001));
+}
+BOOL Win32ApiHle::hle_create_process_w(const wchar_t* lpApp, wchar_t* lpCmd, void* lpPA, void* lpTA, BOOL bInherit, u32 dwFlags, void* lpEnv, const wchar_t* lpCurrDir, void* lpSI, void* lpPI) {
+    return FALSE_VAL;
+}
+static wchar_t g_empty_env[] = { 0, 0 };
+wchar_t* Win32ApiHle::hle_get_environment_strings_w() { return g_empty_env; }
+BOOL Win32ApiHle::hle_free_environment_strings_w(wchar_t* penv) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_set_environment_variable_w(const wchar_t* lpName, const wchar_t* lpValue) { return TRUE_VAL; }
+u32 Win32ApiHle::hle_get_environment_variable_w(const wchar_t* lpName, wchar_t* lpBuffer, u32 nSize) { return 0; }
+u32 Win32ApiHle::hle_get_oemcp() { return 65001; } // UTF-8
+BOOL Win32ApiHle::hle_is_valid_code_page(u32 CodePage) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_is_valid_locale(u32 Locale, u32 dwFlags) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_enum_system_locales_w(void* lpLocaleEnumProc, u32 dwFlags) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_get_string_type_w(u32 dwInfoType, const wchar_t* lpSrcStr, int cchSrc, u16* lpCharType) {
+    if (lpCharType && cchSrc > 0) std::memset(lpCharType, 0, cchSrc * sizeof(u16));
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_get_cpinfo(u32 CodePage, void* lpCPInfo) {
+    if (lpCPInfo) std::memset(lpCPInfo, 0, 24);
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_set_thread_ideal_processor(HANDLE hThread, u32 dwIdealProcessor) { return 0; }
+uint64_t Win32ApiHle::hle_set_thread_affinity_mask(HANDLE hThread, uint64_t dwThreadAffinityMask) { return 1; }
+BOOL Win32ApiHle::hle_set_thread_priority(HANDLE hThread, int nPriority) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_set_priority_class(HANDLE hProcess, u32 dwPriorityClass) { return TRUE_VAL; }
+HANDLE Win32ApiHle::hle_power_create_request(void* Context) { return reinterpret_cast<HANDLE>(0x7FFF00000002); }
+BOOL Win32ApiHle::hle_power_set_request(HANDLE PowerRequest, u32 RequestType) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_power_clear_request(HANDLE PowerRequest, u32 RequestType) { return TRUE_VAL; }
+void Win32ApiHle::hle_initialize_srw_lock(void* SRWLock) { if (SRWLock) *static_cast<void**>(SRWLock) = nullptr; }
+void Win32ApiHle::hle_acquire_srw_lock_exclusive(void* SRWLock) {}
+void Win32ApiHle::hle_release_srw_lock_exclusive(void* SRWLock) {}
+BOOL Win32ApiHle::hle_try_acquire_srw_lock_exclusive(void* SRWLock) { return TRUE_VAL; }
+void Win32ApiHle::hle_acquire_srw_lock_shared(void* SRWLock) {}
+void Win32ApiHle::hle_release_srw_lock_shared(void* SRWLock) {}
+void Win32ApiHle::hle_initialize_condition_variable(void* ConditionVariable) { if (ConditionVariable) *static_cast<void**>(ConditionVariable) = nullptr; }
+void Win32ApiHle::hle_wake_condition_variable(void* ConditionVariable) {}
+void Win32ApiHle::hle_wake_all_condition_variable(void* ConditionVariable) {}
+BOOL Win32ApiHle::hle_sleep_condition_variable_cs(void* ConditionVariable, Win32CriticalSection* CriticalSection, u32 dwMilliseconds) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_sleep_condition_variable_srw(void* ConditionVariable, void* SRWLock, u32 dwMilliseconds, u32 Flags) { return TRUE_VAL; }
+BOOL Win32ApiHle::hle_init_once_begin_initialize(void* InitOnce, u32 dwFlags, BOOL* fPending, void** lpContext) {
+    if (fPending) *fPending = FALSE_VAL;
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_init_once_complete(void* InitOnce, u32 dwFlags, void* lpContext) { return TRUE_VAL; }
+void Win32ApiHle::hle_initialize_slist_head(void* ListHead) { if (ListHead) std::memset(ListHead, 0, 16); }
+void* Win32ApiHle::hle_interlocked_push_entry_slist(void* ListHead, void* ListEntry) { return nullptr; }
+void* Win32ApiHle::hle_global_alloc(u32 uFlags, size_t uBytes) { return hle_heap_alloc(hle_get_process_heap(), 0, uBytes); }
+void* Win32ApiHle::hle_global_lock(void* hMem) { return hMem; }
+BOOL Win32ApiHle::hle_global_unlock(void* hMem) { return TRUE_VAL; }
+
+HANDLE Win32ApiHle::hle_find_first_file_a(const char* lpFileName, Win32FileFindDataA* lpFindFileData) {
+    if (!lpFileName || !lpFindFileData) {
+        g_last_error = 2;
+        return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
+    }
+    std::string norm = normalize_win_path(lpFileName);
+    std::string dir_path = ".";
+    std::string pattern = "*";
+    size_t last_slash = norm.find_last_of('/');
+    if (last_slash != std::string::npos) {
+        dir_path = norm.substr(0, last_slash);
+        pattern = norm.substr(last_slash + 1);
+        if (dir_path.empty()) dir_path = "/";
+    } else {
+        pattern = norm;
+    }
+    if (pattern.empty() || pattern == "*.*") pattern = "*";
+
+    DIR* d = opendir(dir_path.c_str());
+    if (!d) {
+        g_last_error = 2;
+        return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
+    }
+
+    auto* state = new NativeFindState();
+    state->dir = d;
+    state->base_dir = dir_path;
+    state->pattern = pattern;
+
+    if (hle_find_next_file_a(state, lpFindFileData)) {
+        return state;
+    }
+    closedir(d);
+    delete state;
+    g_last_error = 2;
+    return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
 }
 
 BOOL Win32ApiHle::hle_find_next_file_a(HANDLE hFindFile, Win32FileFindDataA* lpFindFileData) {
+    if (!hFindFile || handle_tag(hFindFile) != kHandleFind || !lpFindFileData) {
+        g_last_error = 6; // ERROR_INVALID_HANDLE
+        return FALSE_VAL;
+    }
+    auto* state = static_cast<NativeFindState*>(hFindFile);
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(state->dir)) != nullptr) {
+        if (state->pattern != "*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
+            continue;
+        }
+        std::memset(lpFindFileData, 0, sizeof(Win32FileFindDataA));
+        std::strncpy(lpFindFileData->cFileName, entry->d_name, 259);
+        std::string full = state->base_dir + "/" + entry->d_name;
+        struct stat st{};
+        if (stat(full.c_str(), &st) == 0) {
+            lpFindFileData->dwFileAttributes = S_ISDIR(st.st_mode) ? 0x10 : 0x80;
+            lpFindFileData->nFileSizeLow = static_cast<u32>(st.st_size & 0xFFFFFFFF);
+            lpFindFileData->nFileSizeHigh = static_cast<u32>(st.st_size >> 32);
+        } else {
+            lpFindFileData->dwFileAttributes = 0x80;
+        }
+        return TRUE_VAL;
+    }
+    g_last_error = 18; // ERROR_NO_MORE_FILES
+    return FALSE_VAL;
+}
+
+HANDLE Win32ApiHle::hle_find_first_file_w(const wchar_t* lpFileName, Win32FileFindDataW* lpFindFileData) {
+    if (!lpFileName || !lpFindFileData) {
+        g_last_error = 2;
+        return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
+    }
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    std::string norm = normalize_win_path(narrow.c_str());
+    std::string dir_path = ".";
+    std::string pattern = "*";
+    size_t last_slash = norm.find_last_of('/');
+    if (last_slash != std::string::npos) {
+        dir_path = norm.substr(0, last_slash);
+        pattern = norm.substr(last_slash + 1);
+        if (dir_path.empty()) dir_path = "/";
+    } else {
+        pattern = norm;
+    }
+    if (pattern.empty() || pattern == "*.*") pattern = "*";
+
+    DIR* d = opendir(dir_path.c_str());
+    if (!d) {
+        g_last_error = 2;
+        return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
+    }
+
+    auto* state = new NativeFindState();
+    state->dir = d;
+    state->base_dir = dir_path;
+    state->pattern = pattern;
+
+    if (hle_find_next_file_w(state, lpFindFileData)) {
+        return state;
+    }
+    closedir(d);
+    delete state;
+    g_last_error = 2;
+    return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
+}
+
+HANDLE Win32ApiHle::hle_find_first_file_ex_w(const wchar_t* lpFileName, int fInfoLevelId, Win32FileFindDataW* lpFindFileData, int fSearchOp, void* lpSearchFilter, u32 dwAdditionalFlags) {
+    return hle_find_first_file_w(lpFileName, lpFindFileData);
+}
+
+BOOL Win32ApiHle::hle_find_next_file_w(HANDLE hFindFile, Win32FileFindDataW* lpFindFileData) {
+    if (!hFindFile || handle_tag(hFindFile) != kHandleFind || !lpFindFileData) {
+        g_last_error = 6;
+        return FALSE_VAL;
+    }
+    auto* state = static_cast<NativeFindState*>(hFindFile);
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(state->dir)) != nullptr) {
+        if (state->pattern != "*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
+            continue;
+        }
+        std::memset(lpFindFileData, 0, sizeof(Win32FileFindDataW));
+        size_t len = 0;
+        while (entry->d_name[len] && len + 1 < 260) {
+            lpFindFileData->cFileName[len] = static_cast<uint16_t>(entry->d_name[len]);
+            len++;
+        }
+        lpFindFileData->cFileName[len] = 0;
+        std::string full = state->base_dir + "/" + entry->d_name;
+        struct stat st{};
+        if (stat(full.c_str(), &st) == 0) {
+            lpFindFileData->dwFileAttributes = S_ISDIR(st.st_mode) ? 0x10 : 0x80;
+            lpFindFileData->nFileSizeLow = static_cast<u32>(st.st_size & 0xFFFFFFFF);
+            lpFindFileData->nFileSizeHigh = static_cast<u32>(st.st_size >> 32);
+        } else {
+            lpFindFileData->dwFileAttributes = 0x80;
+        }
+        return TRUE_VAL;
+    }
+    g_last_error = 18; // ERROR_NO_MORE_FILES
     return FALSE_VAL;
 }
 
 BOOL Win32ApiHle::hle_find_close(HANDLE hFindFile) {
+    if (!hFindFile || handle_tag(hFindFile) != kHandleFind) return FALSE_VAL;
+    auto* state = static_cast<NativeFindState*>(hFindFile);
+    if (state->dir) closedir(state->dir);
+    delete state;
     return TRUE_VAL;
 }
 
@@ -736,6 +1396,27 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
         symbol_name = lpProcName;
     }
 
+    // 1. Resolve directly from guest PE module if passed and matches a loaded DLL
+    auto* loader = PeLoader::active();
+    if (loader && hModule != nullptr) {
+        for (const auto& [name, img] : loader->loaded_dlls()) {
+            if (img.image_base == hModule) {
+                void* guest_sym = PeLoader::resolve_guest_export(hModule, symbol_name);
+                if (guest_sym) return guest_sym;
+                break;
+            }
+        }
+    }
+
+    // 2. Resolve from all loaded guest DLLs in active loader
+    if (loader) {
+        for (const auto& [name, img] : loader->loaded_dlls()) {
+            void* guest_sym = PeLoader::resolve_guest_export(img.image_base, symbol_name);
+            if (guest_sym) return guest_sym;
+        }
+    }
+
+    // 3. Resolve from HLE export table
     if (g_active_win32_hle) {
         for (const auto& [dll, funcs] : g_active_win32_hle->export_table_) {
             auto it = funcs.find(symbol_name);
@@ -761,6 +1442,14 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
     if (symbol_name == "CreateSemaphoreExA" || symbol_name == "CreateSemaphoreA") return reinterpret_cast<void*>(&hle_create_semaphore_a);
     if (symbol_name == "CreateSemaphoreExW" || symbol_name == "CreateSemaphoreW") return reinterpret_cast<void*>(&hle_create_semaphore_w);
     if (symbol_name == "CreateMutexExA" || symbol_name == "CreateMutexA" || symbol_name == "CreateMutexW" || symbol_name == "CreateMutexExW") return reinterpret_cast<void*>(&hle_create_mutex_a);
+    if (symbol_name == "GetFileAttributesExA") return reinterpret_cast<void*>(&hle_get_file_attributes_ex_a);
+    if (symbol_name == "GetFileAttributesExW") return reinterpret_cast<void*>(&hle_get_file_attributes_ex_w);
+    if (symbol_name == "FindFirstFileA") return reinterpret_cast<void*>(&hle_find_first_file_a);
+    if (symbol_name == "FindFirstFileW") return reinterpret_cast<void*>(&hle_find_first_file_w);
+    if (symbol_name == "FindFirstFileExW") return reinterpret_cast<void*>(&hle_find_first_file_ex_w);
+    if (symbol_name == "FindNextFileA") return reinterpret_cast<void*>(&hle_find_next_file_a);
+    if (symbol_name == "FindNextFileW") return reinterpret_cast<void*>(&hle_find_next_file_w);
+    if (symbol_name == "FindClose") return reinterpret_cast<void*>(&hle_find_close);
 
     if (symbol_name.starts_with("gl") || symbol_name.starts_with("wgl")) {
         void* p = hle_wgl_get_proc_address(symbol_name.c_str());
@@ -771,14 +1460,24 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
         if (p) return p;
     }
 
-    log::debug("HLE", "GetProcAddress: '{}' not found, returning generic fallback", symbol_name);
-    return reinterpret_cast<void*>(&generic_stub_zero);
+    g_last_error = 127;
+    return nullptr;
 }
 
 void* Win32ApiHle::hle_get_module_handle_a(const char* lpModuleName) {
     if (!lpModuleName) return reinterpret_cast<void*>(0x140000000); // Main EXE handle
     std::string name(lpModuleName);
     for (auto& c : name) c = static_cast<char>(std::tolower(c));
+    auto* loader = PeLoader::active();
+    if (loader) {
+        for (const auto& [n, img] : loader->loaded_dlls()) {
+            std::string lower_n = n;
+            for (auto& c : lower_n) c = static_cast<char>(std::tolower(c));
+            if (lower_n.find(name) != std::string::npos || name.find(lower_n) != std::string::npos) {
+                return img.image_base;
+            }
+        }
+    }
     if (name.find("kernel32") != std::string::npos) return reinterpret_cast<void*>(0x7FFF00010000);
     if (name.find("ntdll") != std::string::npos) return reinterpret_cast<void*>(0x7FFF00020000);
     if (name.find("user32") != std::string::npos) return reinterpret_cast<void*>(0x7FFF00030000);
@@ -800,17 +1499,44 @@ void* Win32ApiHle::hle_get_module_handle_a(const char* lpModuleName) {
 
 void* Win32ApiHle::hle_get_module_handle_w(const wchar_t* lpModuleName) {
     if (!lpModuleName) return reinterpret_cast<void*>(0x140000000);
-    char narrow[256] = {0};
-    hle_wide_char_to_multi_byte(0, 0, lpModuleName, -1, narrow, 255, nullptr, nullptr);
-    return hle_get_module_handle_a(narrow);
+    std::string narrow = win_utf16_to_utf8(lpModuleName);
+    return hle_get_module_handle_a(narrow.c_str());
 }
 
 void* Win32ApiHle::hle_load_library_a(const char* lpLibFileName) {
+    if (!lpLibFileName) return nullptr;
+    std::string path = normalize_win_path(lpLibFileName);
+    auto* loader = PeLoader::active();
+    if (loader) {
+        const auto& dlls = loader->loaded_dlls();
+        auto it = dlls.find(lpLibFileName);
+        if (it != dlls.end()) return it->second.image_base;
+        it = dlls.find(path);
+        if (it != dlls.end()) return it->second.image_base;
+
+        if (std::filesystem::exists(path)) {
+            auto res = loader->load_from_file(path);
+            if (res.has_value()) {
+                log::info("WIN32", "Loaded dynamic PE module '{}' at 0x{:X}", path,
+                          reinterpret_cast<uintptr_t>(res->image_base));
+                loader->add_loaded_dll(lpLibFileName, *res);
+                loader->add_loaded_dll(path, *res);
+                if (res->entry_point) {
+                    using DllMainFn = BOOL(PAPAYA_MS_ABI*)(void*, u32, void*);
+                    auto dll_main = reinterpret_cast<DllMainFn>(res->entry_point);
+                    dll_main(res->image_base, 1 /* DLL_PROCESS_ATTACH */, nullptr);
+                }
+                return res->image_base;
+            }
+        }
+    }
     return hle_get_module_handle_a(lpLibFileName);
 }
 
 void* Win32ApiHle::hle_load_library_w(const wchar_t* lpLibFileName) {
-    return hle_get_module_handle_w(lpLibFileName);
+    if (!lpLibFileName) return nullptr;
+    std::string narrow = win_utf16_to_utf8(lpLibFileName);
+    return hle_load_library_a(narrow.c_str());
 }
 
 void* Win32ApiHle::hle_load_library_ex_a(const char* lpLibFileName, HANDLE hFile, u32 dwFlags) {
@@ -825,26 +1551,70 @@ BOOL Win32ApiHle::hle_free_library(void* hLibModule) {
     return TRUE_VAL;
 }
 
+static std::string g_current_game_path = "game.exe";
+static std::string g_current_game_name = "game.exe";
+static std::string g_cmdline = "game.exe";
+static std::vector<uint16_t> g_wcmdline = { 'g','a','m','e','.','e','x','e', 0 };
+
+void Win32ApiHle::set_game_path(const std::string& path) {
+    g_current_game_path = path;
+    size_t last_slash = path.find_last_of("/\\");
+    if (last_slash != std::string::npos) {
+        g_current_game_name = path.substr(last_slash + 1);
+    } else {
+        g_current_game_name = path;
+    }
+    g_cmdline = "\"" + g_current_game_name + "\"";
+    g_wcmdline.clear();
+    for (char c : g_cmdline) {
+        g_wcmdline.push_back(static_cast<uint16_t>(c));
+    }
+    g_wcmdline.push_back(0);
+}
+
 u32 Win32ApiHle::hle_get_module_file_name_a(void* hModule, char* lpFilename, u32 nSize) {
     if (!lpFilename || nSize == 0) return 0;
-    const char* p = (hModule != nullptr) ? "C:\\UnityPlayer.dll" : "C:\\How to Fish.exe";
-    std::strncpy(lpFilename, p, nSize - 1);
+    std::string p = "C:\\" + g_current_game_name;
+    std::strncpy(lpFilename, p.c_str(), nSize - 1);
     lpFilename[nSize - 1] = '\0';
     return static_cast<u32>(std::strlen(lpFilename));
 }
 
 u32 Win32ApiHle::hle_get_module_file_name_w(void* hModule, wchar_t* lpFilename, u32 nSize) {
     if (!lpFilename || nSize == 0) return 0;
-    const wchar_t* p = (hModule != nullptr) ? L"C:\\UnityPlayer.dll" : L"C:\\How to Fish.exe";
-    std::wcsncpy(lpFilename, p, nSize - 1);
-    lpFilename[nSize - 1] = L'\0';
-    return static_cast<u32>(std::wcslen(lpFilename));
+    std::string p = "C:\\" + g_current_game_name;
+    uint16_t* dst = reinterpret_cast<uint16_t*>(lpFilename);
+    u32 len = 0;
+    while (len < p.size() && len + 1 < nSize) {
+        dst[len] = static_cast<uint16_t>(p[len]);
+        len++;
+    }
+    dst[len] = 0;
+    return len;
 }
 
-void* Win32ApiHle::hle_encode_pointer(void* ptr) { return ptr; }
-void* Win32ApiHle::hle_decode_pointer(void* ptr) { return ptr; }
-void* Win32ApiHle::hle_encode_system_pointer(void* ptr) { return ptr; }
-void* Win32ApiHle::hle_decode_system_pointer(void* ptr) { return ptr; }
+static const u64 g_pointer_cookie = 0x2B992DD785DDULL;
+
+void* Win32ApiHle::hle_encode_pointer(void* ptr) {
+    if (!ptr) return nullptr;
+    u64 val = reinterpret_cast<u64>(ptr);
+    u8 shift = static_cast<u8>(g_pointer_cookie & 0x3F);
+    val = (val << shift) | (val >> ((64 - shift) & 0x3F)); // rol
+    val ^= g_pointer_cookie;
+    return reinterpret_cast<void*>(val);
+}
+
+void* Win32ApiHle::hle_decode_pointer(void* ptr) {
+    if (!ptr) return nullptr;
+    u64 val = reinterpret_cast<u64>(ptr);
+    u8 shift = static_cast<u8>(g_pointer_cookie & 0x3F);
+    val ^= g_pointer_cookie;
+    val = (val >> shift) | (val << ((64 - shift) & 0x3F)); // ror
+    return reinterpret_cast<void*>(val);
+}
+
+void* Win32ApiHle::hle_encode_system_pointer(void* ptr) { return hle_encode_pointer(ptr); }
+void* Win32ApiHle::hle_decode_system_pointer(void* ptr) { return hle_decode_pointer(ptr); }
 
 void Win32ApiHle::hle_get_system_info(Win32SystemInfo* lpSystemInfo) {
     if (!lpSystemInfo) return;
@@ -883,11 +1653,8 @@ BOOL Win32ApiHle::hle_is_processor_feature_present(u32 ProcessorFeature) {
     }
 }
 
-static const char* g_cmdline = "papaya_game.exe";
-static const wchar_t* g_wcmdline = L"papaya_game.exe";
-
-const char* Win32ApiHle::hle_get_command_line_a() { return g_cmdline; }
-const wchar_t* Win32ApiHle::hle_get_command_line_w() { return g_wcmdline; }
+const char* Win32ApiHle::hle_get_command_line_a() { return g_cmdline.c_str(); }
+const wchar_t* Win32ApiHle::hle_get_command_line_w() { return reinterpret_cast<const wchar_t*>(g_wcmdline.data()); }
 
 u32 Win32ApiHle::hle_get_environment_variable_a(const char* lpName, char* lpBuffer, u32 nSize) {
     const char* val = getenv(lpName);
@@ -957,26 +1724,7 @@ BOOL Win32ApiHle::hle_get_window_rect(HWND hWnd, void* lpRect) {
 
 // Helper to convert wide or atom pointer to std::string
 static std::string wide_or_atom_to_utf8(const void* ptr) {
-    if (!ptr) return "";
-    u64 val = reinterpret_cast<u64>(ptr);
-    if (val < 0x10000) {
-        return "#" + std::to_string(val);
-    }
-    const wchar_t* wstr = static_cast<const wchar_t*>(ptr);
-    std::string out;
-    while (*wstr) {
-        wchar_t ch = *wstr++;
-        if (ch < 0x80) out.push_back(static_cast<char>(ch));
-        else if (ch < 0x800) {
-            out.push_back(static_cast<char>(0xC0 | (ch >> 6)));
-            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
-        } else {
-            out.push_back(static_cast<char>(0xE0 | (ch >> 12)));
-            out.push_back(static_cast<char>(0x80 | ((ch >> 6) & 0x3F)));
-            out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
-        }
-    }
-    return out;
+    return win_utf16_to_utf8(ptr);
 }
 
 // ---- Window classes / creation ----
@@ -1367,14 +2115,8 @@ size_t Win32ApiHle::hle_virtual_query(void* lpAddr, int info, void* buf, size_t 
 // -------------------------------------------------------------
 // Semaphore Emulation
 // -------------------------------------------------------------
-struct NativeSemaphoreState {
-    std::mutex mtx;
-    std::condition_variable cv;
-    s32 count{0};
-    s32 max_count{1};
-};
-
 HANDLE Win32ApiHle::hle_create_semaphore_a(void* lpSec, s32 lInitialCount, s32 lMaxCount, const char* lpName) {
+    (void)lpSec; (void)lpName;
     auto* sem = new NativeSemaphoreState();
     sem->count     = lInitialCount;
     sem->max_count = (lMaxCount > 0) ? lMaxCount : 0x7FFFFFFF;
@@ -1382,7 +2124,8 @@ HANDLE Win32ApiHle::hle_create_semaphore_a(void* lpSec, s32 lInitialCount, s32 l
 }
 
 HANDLE Win32ApiHle::hle_create_semaphore_w(void* lpSec, s32 lInitialCount, s32 lMaxCount, const wchar_t* lpName) {
-    return hle_create_semaphore_a(lpSec, lInitialCount, lMaxCount, nullptr);
+    std::string narrow = win_utf16_to_utf8(lpName);
+    return hle_create_semaphore_a(lpSec, lInitialCount, lMaxCount, lpName ? narrow.c_str() : nullptr);
 }
 
 BOOL Win32ApiHle::hle_release_semaphore(HANDLE hSemaphore, s32 lReleaseCount, s32* lpPreviousCount) {
@@ -1507,33 +2250,37 @@ BOOL Win32ApiHle::hle_is_debugger_present() {
 int Win32ApiHle::hle_multi_byte_to_wide_char(u32 CodePage, u32 dwFlags,
                                               const char* lpMBStr, int cbMB,
                                               wchar_t* lpWStr, int cchWC) {
+    (void)CodePage; (void)dwFlags;
     if (!lpMBStr) return 0;
-    size_t len = (cbMB < 0) ? std::strlen(lpMBStr) + 1 : static_cast<size_t>(cbMB);
-    if (cchWC == 0) return static_cast<int>(len);
-    size_t out = std::min(static_cast<size_t>(cchWC), len);
+    size_t in_len = (cbMB < 0) ? (std::strlen(lpMBStr) + 1) : static_cast<size_t>(cbMB);
+    if (cchWC == 0) return static_cast<int>(in_len);
+    size_t out_len = std::min(static_cast<size_t>(cchWC), in_len);
     if (lpWStr) {
-        for (size_t i = 0; i < out; ++i) {
-            lpWStr[i] = static_cast<wchar_t>(static_cast<unsigned char>(lpMBStr[i]));
+        uint16_t* dst = reinterpret_cast<uint16_t*>(lpWStr);
+        for (size_t i = 0; i < out_len; ++i) {
+            dst[i] = static_cast<uint16_t>(static_cast<unsigned char>(lpMBStr[i]));
         }
     }
-    return static_cast<int>(out);
+    return static_cast<int>(out_len);
 }
 
 int Win32ApiHle::hle_wide_char_to_multi_byte(u32 CodePage, u32 dwFlags,
                                               const wchar_t* lpWStr, int cchWC,
                                               char* lpMBStr, int cbMB,
                                               const char* lpDef, BOOL* lpUsed) {
+    (void)CodePage; (void)dwFlags; (void)lpDef;
     if (!lpWStr) return 0;
-    size_t len = (cchWC < 0) ? (std::wcslen(lpWStr) + 1) : static_cast<size_t>(cchWC);
-    if (cbMB == 0) return static_cast<int>(len);
-    size_t out = std::min(static_cast<size_t>(cbMB), len);
+    const uint16_t* u16 = reinterpret_cast<const uint16_t*>(lpWStr);
+    size_t in_len = (cchWC < 0) ? (win_utf16_len(u16) + 1) : static_cast<size_t>(cchWC);
+    if (cbMB == 0) return static_cast<int>(in_len);
+    size_t out_len = std::min(static_cast<size_t>(cbMB), in_len);
     if (lpMBStr) {
-        for (size_t i = 0; i < out; ++i) {
-            lpMBStr[i] = (lpWStr[i] < 0x80) ? static_cast<char>(lpWStr[i]) : '?';
+        for (size_t i = 0; i < out_len; ++i) {
+            lpMBStr[i] = (u16[i] < 0x80) ? static_cast<char>(u16[i]) : '?';
         }
     }
     if (lpUsed) *lpUsed = FALSE_VAL;
-    return static_cast<int>(out);
+    return static_cast<int>(out_len);
 }
 
 // -------------------------------------------------------------
@@ -1900,8 +2647,7 @@ u32 Win32ApiHle::hle_set_error_mode(u32 uMode) {
 }
 
 void Win32ApiHle::hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args) {
-    log::warn("WIN32", "RaiseException(0x{:08X}, flags=0x{:08X}, nargs={}) — terminating guest process", code, flags, nargs);
-    _exit(static_cast<int>(code));
+    log::warn("WIN32", "RaiseException(0x{:08X}, flags=0x{:08X}, nargs={})", code, flags, nargs);
 }
 
 // -------------------------------------------------------------
@@ -1930,17 +2676,6 @@ BOOL Win32ApiHle::hle_play_sound_a(const char* pszSound, void* hmod, u32 flags) 
     return winmm_play_sound(pszSound, async) ? TRUE_VAL : FALSE_VAL;
 }
 
-static std::string wchar_to_utf8(const wchar_t* w) {
-    if (!w) return {};
-    std::string out;
-    for (const wchar_t* p = w; *p; ++p) {
-        unsigned cp = static_cast<unsigned>(*p);
-        if (cp < 0x80) out += (char)cp;
-        else if (cp < 0x800) { out += (char)(0xC0 | (cp >> 6)); out += (char)(0x80 | (cp & 0x3F)); }
-        else { out += (char)(0xE0 | (cp >> 12)); out += (char)(0x80 | ((cp >> 6) & 0x3F)); out += (char)(0x80 | (cp & 0x3F)); }
-    }
-    return out;
-}
 
 BOOL Win32ApiHle::hle_play_sound_w(const wchar_t* pszSound, void* hmod, u32 flags) {
     (void)hmod;
@@ -2071,6 +2806,48 @@ u32 Win32ApiHle::hle_time_set_event(u32 delay, u32 resolution, void* func, void*
 // -------------------------------------------------------------
 // SHELL32
 // -------------------------------------------------------------
+static uint16_t s_saved_path_u16[] = {
+    'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'S', 'a', 'v', 'e', 'd', ' ', 'G', 'a', 'm', 'e', 's', 0
+};
+static uint16_t s_docs_path_u16[] = {
+    'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'D', 'o', 'c', 'u', 'm', 'e', 'n', 't', 's', 0
+};
+
+static u32 g_dummy_sub_authority = 0x1000;
+static u8  g_dummy_sub_authority_count = 1;
+static u8  g_dummy_sid[32] = { 1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0, 0x00, 0x10, 0x00, 0x00 };
+
+static PAPAYA_MS_ABI u32* hle_get_sid_sub_authority(void* pSid, u32 nSubAuthority) {
+    (void)pSid; (void)nSubAuthority;
+    return &g_dummy_sub_authority;
+}
+
+static PAPAYA_MS_ABI u8* hle_get_sid_sub_authority_count(void* pSid) {
+    (void)pSid;
+    return &g_dummy_sub_authority_count;
+}
+
+static PAPAYA_MS_ABI BOOL hle_get_token_information(HANDLE TokenHandle, u32 TokenInformationClass, void* TokenInformation, u32 TokenInformationLength, u32* ReturnLength) {
+    (void)TokenHandle;
+    if (TokenInformationClass == 1) { // TokenUser
+        if (TokenInformation && TokenInformationLength >= sizeof(void*) + sizeof(u32)) {
+            auto** pSid = reinterpret_cast<void**>(TokenInformation);
+            *pSid = g_dummy_sid;
+            *reinterpret_cast<u32*>(reinterpret_cast<u8*>(TokenInformation) + sizeof(void*)) = 0;
+        }
+        if (ReturnLength) *ReturnLength = sizeof(void*) + sizeof(u32) + sizeof(g_dummy_sid);
+        return TRUE_VAL;
+    }
+    if (ReturnLength) *ReturnLength = 32;
+    return TRUE_VAL;
+}
+
+static PAPAYA_MS_ABI BOOL hle_open_process_token(HANDLE ProcessHandle, u32 DesiredAccess, HANDLE* TokenHandle) {
+    (void)ProcessHandle; (void)DesiredAccess;
+    if (TokenHandle) *TokenHandle = reinterpret_cast<HANDLE>(0x1234);
+    return TRUE_VAL;
+}
+
 s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath) {
     (void)hwnd; (void)csidl; (void)hToken; (void)dwFlags;
     if (!pszPath) return -1;
@@ -2081,35 +2858,70 @@ s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u
 s32 Win32ApiHle::hle_sh_get_folder_path_w(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, wchar_t* pszPath) {
     (void)hwnd; (void)csidl; (void)hToken; (void)dwFlags;
     if (!pszPath) return -1;
-    std::wcsncpy(pszPath, L"C:\\users\\steamuser\\Documents", 260);
+    std::memcpy(pszPath, s_docs_path_u16, sizeof(s_docs_path_u16));
     return 0; // S_OK
 }
 
 s32 Win32ApiHle::hle_sh_get_known_folder_path(const void* rfid, u32 dwFlags, HANDLE hToken, wchar_t** ppszPath) {
     (void)rfid; (void)dwFlags; (void)hToken;
     if (!ppszPath) return -1;
-    static wchar_t saved_path[] = L"C:\\users\\steamuser\\Saved Games";
-    *ppszPath = saved_path;
-    return 0; // S_OK
+    void* mem = std::malloc(sizeof(s_saved_path_u16));
+    if (mem) {
+        std::memcpy(mem, s_saved_path_u16, sizeof(s_saved_path_u16));
+        *ppszPath = reinterpret_cast<wchar_t*>(mem);
+        return 0; // S_OK
+    }
+    return -1;
 }
 
 wchar_t** Win32ApiHle::hle_command_line_to_argv_w(const wchar_t* lpCmdLine, int* pNumArgs) {
-    const wchar_t* cmd = (lpCmdLine && *lpCmdLine) ? lpCmdLine : L"papaya_game.exe";
-    size_t cmd_len = std::wcslen(cmd);
-    size_t total_size = sizeof(wchar_t*) * 4 + (cmd_len + 4) * sizeof(wchar_t);
+    std::string cmd_str = lpCmdLine ? win_utf16_to_utf8(lpCmdLine) : "papaya_game.exe";
+    if (cmd_str.empty()) cmd_str = "papaya_game.exe";
+
+    size_t total_size = sizeof(uint16_t*) * 8 + (cmd_str.size() + 8) * sizeof(uint16_t);
     void* mem = std::malloc(total_size);
     if (!mem) {
         if (pNumArgs) *pNumArgs = 0;
         return nullptr;
     }
     std::memset(mem, 0, total_size);
-    wchar_t** argv = static_cast<wchar_t**>(mem);
-    wchar_t* str_buf = reinterpret_cast<wchar_t*>(argv + 4);
-    std::wcscpy(str_buf, cmd);
+    uint16_t** argv = static_cast<uint16_t**>(mem);
+    uint16_t* str_buf = reinterpret_cast<uint16_t*>(argv + 8);
+    for (size_t i = 0; i < cmd_str.size(); ++i) {
+        str_buf[i] = static_cast<uint16_t>(cmd_str[i]);
+    }
+    str_buf[cmd_str.size()] = 0;
     argv[0] = str_buf;
     argv[1] = nullptr;
     if (pNumArgs) *pNumArgs = 1;
-    return argv;
+    return reinterpret_cast<wchar_t**>(argv);
+}
+
+static PAPAYA_MS_ABI u32 hle_dwrite_create_factory(u32 factoryType, const void* iid, void** ppFactory) {
+    (void)factoryType; (void)iid;
+    if (ppFactory) *ppFactory = nullptr;
+    return 0x80004001; // E_NOTIMPL -> Godot/client cleanly falls back to FreeType/GDI
+}
+
+static PAPAYA_MS_ABI HANDLE hle_av_set_mm_thread_characteristics_w(const wchar_t* TaskName, u32* TaskIndex) {
+    (void)TaskName;
+    if (TaskIndex) *TaskIndex = 1;
+    return reinterpret_cast<HANDLE>(0x1234);
+}
+
+static PAPAYA_MS_ABI BOOL hle_av_set_mm_thread_priority(HANDLE AvrtHandle, s32 Priority) {
+    (void)AvrtHandle; (void)Priority;
+    return TRUE_VAL;
+}
+
+static PAPAYA_MS_ABI u32 hle_dwm_enable_blur_behind_window(HWND hWnd, const void* pBlurBehind) {
+    (void)hWnd; (void)pBlurBehind;
+    return 0; // S_OK
+}
+
+static PAPAYA_MS_ABI u32 hle_dwm_set_window_attribute(HWND hWnd, u32 dwAttribute, const void* pvAttribute, u32 cbAttribute) {
+    (void)hWnd; (void)dwAttribute; (void)pvAttribute; (void)cbAttribute;
+    return 0; // S_OK
 }
 
 // -------------------------------------------------------------
@@ -2235,6 +3047,63 @@ BOOL Win32ApiHle::hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
         }
     }
     return TRUE_VAL;
+}
+
+u32 Win32ApiHle::hle_get_pixel(void* hdc, int x, int y) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d || !d->fb || x < 0 || y < 0 || x >= d->w || y >= d->h) return 0xFFFFFFFF;  // CLR_INVALID
+    const u8* p = d->fb + (static_cast<u32>(y) * d->w + static_cast<u32>(x)) * 4;
+    // COLORREF is 0x00BBGGRR (BGR order), little-endian uint32.
+    return static_cast<u32>(p[2]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[0]) << 16);
+}
+
+int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
+    auto* d = gdi_dc_of(hdc);
+    // Common GetDeviceCaps indices (values matter to games for setup).
+    enum {
+        HORZRES=8, VERTRES=10, BITSPIXEL=12, PLANES=14, NUMBRUSHES=16,
+        NUMPENS=18, NUMCOLORS=24, LOGPIXELSX=88, LOGPIXELSY=90,
+        COLORMGMTCAPS=121, SIZEPALETTE=104, VERTREFRESH=111,
+    };
+    int w = d && d->w ? d->w : 640;
+    int h = d && d->h ? d->h : 480;
+    switch (nIndex) {
+        case HORZRES:  return w;
+        case VERTRES:  return h;
+        case BITSPIXEL: return 32;
+        case PLANES:   return 1;
+        case LOGPIXELSX: return 96;
+        case LOGPIXELSY: return 96;
+        case NUMBRUSHES: return 100;
+        case NUMPENS:   return 100;
+        case NUMCOLORS: return 0x1000000;   // >256 => passthrough
+        case SIZEPALETTE: return 256;
+        case VERTREFRESH: return 60;
+        case COLORMGMTCAPS: return 0;
+        default: return 0;
+    }
+}
+
+int Win32ApiHle::hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
+                                const void* lpbmi, u32 usage) {
+    (void)hdc;
+    (void)usage;
+    // Copy a top-down 32bpp DIB for the common case. lpbmi = BITMAPINFO whose
+    // bmiHeader: biSize(0),biWidth(4),biHeight(8),biPlanes(12),biBitCount(14),
+    // biCompression(16),biSizeImage(20).
+    // Only support caller providing a bitmap header + output buffer (BGRA).
+    if (!bits || !lpbmi) return 0;
+    const u8* hdr = reinterpret_cast<const u8*>(lpbmi);
+    int biWidth  = reinterpret_cast<const int*>(hdr + 4)[0];
+    int biHeight = reinterpret_cast<const int*>(hdr + 8)[0];
+    // We don't track a global "current bitmap"; report 0 lines unless the guest
+    // passes one we recognize. Most games call GetDIBits to read back their own
+    // DIBs we didn't create, so returning the count with zeroed output is safest.
+    u32 n = (start == 0) ? (biHeight < 0 ? static_cast<u32>(-biHeight) : static_cast<u32>(biHeight)) : 0;
+    if (biWidth > 0 && n > 0 && clines >= n) {
+        std::memset(bits, 0, static_cast<size_t>(biWidth) * n * 4);
+    }
+    return static_cast<int>(n);
 }
 
 // ------------------------------------------------------------
@@ -2374,6 +3243,173 @@ static PAPAYA_MS_ABI uint32_t hle_vk_get_physical_device_win32_presentation_supp
     return 1; // VK_TRUE
 }
 
+__asm__(
+".text\n"
+".intel_syntax noprefix\n"
+".globl ms_vulkan_bridge\n"
+".type ms_vulkan_bridge, @function\n"
+"ms_vulkan_bridge:\n"
+"    push rbp\n"
+"    mov rbp, rsp\n"
+"    mov rax, [rbp + 0x30]\n"
+"    mov r10, [rbp + 0x38]\n"
+"    sub rsp, 48\n"
+"    mov rdi, [rbp + 0x40]\n"
+"    mov [rsp + 0x00], rdi\n"
+"    mov rdi, [rbp + 0x48]\n"
+"    mov [rsp + 0x08], rdi\n"
+"    mov rdi, [rbp + 0x50]\n"
+"    mov [rsp + 0x10], rdi\n"
+"    mov rdi, [rbp + 0x58]\n"
+"    mov [rsp + 0x18], rdi\n"
+"    mov rdi, [rbp + 0x60]\n"
+"    mov [rsp + 0x20], rdi\n"
+"    mov rdi, [rbp + 0x68]\n"
+"    mov [rsp + 0x28], rdi\n"
+"    mov rdi, rcx\n"
+"    mov rsi, rdx\n"
+"    mov rdx, r8\n"
+"    mov rcx, r9\n"
+"    mov r8, rax\n"
+"    mov r9, r10\n"
+"    xor eax, eax\n"
+"    call r11\n"
+"    leave\n"
+"    ret\n"
+".att_syntax prefix\n"
+);
+
+extern "C" void ms_vulkan_bridge();
+
+static void* get_vulkan_ms_thunk(void* host_fn) {
+    if (!host_fn) return nullptr;
+    static std::unordered_map<void*, void*> s_thunks;
+    static uint8_t* s_thunk_pool = nullptr;
+    static size_t s_thunk_offset = 0;
+
+    auto it = s_thunks.find(host_fn);
+    if (it != s_thunks.end()) return it->second;
+
+    if (!s_thunk_pool || s_thunk_offset + 32 > 4096 * 64) {
+        s_thunk_pool = static_cast<uint8_t*>(mmap(nullptr, 4096 * 64,
+            PROT_READ | PROT_WRITE | PROT_EXEC,
+            MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
+        s_thunk_offset = 0;
+    }
+
+    uint8_t* code = s_thunk_pool + s_thunk_offset;
+    s_thunk_offset += 32;
+
+    // 49 BB <host_fn>          -> mov r11, host_fn (10 bytes)
+    code[0] = 0x49; code[1] = 0xBB;
+    std::memcpy(code + 2, &host_fn, 8);
+    // 48 B8 <ms_vulkan_bridge> -> mov rax, ms_vulkan_bridge (10 bytes)
+    code[10] = 0x48; code[11] = 0xB8;
+    void* bridge_ptr = reinterpret_cast<void*>(&ms_vulkan_bridge);
+    std::memcpy(code + 12, &bridge_ptr, 8);
+    // FF E0                   -> jmp rax (2 bytes)
+    code[20] = 0xFF; code[21] = 0xE0;
+    code[22] = 0x90; // nop
+
+    s_thunks[host_fn] = code;
+    return code;
+}
+
+struct VkExtensionProperties_T {
+    char extensionName[256];
+    uint32_t specVersion;
+};
+
+static PAPAYA_MS_ABI int hle_vk_enumerate_instance_extension_properties(
+    const char* pLayerName, uint32_t* pPropertyCount, VkExtensionProperties_T* pProperties) {
+    static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
+    if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
+    typedef int (*vk_enum_ext_fn)(const char*, uint32_t*, VkExtensionProperties_T*);
+    static auto real_fn = reinterpret_cast<vk_enum_ext_fn>(libvk ? dlsym(libvk, "vkEnumerateInstanceExtensionProperties") : nullptr);
+    if (!real_fn) return -1;
+
+    if (!pProperties) {
+        int res = real_fn(pLayerName, pPropertyCount, nullptr);
+        if (res == 0 && pPropertyCount) (*pPropertyCount) += 2;
+        return res;
+    }
+
+    uint32_t count = *pPropertyCount;
+    int res = real_fn(pLayerName, &count, pProperties);
+    if (res == 0) {
+        bool has_win32 = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (std::strcmp(pProperties[i].extensionName, "VK_KHR_win32_surface") == 0) has_win32 = true;
+        }
+        if (!has_win32 && count < *pPropertyCount) {
+            std::strncpy(pProperties[count].extensionName, "VK_KHR_win32_surface", 255);
+            pProperties[count].specVersion = 6;
+            count++;
+        }
+        *pPropertyCount = count;
+    }
+    return res;
+}
+
+struct VkInstanceCreateInfo_T {
+    uint32_t sType;
+    const void* pNext;
+    uint32_t flags;
+    const void* pApplicationInfo;
+    uint32_t enabledLayerCount;
+    const char* const* ppEnabledLayerNames;
+    uint32_t enabledExtensionCount;
+    const char* const* ppEnabledExtensionNames;
+};
+
+static PAPAYA_MS_ABI int hle_vk_create_instance(
+    const VkInstanceCreateInfo_T* pCreateInfo, const void* pAllocator, void** pInstance) {
+    if (!pCreateInfo || !pInstance) return -1;
+    static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
+    if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
+    typedef int (*vk_create_inst_fn)(const VkInstanceCreateInfo_T*, const void*, void**);
+    static auto real_fn = reinterpret_cast<vk_create_inst_fn>(libvk ? dlsym(libvk, "vkCreateInstance") : nullptr);
+    if (!real_fn) return -1;
+
+    std::vector<const char*> ext_names;
+    bool has_xlib = false;
+    for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i) {
+        const char* name = pCreateInfo->ppEnabledExtensionNames[i];
+        if (std::strcmp(name, "VK_KHR_win32_surface") == 0) {
+            ext_names.push_back("VK_KHR_xlib_surface");
+            has_xlib = true;
+        } else {
+            ext_names.push_back(name);
+        }
+    }
+    if (!has_xlib) ext_names.push_back("VK_KHR_xlib_surface");
+
+    VkInstanceCreateInfo_T modified_info = *pCreateInfo;
+    modified_info.enabledExtensionCount = static_cast<uint32_t>(ext_names.size());
+    modified_info.ppEnabledExtensionNames = ext_names.data();
+
+    int res = real_fn(&modified_info, pAllocator, pInstance);
+    log::info("VK_LAYER", "Intercepted vkCreateInstance -> res={}", res);
+    return res;
+}
+
+static PAPAYA_MS_ABI void* hle_vk_get_device_proc_addr(void* device, const char* pName) {
+    if (!pName || !device) return nullptr;
+    static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
+    if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
+    if (!libvk) return nullptr;
+    typedef void* (*vk_get_dev_proc_fn)(void*, const char*);
+    static auto dev_proc = reinterpret_cast<vk_get_dev_proc_fn>(dlsym(libvk, "vkGetDeviceProcAddr"));
+    void* p = dev_proc ? dev_proc(device, pName) : nullptr;
+    if (p) return get_vulkan_ms_thunk(p);
+    return nullptr;
+}
+
+static PAPAYA_MS_ABI int hle_vk_enumerate_instance_version(uint32_t* pApiVersion) {
+    if (pApiVersion) *pApiVersion = 0x00403000; // Vulkan 1.3
+    return 0; // VK_SUCCESS
+}
+
 void* Win32ApiHle::hle_vk_get_instance_proc_addr(void* instance, const char* pName) {
     if (!pName) return nullptr;
     if (std::strcmp(pName, "vkCreateWin32SurfaceKHR") == 0) {
@@ -2382,19 +3418,32 @@ void* Win32ApiHle::hle_vk_get_instance_proc_addr(void* instance, const char* pNa
     if (std::strcmp(pName, "vkGetPhysicalDeviceWin32PresentationSupportKHR") == 0) {
         return reinterpret_cast<void*>(&hle_vk_get_physical_device_win32_presentation_support_khr);
     }
+    if (std::strcmp(pName, "vkEnumerateInstanceExtensionProperties") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_enumerate_instance_extension_properties);
+    }
+    if (std::strcmp(pName, "vkCreateInstance") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_create_instance);
+    }
+    if (std::strcmp(pName, "vkGetDeviceProcAddr") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_get_device_proc_addr);
+    }
+    if (std::strcmp(pName, "vkGetInstanceProcAddr") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_get_instance_proc_addr);
+    }
+    if (std::strcmp(pName, "vkEnumerateInstanceVersion") == 0) {
+        return reinterpret_cast<void*>(&hle_vk_enumerate_instance_version);
+    }
+
     static void* libvk = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_GLOBAL);
     if (!libvk) libvk = dlopen("libvulkan.so", RTLD_LAZY | RTLD_GLOBAL);
     if (libvk) {
         typedef void* (*vk_get_proc_fn)(void*, const char*);
         static auto vk_proc = reinterpret_cast<vk_get_proc_fn>(dlsym(libvk, "vkGetInstanceProcAddr"));
-        if (vk_proc) {
-            void* p = vk_proc(instance, pName);
-            if (p) return p;
-        }
-        void* sym = dlsym(libvk, pName);
-        if (sym) return sym;
+        void* p = vk_proc ? vk_proc(instance, pName) : nullptr;
+        if (!p && !instance) p = dlsym(libvk, pName);
+        if (p) return get_vulkan_ms_thunk(p);
     }
-    return reinterpret_cast<void*>(&generic_stub_success);
+    return nullptr;
 }
 
 // -------------------------------------------------------------
@@ -2606,13 +3655,24 @@ BOOL Win32ApiHle::hle_get_keyboard_state(u8* lpKeyState) {
 }
 
 BOOL Win32ApiHle::hle_set_window_text_a(HWND hWnd, const char* lpString) {
-    (void)hWnd; (void)lpString;
+    if (!lpString) return FALSE_VAL;
+    auto* win = window_manager().window_from_hwnd(hWnd);
+    if (win && win->display && win->xid) {
+        win->title = lpString;
+        XStoreName(win->display, static_cast<Window>(win->xid), lpString);
+        Atom utf8_string = XInternAtom(win->display, "UTF8_STRING", False);
+        Atom net_wm_name = XInternAtom(win->display, "_NET_WM_NAME", False);
+        XChangeProperty(win->display, static_cast<Window>(win->xid), net_wm_name, utf8_string, 8, PropModeReplace,
+                        reinterpret_cast<const unsigned char*>(lpString), std::strlen(lpString));
+        XFlush(win->display);
+    }
     return TRUE_VAL;
 }
 
 BOOL Win32ApiHle::hle_set_window_text_w(HWND hWnd, const wchar_t* lpString) {
-    (void)hWnd; (void)lpString;
-    return TRUE_VAL;
+    if (!lpString) return FALSE_VAL;
+    std::string s = win_utf16_to_utf8(lpString);
+    return hle_set_window_text_a(hWnd, s.c_str());
 }
 
 int Win32ApiHle::hle_get_window_text_a(HWND hWnd, char* lpString, int nMaxCount) {
@@ -2739,21 +3799,110 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "CloseHandle", reinterpret_cast<void*>(&hle_close_handle));
     register_function("KERNEL32.DLL", "GetFileSize", reinterpret_cast<void*>(&hle_get_file_size));
     register_function("KERNEL32.DLL", "SetFilePointer", reinterpret_cast<void*>(&hle_set_file_pointer));
+    register_function("KERNEL32.DLL", "SetFilePointerEx", reinterpret_cast<void*>(&hle_set_file_pointer_ex));
+    register_function("KERNEL32.DLL", "GetFileSizeEx", reinterpret_cast<void*>(&hle_get_file_size_ex));
     register_function("KERNEL32.DLL", "GetFileAttributesA", reinterpret_cast<void*>(&hle_get_file_attributes_a));
     register_function("KERNEL32.DLL", "GetFileAttributesW", reinterpret_cast<void*>(&hle_get_file_attributes_w));
+    register_function("KERNEL32.DLL", "GetFileAttributesExA", reinterpret_cast<void*>(&hle_get_file_attributes_ex_a));
+    register_function("KERNEL32.DLL", "GetFileAttributesExW", reinterpret_cast<void*>(&hle_get_file_attributes_ex_w));
     register_function("KERNEL32.DLL", "GetFullPathNameA", reinterpret_cast<void*>(&hle_get_full_path_name_a));
+    register_function("KERNEL32.DLL", "GetFullPathNameW", reinterpret_cast<void*>(&hle_get_full_path_name_w));
     register_function("KERNEL32.DLL", "GetCurrentDirectoryA", reinterpret_cast<void*>(&hle_get_current_directory_a));
+    register_function("KERNEL32.DLL", "GetCurrentDirectoryW", reinterpret_cast<void*>(&hle_get_current_directory_w));
     register_function("KERNEL32.DLL", "SetCurrentDirectoryA", reinterpret_cast<void*>(&hle_set_current_directory_a));
+    register_function("KERNEL32.DLL", "SetCurrentDirectoryW", reinterpret_cast<void*>(&hle_set_current_directory_w));
+    register_function("KERNEL32.DLL", "CreateDirectoryW", reinterpret_cast<void*>(&hle_create_directory_w));
+    register_function("KERNEL32.DLL", "DeleteFileW", reinterpret_cast<void*>(&hle_delete_file_w));
+    register_function("KERNEL32.DLL", "GetFileInformationByHandle", reinterpret_cast<void*>(&hle_get_file_information_by_handle));
+    register_function("KERNEL32.DLL", "GetFileType", reinterpret_cast<void*>(&hle_get_file_type));
+    register_function("KERNEL32.DLL", "FormatMessageW", reinterpret_cast<void*>(&hle_format_message_w));
+    register_function("KERNEL32.DLL", "GetUserDefaultUILanguage", reinterpret_cast<void*>(&hle_get_user_default_ui_language));
+    register_function("KERNEL32.DLL", "GetUserDefaultLCID", reinterpret_cast<void*>(&hle_get_user_default_lcid));
+    register_function("KERNEL32.DLL", "GetLocaleInfoW", reinterpret_cast<void*>(&hle_get_locale_info_w));
+    register_function("KERNEL32.DLL", "GetLocaleInfoEx", reinterpret_cast<void*>(&hle_get_locale_info_ex));
+    register_function("KERNEL32.DLL", "LCMapStringW", reinterpret_cast<void*>(&hle_lc_map_string_w));
+    register_function("KERNEL32.DLL", "LCMapStringEx", reinterpret_cast<void*>(&hle_lc_map_string_w));
+    register_function("KERNEL32.DLL", "CompareStringW", reinterpret_cast<void*>(&hle_compare_string_w));
+    register_function("KERNEL32.DLL", "CompareStringOrdinal", reinterpret_cast<void*>(&hle_compare_string_ordinal));
+    register_function("KERNEL32.DLL", "CompareFileTime", reinterpret_cast<void*>(&hle_compare_file_time));
+    register_function("KERNEL32.DLL", "SystemTimeToTzSpecificLocalTime", reinterpret_cast<void*>(&hle_system_time_to_tz_specific_local_time));
+    register_function("KERNEL32.DLL", "FileTimeToSystemTime", reinterpret_cast<void*>(&hle_file_time_to_system_time));
+    register_function("KERNEL32.DLL", "SystemTimeToFileTime", reinterpret_cast<void*>(&hle_system_time_to_file_time));
+    register_function("KERNEL32.DLL", "GetTimeZoneInformation", reinterpret_cast<void*>(&hle_get_time_zone_information));
+    register_function("KERNEL32.DLL", "GetVolumeInformationW", reinterpret_cast<void*>(&hle_get_volume_information_w));
+    register_function("KERNEL32.DLL", "GetDiskFreeSpaceExA", reinterpret_cast<void*>(&hle_get_disk_free_space_ex_a));
+    register_function("KERNEL32.DLL", "GetLogicalDrives", reinterpret_cast<void*>(&hle_get_logical_drives));
+    register_function("KERNEL32.DLL", "GetTempFileNameW", reinterpret_cast<void*>(&hle_get_temp_file_name_w));
+    register_function("KERNEL32.DLL", "ReplaceFileW", reinterpret_cast<void*>(&hle_replace_file_w));
+    register_function("KERNEL32.DLL", "MoveFileExW", reinterpret_cast<void*>(&hle_move_file_ex_w));
+    register_function("KERNEL32.DLL", "RemoveDirectoryW", reinterpret_cast<void*>(&hle_remove_directory_w));
+    register_function("KERNEL32.DLL", "GetDriveTypeW", reinterpret_cast<void*>(&hle_get_drive_type_w));
+    register_function("KERNEL32.DLL", "GetStdHandle", reinterpret_cast<void*>(&hle_get_std_handle));
+    register_function("KERNEL32.DLL", "SetStdHandle", reinterpret_cast<void*>(&hle_set_std_handle));
+    register_function("KERNEL32.DLL", "SetEndOfFile", reinterpret_cast<void*>(&hle_set_end_of_file));
+    register_function("KERNEL32.DLL", "FlushFileBuffers", reinterpret_cast<void*>(&hle_flush_file_buffers));
+    register_function("KERNEL32.DLL", "PeekNamedPipe", reinterpret_cast<void*>(&hle_peek_named_pipe));
+    register_function("KERNEL32.DLL", "CreatePipe", reinterpret_cast<void*>(&hle_create_pipe));
+    register_function("KERNEL32.DLL", "SetHandleInformation", reinterpret_cast<void*>(&hle_set_handle_information));
+    register_function("KERNEL32.DLL", "GetExitCodeProcess", reinterpret_cast<void*>(&hle_get_exit_code_process));
+    register_function("KERNEL32.DLL", "GetExitCodeThread", reinterpret_cast<void*>(&hle_get_exit_code_thread));
+    register_function("KERNEL32.DLL", "OpenProcess", reinterpret_cast<void*>(&hle_open_process));
+    register_function("KERNEL32.DLL", "CreateProcessW", reinterpret_cast<void*>(&hle_create_process_w));
+    register_function("KERNEL32.DLL", "GetEnvironmentStringsW", reinterpret_cast<void*>(&hle_get_environment_strings_w));
+    register_function("KERNEL32.DLL", "FreeEnvironmentStringsW", reinterpret_cast<void*>(&hle_free_environment_strings_w));
+    register_function("KERNEL32.DLL", "SetEnvironmentVariableW", reinterpret_cast<void*>(&hle_set_environment_variable_w));
+    register_function("KERNEL32.DLL", "GetEnvironmentVariableW", reinterpret_cast<void*>(&hle_get_environment_variable_w));
+    register_function("KERNEL32.DLL", "GetOEMCP", reinterpret_cast<void*>(&hle_get_oemcp));
+    register_function("KERNEL32.DLL", "GetACP", reinterpret_cast<void*>(&hle_get_acp));
+    register_function("KERNEL32.DLL", "IsValidCodePage", reinterpret_cast<void*>(&hle_is_valid_code_page));
+    register_function("KERNEL32.DLL", "IsValidLocale", reinterpret_cast<void*>(&hle_is_valid_locale));
+    register_function("KERNEL32.DLL", "EnumSystemLocalesW", reinterpret_cast<void*>(&hle_enum_system_locales_w));
+    register_function("KERNEL32.DLL", "GetStringTypeW", reinterpret_cast<void*>(&hle_get_string_type_w));
+    register_function("KERNEL32.DLL", "GetCPInfo", reinterpret_cast<void*>(&hle_get_cpinfo));
+    register_function("KERNEL32.DLL", "SetThreadIdealProcessor", reinterpret_cast<void*>(&hle_set_thread_ideal_processor));
+    register_function("KERNEL32.DLL", "SetThreadAffinityMask", reinterpret_cast<void*>(&hle_set_thread_affinity_mask));
+    register_function("KERNEL32.DLL", "SetThreadPriority", reinterpret_cast<void*>(&hle_set_thread_priority));
+    register_function("KERNEL32.DLL", "SetPriorityClass", reinterpret_cast<void*>(&hle_set_priority_class));
+    register_function("KERNEL32.DLL", "PowerCreateRequest", reinterpret_cast<void*>(&hle_power_create_request));
+    register_function("KERNEL32.DLL", "PowerSetRequest", reinterpret_cast<void*>(&hle_power_set_request));
+    register_function("KERNEL32.DLL", "PowerClearRequest", reinterpret_cast<void*>(&hle_power_clear_request));
+    register_function("KERNEL32.DLL", "InitializeSRWLock", reinterpret_cast<void*>(&hle_initialize_srw_lock));
+    register_function("KERNEL32.DLL", "AcquireSRWLockExclusive", reinterpret_cast<void*>(&hle_acquire_srw_lock_exclusive));
+    register_function("KERNEL32.DLL", "ReleaseSRWLockExclusive", reinterpret_cast<void*>(&hle_release_srw_lock_exclusive));
+    register_function("KERNEL32.DLL", "TryAcquireSRWLockExclusive", reinterpret_cast<void*>(&hle_try_acquire_srw_lock_exclusive));
+    register_function("KERNEL32.DLL", "AcquireSRWLockShared", reinterpret_cast<void*>(&hle_acquire_srw_lock_shared));
+    register_function("KERNEL32.DLL", "ReleaseSRWLockShared", reinterpret_cast<void*>(&hle_release_srw_lock_shared));
+    register_function("KERNEL32.DLL", "InitializeConditionVariable", reinterpret_cast<void*>(&hle_initialize_condition_variable));
+    register_function("KERNEL32.DLL", "WakeConditionVariable", reinterpret_cast<void*>(&hle_wake_condition_variable));
+    register_function("KERNEL32.DLL", "WakeAllConditionVariable", reinterpret_cast<void*>(&hle_wake_all_condition_variable));
+    register_function("KERNEL32.DLL", "SleepConditionVariableCS", reinterpret_cast<void*>(&hle_sleep_condition_variable_cs));
+    register_function("KERNEL32.DLL", "SleepConditionVariableSRW", reinterpret_cast<void*>(&hle_sleep_condition_variable_srw));
+    register_function("KERNEL32.DLL", "InitOnceBeginInitialize", reinterpret_cast<void*>(&hle_init_once_begin_initialize));
+    register_function("KERNEL32.DLL", "InitOnceComplete", reinterpret_cast<void*>(&hle_init_once_complete));
+    register_function("KERNEL32.DLL", "InitializeSListHead", reinterpret_cast<void*>(&hle_initialize_slist_head));
+    register_function("KERNEL32.DLL", "InterlockedPushEntrySList", reinterpret_cast<void*>(&hle_interlocked_push_entry_slist));
+    register_function("KERNEL32.DLL", "GlobalAlloc", reinterpret_cast<void*>(&hle_global_alloc));
+    register_function("KERNEL32.DLL", "GlobalLock", reinterpret_cast<void*>(&hle_global_lock));
+    register_function("KERNEL32.DLL", "GlobalUnlock", reinterpret_cast<void*>(&hle_global_unlock));
+    register_function("KERNEL32.DLL", "LocalFree", reinterpret_cast<void*>(&hle_local_free));
     register_function("KERNEL32.DLL", "FindFirstFileA", reinterpret_cast<void*>(&hle_find_first_file_a));
+    register_function("KERNEL32.DLL", "FindFirstFileW", reinterpret_cast<void*>(&hle_find_first_file_w));
+    register_function("KERNEL32.DLL", "FindFirstFileExW", reinterpret_cast<void*>(&hle_find_first_file_ex_w));
     register_function("KERNEL32.DLL", "FindNextFileA", reinterpret_cast<void*>(&hle_find_next_file_a));
+    register_function("KERNEL32.DLL", "FindNextFileW", reinterpret_cast<void*>(&hle_find_next_file_w));
     register_function("KERNEL32.DLL", "FindClose", reinterpret_cast<void*>(&hle_find_close));
 
     register_function("KERNEL32.DLL", "GetProcAddress", reinterpret_cast<void*>(&hle_get_proc_address));
     register_function("KERNEL32.DLL", "GetModuleHandleA", reinterpret_cast<void*>(&hle_get_module_handle_a));
     register_function("KERNEL32.DLL", "GetModuleHandleW", reinterpret_cast<void*>(&hle_get_module_handle_w));
+    register_function("KERNEL32.DLL", "GetModuleHandleExW", reinterpret_cast<void*>(&hle_get_module_handle_w));
     register_function("KERNEL32.DLL", "LoadLibraryA", reinterpret_cast<void*>(&hle_load_library_a));
     register_function("KERNEL32.DLL", "LoadLibraryW", reinterpret_cast<void*>(&hle_load_library_w));
+    register_function("KERNEL32.DLL", "LoadLibraryExW", reinterpret_cast<void*>(&hle_load_library_w));
+    register_function("KERNEL32.DLL", "FreeLibrary", reinterpret_cast<void*>(&hle_free_library));
+    register_function("KERNEL32.DLL", "FreeLibraryAndExitThread", reinterpret_cast<void*>(&hle_exit_thread));
     register_function("KERNEL32.DLL", "GetModuleFileNameA", reinterpret_cast<void*>(&hle_get_module_file_name_a));
+    register_function("KERNEL32.DLL", "GetModuleFileNameW", reinterpret_cast<void*>(&hle_get_module_file_name_w));
     register_function("KERNEL32.DLL", "EncodePointer", reinterpret_cast<void*>(&hle_encode_pointer));
     register_function("KERNEL32.DLL", "DecodePointer", reinterpret_cast<void*>(&hle_decode_pointer));
     register_function("KERNEL32.DLL", "EncodeSystemPointer", reinterpret_cast<void*>(&hle_encode_system_pointer));
@@ -2777,6 +3926,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("api-ms-win-core-processthreads-l1-1-1.dll", "GetStartupInfoW", reinterpret_cast<void*>(&hle_get_startup_info_w));
     register_function("api-ms-win-core-processthreads-l1-1-2.dll", "GetStartupInfoW", reinterpret_cast<void*>(&hle_get_startup_info_w));
     register_function("KERNEL32.DLL", "SetUnhandledExceptionFilter", reinterpret_cast<void*>(&hle_set_unhandled_exception_filter));
+    register_function("KERNEL32.DLL", "UnhandledExceptionFilter", reinterpret_cast<void*>(&hle_unhandled_exception_filter));
     register_function("KERNEL32.DLL", "VirtualQuery", reinterpret_cast<void*>(&hle_virtual_query));
 
     // NTDLL.DLL
@@ -2873,15 +4023,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&hle_message_box_a));
     register_function("USER32.DLL", "MessageBoxW", reinterpret_cast<void*>(&hle_message_box_w));
 
-    register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("GDI32.DLL", "GetDIBits", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("GDI32.DLL", "GetDeviceCaps", reinterpret_cast<void*>(&generic_stub_zero));
+    register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&hle_get_pixel));
+    register_function("GDI32.DLL", "GetDIBits", reinterpret_cast<void*>(&hle_get_dibits));
+    register_function("GDI32.DLL", "GetDeviceCaps", reinterpret_cast<void*>(&hle_get_device_caps));
 
-    // AVRT.DLL & DWMAPI.DLL
-    register_function("AVRT.DLL", "AvSetMmThreadCharacteristicsW", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("AVRT.DLL", "AvSetMmThreadPriority", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("dwmapi.dll", "DwmEnableBlurBehindWindow", reinterpret_cast<void*>(&generic_stub_zero));
-    register_function("dwmapi.dll", "DwmSetWindowAttribute", reinterpret_cast<void*>(&generic_stub_zero));
+    // AVRT.DLL & DWMAPI.DLL & DWrite.DLL
+    register_function("AVRT.DLL", "AvSetMmThreadCharacteristicsW", reinterpret_cast<void*>(&hle_av_set_mm_thread_characteristics_w));
+    register_function("AVRT.DLL", "AvSetMmThreadPriority", reinterpret_cast<void*>(&hle_av_set_mm_thread_priority));
+    register_function("dwmapi.dll", "DwmEnableBlurBehindWindow", reinterpret_cast<void*>(&hle_dwm_enable_blur_behind_window));
+    register_function("dwmapi.dll", "DwmSetWindowAttribute", reinterpret_cast<void*>(&hle_dwm_set_window_attribute));
+    register_function("DWrite.dll", "DWriteCreateFactory", reinterpret_cast<void*>(&hle_dwrite_create_factory));
 
     // BCRYPT.DLL & CRYPT32.DLL
     register_function("bcrypt.dll", "BCryptGenRandom", reinterpret_cast<void*>(&hle_bcrypt_gen_random));
@@ -2892,8 +4043,8 @@ Result<> Win32ApiHle::initialize() {
     register_function("CRYPT32.dll", "CertEnumCertificatesInStore", reinterpret_cast<void*>(&generic_stub_null));
 
     // ADVAPI32.DLL & SHELL32.DLL
-    register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("ADVAPI32.dll", "GetTokenInformation", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("ADVAPI32.dll", "OpenProcessToken", reinterpret_cast<void*>(&hle_open_process_token));
+    register_function("ADVAPI32.dll", "GetTokenInformation", reinterpret_cast<void*>(&hle_get_token_information));
     register_function("ADVAPI32.dll", "RegOpenKeyExW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "RegQueryValueExW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("ADVAPI32.dll", "RegCloseKey", reinterpret_cast<void*>(&generic_stub_zero));
@@ -2902,11 +4053,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("ADVAPI32.dll", "GetCurrentHwProfileA", reinterpret_cast<void*>(&generic_stub_success));
     register_function("ADVAPI32.dll", "LookupPrivilegeValueW", reinterpret_cast<void*>(&generic_stub_success));
     register_function("ADVAPI32.dll", "AdjustTokenPrivileges", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("ADVAPI32.dll", "GetSidSubAuthority", reinterpret_cast<void*>(&generic_stub_null));
-    register_function("ADVAPI32.dll", "GetSidSubAuthorityCount", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("ADVAPI32.dll", "GetSidSubAuthority", reinterpret_cast<void*>(&hle_get_sid_sub_authority));
+    register_function("ADVAPI32.dll", "GetSidSubAuthorityCount", reinterpret_cast<void*>(&hle_get_sid_sub_authority_count));
 
     register_function("SHELL32.dll", "ShellExecuteW", reinterpret_cast<void*>(&generic_stub_success));
-    register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("SHELL32.dll", "CommandLineToArgvW", reinterpret_cast<void*>(&hle_command_line_to_argv_w));
     register_function("SHELL32.dll", "SHFileOperationW", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("SHELL32.dll", "SHGetKnownFolderPath", reinterpret_cast<void*>(&generic_stub_zero));
     register_function("SHELL32.dll", "DragAcceptFiles", reinterpret_cast<void*>(&generic_stub_null));

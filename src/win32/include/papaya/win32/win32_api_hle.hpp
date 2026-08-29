@@ -66,6 +66,34 @@ struct Win32FileFindDataA {
     char cAlternateFileName[14]{0};
 };
 
+struct Win32FileFindDataW {
+    u32 dwFileAttributes{0};
+    u32 ftCreationTimeLow{0};
+    u32 ftCreationTimeHigh{0};
+    u32 ftLastAccessTimeLow{0};
+    u32 ftLastAccessTimeHigh{0};
+    u32 ftLastWriteTimeLow{0};
+    u32 ftLastWriteTimeHigh{0};
+    u32 nFileSizeHigh{0};
+    u32 nFileSizeLow{0};
+    u32 dwReserved0{0};
+    u32 dwReserved1{0};
+    uint16_t cFileName[260]{0};
+    uint16_t cAlternateFileName[14]{0};
+};
+
+struct Win32FileAttributeData {
+    u32 dwFileAttributes{0};
+    u32 ftCreationTimeLow{0};
+    u32 ftCreationTimeHigh{0};
+    u32 ftLastAccessTimeLow{0};
+    u32 ftLastAccessTimeHigh{0};
+    u32 ftLastWriteTimeLow{0};
+    u32 ftLastWriteTimeHigh{0};
+    u32 nFileSizeHigh{0};
+    u32 nFileSizeLow{0};
+};
+
 class Win32ApiHle {
 public:
     explicit Win32ApiHle(
@@ -75,6 +103,7 @@ public:
     ~Win32ApiHle() = default;
 
     Result<> initialize();
+    static void set_game_path(const std::string& path);
 
     // Symbol resolution for IAT patching
     void* resolve_symbol(std::string_view dll_name, std::string_view function_name);
@@ -136,13 +165,91 @@ public:
     static PAPAYA_MS_ABI BOOL   hle_close_handle(HANDLE hObject);
     static PAPAYA_MS_ABI u32    hle_get_file_size(HANDLE hFile, u32* lpFileSizeHigh);
     static PAPAYA_MS_ABI u32    hle_set_file_pointer(HANDLE hFile, s32 lDistanceToMove, s32* lpDistanceToMoveHigh, u32 dwMoveMethod);
+    static PAPAYA_MS_ABI BOOL   hle_set_file_pointer_ex(HANDLE hFile, int64_t liDistanceToMove, int64_t* lpNewFilePointer, u32 dwMoveMethod);
     static PAPAYA_MS_ABI u32    hle_get_file_attributes_a(const char* lpFileName);
     static PAPAYA_MS_ABI u32    hle_get_file_attributes_w(const wchar_t* lpFileName);
-    static PAPAYA_MS_ABI BOOL   hle_get_full_path_name_a(const char* lpFileName, u32 nBufferLength, char* lpBuffer, char** lpFilePart);
+    static PAPAYA_MS_ABI BOOL   hle_get_file_attributes_ex_a(const char* lpFileName, int fInfoLevelId, void* lpFileInformation);
+    static PAPAYA_MS_ABI BOOL   hle_get_file_attributes_ex_w(const wchar_t* lpFileName, int fInfoLevelId, void* lpFileInformation);
+    static PAPAYA_MS_ABI u32    hle_get_full_path_name_a(const char* lpFileName, u32 nBufferLength, char* lpBuffer, char** lpFilePart);
+    static PAPAYA_MS_ABI u32    hle_get_full_path_name_w(const wchar_t* lpFileName, u32 nBufferLength, wchar_t* lpBuffer, wchar_t** lpFilePart);
     static PAPAYA_MS_ABI u32    hle_get_current_directory_a(u32 nBufferLength, char* lpBuffer);
+    static PAPAYA_MS_ABI u32    hle_get_current_directory_w(u32 nBufferLength, wchar_t* lpBuffer);
     static PAPAYA_MS_ABI BOOL   hle_set_current_directory_a(const char* lpPathName);
+    static PAPAYA_MS_ABI BOOL   hle_set_current_directory_w(const wchar_t* lpPathName);
+    static PAPAYA_MS_ABI BOOL   hle_get_file_size_ex(HANDLE hFile, int64_t* lpFileSize);
+    static PAPAYA_MS_ABI BOOL   hle_create_directory_w(const wchar_t* lpPathName, void* lpSec);
+    static PAPAYA_MS_ABI BOOL   hle_delete_file_w(const wchar_t* lpFileName);
+    static PAPAYA_MS_ABI BOOL   hle_get_file_information_by_handle(HANDLE hFile, void* lpFileInformation);
+    static PAPAYA_MS_ABI u32    hle_get_file_type(HANDLE hFile);
+    static PAPAYA_MS_ABI u16    hle_get_user_default_ui_language();
+    static PAPAYA_MS_ABI u32    hle_get_user_default_lcid();
+    static PAPAYA_MS_ABI int    hle_get_locale_info_ex(const wchar_t* lpLocaleName, u32 LCType, wchar_t* lpLCData, int cchData);
+    static PAPAYA_MS_ABI int    hle_lc_map_string_w(u32 Locale, u32 dwMapFlags, const wchar_t* lpSrcStr, int cchSrc, wchar_t* lpDestStr, int cchDest);
+    static PAPAYA_MS_ABI int    hle_compare_string_w(u32 Locale, u32 dwCmpFlags, const wchar_t* lpString1, int cchCount1, const wchar_t* lpString2, int cchCount2);
+    static PAPAYA_MS_ABI int    hle_compare_string_ordinal(const wchar_t* lpString1, int cchCount1, const wchar_t* lpString2, int cchCount2, BOOL bIgnoreCase);
+    static PAPAYA_MS_ABI int    hle_compare_file_time(const void* lpFileTime1, const void* lpFileTime2);
+    static PAPAYA_MS_ABI BOOL   hle_system_time_to_tz_specific_local_time(const void* lpTimeZoneInformation, const void* lpUniversalTime, void* lpLocalTime);
+    static PAPAYA_MS_ABI u32    hle_get_time_zone_information(void* lpTimeZoneInformation);
+    static PAPAYA_MS_ABI BOOL   hle_get_volume_information_w(const wchar_t* lpRootPathName, wchar_t* lpVolumeNameBuffer, u32 nVolumeNameSize, u32* lpVolumeSerialNumber, u32* lpMaximumComponentLength, u32* lpFileSystemFlags, wchar_t* lpFileSystemNameBuffer, u32 nFileSystemNameSize);
+    static PAPAYA_MS_ABI BOOL   hle_get_disk_free_space_ex_a(const char* lpDirectoryName, uint64_t* lpFreeBytesAvailableToCaller, uint64_t* lpTotalNumberOfBytes, uint64_t* lpTotalNumberOfFreeBytes);
+    static PAPAYA_MS_ABI u32    hle_get_logical_drives();
+    static PAPAYA_MS_ABI u32    hle_get_temp_file_name_w(const wchar_t* lpPathName, const wchar_t* lpPrefixString, u32 uUnique, wchar_t* lpTempFileName);
+    static PAPAYA_MS_ABI BOOL   hle_replace_file_w(const wchar_t* lpReplacedFileName, const wchar_t* lpReplacementFileName, const wchar_t* lpBackupFileName, u32 dwReplaceFlags, void* lpExclude, void* lpReserved);
+    static PAPAYA_MS_ABI BOOL   hle_move_file_ex_w(const wchar_t* lpExistingFileName, const wchar_t* lpNewFileName, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL   hle_remove_directory_w(const wchar_t* lpPathName);
+    static PAPAYA_MS_ABI u32    hle_get_drive_type_w(const wchar_t* lpRootPathName);
+    static PAPAYA_MS_ABI HANDLE hle_get_std_handle(u32 nStdHandle);
+    static PAPAYA_MS_ABI BOOL   hle_set_std_handle(u32 nStdHandle, HANDLE hHandle);
+    static PAPAYA_MS_ABI s32    hle_unhandled_exception_filter(void* ExceptionInfo);
+    static PAPAYA_MS_ABI BOOL   hle_set_end_of_file(HANDLE hFile);
+    static PAPAYA_MS_ABI BOOL   hle_flush_file_buffers(HANDLE hFile);
+    static PAPAYA_MS_ABI BOOL   hle_peek_named_pipe(HANDLE hNamedPipe, void* lpBuffer, u32 nBufferSize, u32* lpBytesRead, u32* lpTotalBytesAvail, u32* lpBytesLeftThisMessage);
+    static PAPAYA_MS_ABI BOOL   hle_create_pipe(HANDLE* hReadPipe, HANDLE* hWritePipe, void* lpPipeAttributes, u32 nSize);
+    static PAPAYA_MS_ABI BOOL   hle_set_handle_information(HANDLE hObject, u32 dwMask, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL   hle_get_exit_code_process(HANDLE hProcess, u32* lpExitCode);
+    static PAPAYA_MS_ABI BOOL   hle_get_exit_code_thread(HANDLE hThread, u32* lpExitCode);
+    static PAPAYA_MS_ABI HANDLE hle_open_process(u32 dwDesiredAccess, BOOL bInheritHandle, u32 dwProcessId);
+    static PAPAYA_MS_ABI BOOL   hle_create_process_w(const wchar_t* lpApp, wchar_t* lpCmd, void* lpPA, void* lpTA, BOOL bInherit, u32 dwFlags, void* lpEnv, const wchar_t* lpCurrDir, void* lpSI, void* lpPI);
+    static PAPAYA_MS_ABI wchar_t* hle_get_environment_strings_w();
+    static PAPAYA_MS_ABI BOOL   hle_free_environment_strings_w(wchar_t* penv);
+    static PAPAYA_MS_ABI BOOL   hle_set_environment_variable_w(const wchar_t* lpName, const wchar_t* lpValue);
+    static PAPAYA_MS_ABI u32    hle_get_environment_variable_w(const wchar_t* lpName, wchar_t* lpBuffer, u32 nSize);
+    static PAPAYA_MS_ABI u32    hle_get_oemcp();
+    static PAPAYA_MS_ABI BOOL   hle_is_valid_code_page(u32 CodePage);
+    static PAPAYA_MS_ABI BOOL   hle_is_valid_locale(u32 Locale, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL   hle_enum_system_locales_w(void* lpLocaleEnumProc, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL   hle_get_string_type_w(u32 dwInfoType, const wchar_t* lpSrcStr, int cchSrc, u16* lpCharType);
+    static PAPAYA_MS_ABI BOOL   hle_get_cpinfo(u32 CodePage, void* lpCPInfo);
+    static PAPAYA_MS_ABI u32    hle_set_thread_ideal_processor(HANDLE hThread, u32 dwIdealProcessor);
+    static PAPAYA_MS_ABI uint64_t hle_set_thread_affinity_mask(HANDLE hThread, uint64_t dwThreadAffinityMask);
+    static PAPAYA_MS_ABI BOOL   hle_set_thread_priority(HANDLE hThread, int nPriority);
+    static PAPAYA_MS_ABI BOOL   hle_set_priority_class(HANDLE hProcess, u32 dwPriorityClass);
+    static PAPAYA_MS_ABI HANDLE hle_power_create_request(void* Context);
+    static PAPAYA_MS_ABI BOOL   hle_power_set_request(HANDLE PowerRequest, u32 RequestType);
+    static PAPAYA_MS_ABI BOOL   hle_power_clear_request(HANDLE PowerRequest, u32 RequestType);
+    static PAPAYA_MS_ABI void   hle_initialize_srw_lock(void* SRWLock);
+    static PAPAYA_MS_ABI void   hle_acquire_srw_lock_exclusive(void* SRWLock);
+    static PAPAYA_MS_ABI void   hle_release_srw_lock_exclusive(void* SRWLock);
+    static PAPAYA_MS_ABI BOOL   hle_try_acquire_srw_lock_exclusive(void* SRWLock);
+    static PAPAYA_MS_ABI void   hle_acquire_srw_lock_shared(void* SRWLock);
+    static PAPAYA_MS_ABI void   hle_release_srw_lock_shared(void* SRWLock);
+    static PAPAYA_MS_ABI void   hle_initialize_condition_variable(void* ConditionVariable);
+    static PAPAYA_MS_ABI void   hle_wake_condition_variable(void* ConditionVariable);
+    static PAPAYA_MS_ABI void   hle_wake_all_condition_variable(void* ConditionVariable);
+    static PAPAYA_MS_ABI BOOL   hle_sleep_condition_variable_cs(void* ConditionVariable, Win32CriticalSection* CriticalSection, u32 dwMilliseconds);
+    static PAPAYA_MS_ABI BOOL   hle_sleep_condition_variable_srw(void* ConditionVariable, void* SRWLock, u32 dwMilliseconds, u32 Flags);
+    static PAPAYA_MS_ABI BOOL   hle_init_once_begin_initialize(void* InitOnce, u32 dwFlags, BOOL* fPending, void** lpContext);
+    static PAPAYA_MS_ABI BOOL   hle_init_once_complete(void* InitOnce, u32 dwFlags, void* lpContext);
+    static PAPAYA_MS_ABI void   hle_initialize_slist_head(void* ListHead);
+    static PAPAYA_MS_ABI void*  hle_interlocked_push_entry_slist(void* ListHead, void* ListEntry);
+    static PAPAYA_MS_ABI void*  hle_global_alloc(u32 uFlags, size_t uBytes);
+    static PAPAYA_MS_ABI void*  hle_global_lock(void* hMem);
+    static PAPAYA_MS_ABI BOOL   hle_global_unlock(void* hMem);
     static PAPAYA_MS_ABI HANDLE hle_find_first_file_a(const char* lpFileName, Win32FileFindDataA* lpFindFileData);
+    static PAPAYA_MS_ABI HANDLE hle_find_first_file_w(const wchar_t* lpFileName, Win32FileFindDataW* lpFindFileData);
+    static PAPAYA_MS_ABI HANDLE hle_find_first_file_ex_w(const wchar_t* lpFileName, int fInfoLevelId, Win32FileFindDataW* lpFindFileData, int fSearchOp, void* lpSearchFilter, u32 dwAdditionalFlags);
     static PAPAYA_MS_ABI BOOL   hle_find_next_file_a(HANDLE hFindFile, Win32FileFindDataA* lpFindFileData);
+    static PAPAYA_MS_ABI BOOL   hle_find_next_file_w(HANDLE hFindFile, Win32FileFindDataW* lpFindFileData);
     static PAPAYA_MS_ABI BOOL   hle_find_close(HANDLE hFindFile);
 
     // KERNEL32: Module & Library
@@ -422,6 +529,10 @@ public:
     static PAPAYA_MS_ABI u32   hle_set_pixel(void* hdc, int x, int y, u32 color);
     static PAPAYA_MS_ABI BOOL  hle_bit_blt(void* dst_dc, int dx, int dy, int dw, int dh,
                                            void* src_dc, int sx, int sy, u32 rop);
+    static PAPAYA_MS_ABI u32   hle_get_pixel(void* hdc, int x, int y);
+    static PAPAYA_MS_ABI int   hle_get_device_caps(void* hdc, int nIndex);
+    static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
+                                              const void* lpbmi, u32 usage);
 
     // DXGI & D3D11 software surface
     static PAPAYA_MS_ABI long   hle_d3d11_create_device(void* adapter, u32 driver, u32 flags,
