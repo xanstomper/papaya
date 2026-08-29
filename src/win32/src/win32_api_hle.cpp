@@ -1941,12 +1941,12 @@ s64 Win32ApiHle::hle_set_class_long_a(HWND hWnd, int nIndex, s64 dwNewLong) {
     return dwNewLong;
 }
 s64 Win32ApiHle::hle_get_window_long_a(HWND hWnd, int nIndex) {
-    (void)hWnd; (void)nIndex;
-    return 0;
+    return static_cast<s64>(window_manager().get_window_long(hWnd, nIndex));
 }
 s64 Win32ApiHle::hle_set_window_long_a(HWND hWnd, int nIndex, s64 dwNewLong) {
-    (void)hWnd; (void)nIndex;
-    return dwNewLong;
+    s64 prev = hle_get_window_long_a(hWnd, nIndex);
+    window_manager().set_window_long(hWnd, nIndex, static_cast<u64>(dwNewLong));
+    return prev;
 }
 BOOL Win32ApiHle::hle_system_parameters_info_a(u32 uiAction, u32 uiParam, void* pvParam, u32 fWinIni) {
     (void)uiParam; (void)fWinIni;

@@ -239,6 +239,24 @@ std::uint64_t X11WindowManager::xwindow_of(void* hwnd) {
     return (it != windows_.end()) ? it->second->xid : 0;
 }
 
+std::uint64_t X11WindowManager::get_window_long(void* hwnd, int nIndex) {
+    auto it = windows_.find(hwnd);
+    if (it == windows_.end()) return 0;
+    auto* w = it->second.get();
+    switch (nIndex) {
+        case -21: return w->userdata;   // GWLP_USERDATA
+        case -16: return w->style;      // GWL_STYLE (u32 field)
+        default:  return 0;
+    }
+}
+void X11WindowManager::set_window_long(void* hwnd, int nIndex, std::uint64_t value) {
+    auto it = windows_.find(hwnd);
+    if (it == windows_.end()) return;
+    auto* w = it->second.get();
+    if (nIndex == -21) w->userdata = value;
+    else if (nIndex == -16) w->style = static_cast<u32>(value);
+}
+
 void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
     auto* w = window_from_hwnd(hwnd);
     if (!w || !lpRect) return;

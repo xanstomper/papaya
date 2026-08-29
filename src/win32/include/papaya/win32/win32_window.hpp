@@ -71,6 +71,7 @@ struct NativeWindow {
     bool               fb_dirty{false};
     u32                fb_bpp{4};
     bool               paint_pending{false};   // InvalidateRect set -> WM_PAINT due
+    u64                userdata{0};            // GWLP_USERDATA storage
 };
 
 // X11-backed Win32 window manager. Owns the display + per-window state + the
@@ -87,6 +88,10 @@ public:
     _XDisplay* display() { return display_; }
     // X11 Window id for a HWND (NativeWindow*), or 0 if none.
     std::uint64_t xwindow_of(void* hwnd);
+    // Get/Set a per-window long (GWL_STYLE / GWLP_USERDATA / etc.). Returns the
+    // previous value; getter returns the stored value (0 if none).
+    std::uint64_t get_window_long(void* hwnd, int nIndex);
+    void         set_window_long(void* hwnd, int nIndex, std::uint64_t value);
 
     // Window classes
     void* register_class(const char* name, void* wndproc, void* hinstance);
