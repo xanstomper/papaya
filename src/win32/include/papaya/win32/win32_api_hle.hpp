@@ -206,6 +206,11 @@ public:
     static PAPAYA_MS_ABI u32   hle_xinput_get_state(u32 dwUserIndex, void* pState);
     static PAPAYA_MS_ABI u32   hle_xinput_set_state(u32 dwUserIndex, void* pVibration);
     static PAPAYA_MS_ABI u32   hle_xinput_get_capabilities(u32 dwUserIndex, u32 dwFlags, void* pCapabilities);
+    static PAPAYA_MS_ABI void  hle_xinput_enable(BOOL bEnable);
+    static PAPAYA_MS_ABI u32   hle_xinput_get_battery_info(u32 dwUserIndex, u8 devType, void* pBattery);
+    static PAPAYA_MS_ABI u32   hle_xinput_get_keystroke(u32 dwUserIndex, u32 dwReserved, void* pKeystroke);
+    static PAPAYA_MS_ABI u32   hle_xinput_get_dsound_audio_device_guids(u32 dwUserIndex, void* pDSoundRenderGuid, void* pDSoundCaptureGuid);
+    static PAPAYA_MS_ABI u32   hle_xinput_get_audio_device_ids(u32 dwUserIndex, void* pRenderId, u32* pRenderCount, void* pCaptureId, u32* pCaptureCount);
 
     // Steamworks Clean-Room Emulation Direct Exports
     static PAPAYA_MS_ABI BOOL  hle_steam_api_init();

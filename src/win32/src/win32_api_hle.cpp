@@ -1103,6 +1103,59 @@ u32 Win32ApiHle::hle_xinput_set_state(u32 dwUserIndex, void* pVibration) {
 }
 
 u32 Win32ApiHle::hle_xinput_get_capabilities(u32 dwUserIndex, u32 dwFlags, void* pCapabilities) {
+    (void)dwUserIndex; (void)dwFlags;
+    // XINPUT_CAPABILITIES: Type(0), SubType(4), Flags(8), Gamepad(12 bytes)...
+    if (pCapabilities) {
+        memset(pCapabilities, 0, 40);
+        auto* type = static_cast<u8*>(pCapabilities);
+        type[0] = 1;                    // XINPUT_DEVTYPE_GAMEPAD
+        type[1] = 1;                    // XINPUT_DEVSUBTYPE_GAMEPAD
+        type[2] = 0;                    // Flags
+        // Gamepad struct at offset 12: wButtons(12), bLeftTrigger(14), ...
+        auto* buttons = reinterpret_cast<u16*>((u8*)pCapabilities + 12);
+        *buttons = 0xFFFF;              // all buttons supported
+        auto* trig = static_cast<u8*>((u8*)pCapabilities + 14);
+        trig[0] = trig[1] = 0xFF;       // triggers supported
+        auto* thumb = reinterpret_cast<u16*>((u8*)pCapabilities + 20);
+        thumb[0] = thumb[1] = 0xFFFF;   // thumbsticks supported (XINPUT_GAMEPAD_THUMBS_MAX)
+    }
+    return 0;   // ERROR_SUCCESS
+}
+
+void Win32ApiHle::hle_xinput_enable(BOOL bEnable) { (void)bEnable; }
+
+u32 Win32ApiHle::hle_xinput_get_battery_info(u32 dwUserIndex, u8 devType, void* pBattery) {
+    (void)dwUserIndex; (void)devType;
+    // XINPUT_BATTERY_INFORMATION: BatteryType(0), BatteryLevel(1).
+    if (pBattery) {
+        memset(pBattery, 0, 4);
+        auto* b = static_cast<u8*>(pBattery);
+        b[0] = 0;   // BATTERY_TYPE_UNKNOWN -> but report GAMEPAD+WIRED for stability
+        // BATTERY_TYPE_WIRED=0x02, BATTERY_LEVEL_FULL=0
+        b[0] = 0x02;
+        b[1] = 0;
+    }
+    return 0;
+}
+
+u32 Win32ApiHle::hle_xinput_get_keystroke(u32 dwUserIndex, u32 dwReserved, void* pKeystroke) {
+    (void)dwUserIndex; (void)dwReserved;
+    // No queued keystrokes -> return ERROR_EMPTY (0x1B6) meaning "no new input".
+    return 0x1B6;   // ERROR_EMPTY
+}
+
+u32 Win32ApiHle::hle_xinput_get_dsound_audio_device_guids(u32 dwUserIndex, void* pDSoundRenderGuid, void* pDSoundCaptureGuid) {
+    // No audio device -> return ERROR_NOT_SUPPORTED-style error (0x32 = ERROR_NOT_SUPPORTED).
+    (void)dwUserIndex; (void)pDSoundRenderGuid; (void)pDSoundCaptureGuid;
+    return 0x1F;    // ERROR_GEN_FAILURE (game falls back to null audio)
+}
+
+u32 Win32ApiHle::hle_xinput_get_audio_device_ids(u32 dwUserIndex, void* pRenderId, u32* pRenderCount,
+                                                 void* pCaptureId, u32* pCaptureCount) {
+    (void)dwUserIndex; (void)pRenderId; (void)pCaptureId;
+    // Return zero-length names (no audio device) as success.
+    if (pRenderCount) *pRenderCount = 0;
+    if (pCaptureCount) *pCaptureCount = 0;
     return 0;
 }
 
@@ -2600,6 +2653,22 @@ Result<> Win32ApiHle::initialize() {
     register_function("XINPUT1_4.DLL", "XInputGetCapabilities", reinterpret_cast<void*>(&hle_xinput_get_capabilities));
     register_function("XINPUT9_1_0.DLL", "XInputGetState", reinterpret_cast<void*>(&hle_xinput_get_state));
     register_function("XINPUT9_1_0.DLL", "XInputSetState", reinterpret_cast<void*>(&hle_xinput_set_state));
+    register_function("XINPUT9_1_0.DLL", "XInputGetCapabilities", reinterpret_cast<void*>(&hle_xinput_get_capabilities));
+
+    // XInput 1.3 (the common gamepad API most controller games import)
+    register_function("XINPUT1_3.DLL", "XInputGetState", reinterpret_cast<void*>(&hle_xinput_get_state));
+    register_function("XINPUT1_3.DLL", "XInputSetState", reinterpret_cast<void*>(&hle_xinput_set_state));
+    register_function("XINPUT1_3.DLL", "XInputGetCapabilities", reinterpret_cast<void*>(&hle_xinput_get_capabilities));
+    register_function("XINPUT1_3.DLL", "XInputEnable", reinterpret_cast<void*>(&hle_xinput_enable));
+    register_function("XINPUT1_3.DLL", "XInputGetBatteryInformation", reinterpret_cast<void*>(&hle_xinput_get_battery_info));
+    register_function("XINPUT1_3.DLL", "XInputGetKeystroke", reinterpret_cast<void*>(&hle_xinput_get_keystroke));
+    register_function("XINPUT1_3.DLL", "XInputGetDSoundAudioDeviceGuids", reinterpret_cast<void*>(&hle_xinput_get_dsound_audio_device_guids));
+
+    // XInput 1.4 extra
+    register_function("XINPUT1_4.DLL", "XInputEnable", reinterpret_cast<void*>(&hle_xinput_enable));
+    register_function("XINPUT1_4.DLL", "XInputGetBatteryInformation", reinterpret_cast<void*>(&hle_xinput_get_battery_info));
+    register_function("XINPUT1_4.DLL", "XInputGetKeystroke", reinterpret_cast<void*>(&hle_xinput_get_keystroke));
+    register_function("XINPUT1_4.DLL", "XInputGetAudioDeviceIds", reinterpret_cast<void*>(&hle_xinput_get_audio_device_ids));
 
     // STEAM_API64.DLL / STEAM_API.DLL
     register_function("STEAM_API64.DLL", "SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
