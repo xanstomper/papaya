@@ -321,6 +321,11 @@ public:
     static PAPAYA_MS_ABI s64   hle_get_window_long_a(HWND hWnd, int nIndex);
     static PAPAYA_MS_ABI s64   hle_set_window_long_a(HWND hWnd, int nIndex, s64 dwNewLong);
     static PAPAYA_MS_ABI BOOL  hle_system_parameters_info_a(u32 uiAction, u32 uiParam, void* pvParam, u32 fWinIni);
+        static PAPAYA_MS_ABI void* hle_get_desktop_window();
+        static PAPAYA_MS_ABI BOOL  hle_client_to_screen(HWND hWnd, void* lpPoint);
+        static PAPAYA_MS_ABI BOOL  hle_screen_to_client(HWND hWnd, void* lpPoint);
+        static PAPAYA_MS_ABI void* hle_create_font_indirect_a(const void* lpLogFont);
+        static PAPAYA_MS_ABI u32   hle_map_virtual_key_a(u32 uCode, u32 uMapType);
     static PAPAYA_MS_ABI s64   hle_send_message_w(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
     static PAPAYA_MS_ABI void* hle_get_dc(HWND hWnd);
     static PAPAYA_MS_ABI int   hle_release_dc(HWND hWnd, void* hDC);

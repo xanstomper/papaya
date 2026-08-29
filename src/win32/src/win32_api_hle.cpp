@@ -1960,6 +1960,35 @@ BOOL Win32ApiHle::hle_system_parameters_info_a(u32 uiAction, u32 uiParam, void* 
     }
 }
 
+void* Win32ApiHle::hle_get_desktop_window() {
+    static u8 desktop;   // stable non-null HWND for the desktop
+    return &desktop;
+}
+// POINT { x@0 (s32), y@4 (s32) }. Client origin == window position.
+BOOL Win32ApiHle::hle_client_to_screen(HWND hWnd, void* lpPoint) {
+    if (!lpPoint) return FALSE_VAL;
+    auto* pt = static_cast<s32*>(lpPoint);
+    auto* w = window_manager().window_from_hwnd(hWnd);
+    if (w) { pt[0] += w->x; pt[1] += w->y; }
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_screen_to_client(HWND hWnd, void* lpPoint) {
+    if (!lpPoint) return FALSE_VAL;
+    auto* pt = static_cast<s32*>(lpPoint);
+    auto* w = window_manager().window_from_hwnd(hWnd);
+    if (w) { pt[0] -= w->x; pt[1] -= w->y; }
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_create_font_indirect_a(const void* lpLogFont) {
+    (void)lpLogFont;
+    static u8 font;   // non-null HFONT handle
+    return &font;
+}
+u32 Win32ApiHle::hle_map_virtual_key_a(u32 uCode, u32 uMapType) {
+    // MAPVK_VK_TO_CHAR(2): return the char code; other maps: identity.
+    return (uMapType == 2) ? uCode : uCode;
+}
+
 // ---- GDI window DC ----
 void* Win32ApiHle::hle_get_dc(HWND hWnd) {
     // A window DC: back the window's framebuffer; present on ReleaseDC.
@@ -4549,6 +4578,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "GetWindowLongPtrA", reinterpret_cast<void*>(&hle_get_window_long_a));
     register_function("USER32.DLL", "SetWindowLongPtrA", reinterpret_cast<void*>(&hle_set_window_long_a));
     register_function("USER32.DLL", "SystemParametersInfoA", reinterpret_cast<void*>(&hle_system_parameters_info_a));
+    register_function("USER32.DLL", "GetDesktopWindow", reinterpret_cast<void*>(&hle_get_desktop_window));
+    register_function("USER32.DLL", "ClientToScreen", reinterpret_cast<void*>(&hle_client_to_screen));
+    register_function("USER32.DLL", "ScreenToClient", reinterpret_cast<void*>(&hle_screen_to_client));
+    register_function("GDI32.DLL", "CreateFontIndirectA", reinterpret_cast<void*>(&hle_create_font_indirect_a));
+    register_function("USER32.DLL", "MapVirtualKeyA", reinterpret_cast<void*>(&hle_map_virtual_key_a));
     register_function("USER32.DLL", "GetDC", reinterpret_cast<void*>(&hle_get_dc));
     register_function("USER32.DLL", "ReleaseDC", reinterpret_cast<void*>(&hle_release_dc));
     register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&hle_begin_paint));
