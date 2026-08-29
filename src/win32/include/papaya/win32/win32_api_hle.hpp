@@ -4,6 +4,7 @@
 #include "papaya/common/error.hpp"
 #include "papaya/steam/steam_api_stub.hpp"
 #include "papaya/input/virtual_xinput.hpp"
+#include "papaya/win32/win32_window.hpp"
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -168,8 +169,23 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_get_client_rect(HWND hWnd, void* lpRect);
     static PAPAYA_MS_ABI BOOL  hle_get_window_rect(HWND hWnd, void* lpRect);
     static PAPAYA_MS_ABI BOOL  hle_peek_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax, u32 wRemoveMsg);
+    static PAPAYA_MS_ABI BOOL  hle_get_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax);
     static PAPAYA_MS_ABI BOOL  hle_dispatch_message_a(const void* lpMsg);
     static PAPAYA_MS_ABI BOOL  hle_translate_message(const void* lpMsg);
+    // Window creation / management (X11-backed)
+    static PAPAYA_MS_ABI void* hle_register_class_a(const void* lpWndClass);
+    static PAPAYA_MS_ABI void* hle_create_window_ex_a(u32 dwExStyle, const char* lpClassName,
+                             const char* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
+                             void* hWndParent, void* hMenu, void* hInstance, void* lpParam);
+    static PAPAYA_MS_ABI BOOL  hle_destroy_window(HWND hWnd);
+    static PAPAYA_MS_ABI BOOL  hle_show_window(HWND hWnd, int nCmdShow);
+    static PAPAYA_MS_ABI BOOL  hle_update_window(HWND hWnd);
+    static PAPAYA_MS_ABI s64   hle_def_window_proc_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI void  hle_post_quit_message(int nExitCode);
+    static PAPAYA_MS_ABI BOOL  hle_post_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI s64   hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam);
+    static PAPAYA_MS_ABI void* hle_get_dc(HWND hWnd);
+    static PAPAYA_MS_ABI int   hle_release_dc(HWND hWnd, void* hDC);
 
     // XINPUT Emulation
     static PAPAYA_MS_ABI u32   hle_xinput_get_state(u32 dwUserIndex, void* pState);

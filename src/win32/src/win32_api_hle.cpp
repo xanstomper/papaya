@@ -615,17 +615,94 @@ void Win32ApiHle::hle_set_last_error(u32 dwErrCode) {
 // USER32 & GDI32 Emulation
 // -------------------------------------------------------------
 s32 Win32ApiHle::hle_get_system_metrics(s32 nIndex) {
+    // SM_CXSCREEN / SM_CYSCREEN from the X root window when available.
+    auto* wm = &window_manager();
+    (void)wm;
     if (nIndex == 0) return 1920;
     if (nIndex == 1) return 1080;
+    if (nIndex == 11) return 1920; // SM_CXFULLSCREEN
+    if (nIndex == 12) return 1080; // SM_CYFULLSCREEN
     return 0;
 }
 
 BOOL Win32ApiHle::hle_set_process_dpi_aware() { return TRUE_VAL; }
-BOOL Win32ApiHle::hle_get_client_rect(HWND hWnd, void* lpRect) { return TRUE_VAL; }
-BOOL Win32ApiHle::hle_get_window_rect(HWND hWnd, void* lpRect) { return TRUE_VAL; }
-BOOL Win32ApiHle::hle_peek_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax, u32 wRemoveMsg) { return FALSE_VAL; }
-BOOL Win32ApiHle::hle_dispatch_message_a(const void* lpMsg) { return TRUE_VAL; }
-BOOL Win32ApiHle::hle_translate_message(const void* lpMsg) { return TRUE_VAL; }
+
+BOOL Win32ApiHle::hle_get_client_rect(HWND hWnd, void* lpRect) {
+    window_manager().get_client_rect(hWnd, lpRect);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_get_window_rect(HWND hWnd, void* lpRect) {
+    window_manager().get_window_rect(hWnd, lpRect);
+    return TRUE_VAL;
+}
+
+// ---- Window classes / creation ----
+void* Win32ApiHle::hle_register_class_a(const void* lpWndClass) {
+    if (!lpWndClass) return nullptr;
+    // mingw WNDCLASSA (x64): wndproc @8, class name @64.
+    const auto* buf = static_cast<const u8*>(lpWndClass);
+    void* wndproc  = nullptr;
+    std::memcpy(&wndproc, buf + 8, sizeof(wndproc));
+    const char* cls_name = nullptr;
+    std::memcpy(&cls_name, buf + 64, sizeof(cls_name));
+    void* hinst = nullptr;
+    std::memcpy(&hinst, buf + 24, sizeof(hinst));
+    if (!cls_name) return nullptr;
+    return window_manager().register_class(cls_name, wndproc, hinst);
+}
+
+void* Win32ApiHle::hle_create_window_ex_a(u32 dwExStyle, const char* lpClassName,
+             const char* lpWindowName, u32 dwStyle, int x, int y, int w, int h,
+             void* hWndParent, void* hMenu, void* hInstance, void* lpParam) {
+    (void)dwExStyle; (void)hMenu; (void)lpParam;
+    window_manager().initialize();
+    return window_manager().create_window_ex(lpClassName, lpWindowName, dwStyle,
+                                             x, y, w, h, hWndParent, hInstance, lpParam, false);
+}
+
+BOOL Win32ApiHle::hle_destroy_window(HWND hWnd) {
+    window_manager().destroy_window(hWnd);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_show_window(HWND hWnd, int nCmdShow) {
+    window_manager().show_window(hWnd, nCmdShow);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_update_window(HWND hWnd) {
+    window_manager().update_window(hWnd);
+    return TRUE_VAL;
+}
+s64 Win32ApiHle::hle_def_window_proc_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().def_window_proc(hWnd, msg, wParam, lParam);
+}
+void Win32ApiHle::hle_post_quit_message(int nExitCode) {
+    window_manager().post_quit_message(nExitCode);
+}
+BOOL Win32ApiHle::hle_post_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().post_message_a(hWnd, msg, wParam, lParam) ? TRUE_VAL : FALSE_VAL;
+}
+s64 Win32ApiHle::hle_send_message_a(HWND hWnd, u32 msg, u64 wParam, s64 lParam) {
+    return window_manager().send_message_a(hWnd, msg, wParam, lParam);
+}
+void* Win32ApiHle::hle_get_dc(HWND hWnd) { return window_manager().get_dc(hWnd); }
+int   Win32ApiHle::hle_release_dc(HWND hWnd, void* hDC) { return window_manager().release_dc(hWnd, hDC); }
+
+// ---- Message pump ----
+int Win32ApiHle::hle_get_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax) {
+    return window_manager().get_message(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
+}
+
+BOOL Win32ApiHle::hle_peek_message_a(void* lpMsg, HWND hWnd, u32 wMsgFilterMin, u32 wMsgFilterMax, u32 wRemoveMsg) {
+    return window_manager().peek_message(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg) ? TRUE_VAL : FALSE_VAL;
+}
+BOOL Win32ApiHle::hle_dispatch_message_a(const void* lpMsg) {
+    window_manager().dispatch_message(lpMsg);
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_translate_message(const void* lpMsg) {
+    window_manager().translate_message(lpMsg);
+    return TRUE_VAL;
+}
 
 // -------------------------------------------------------------
 // XINPUT Emulation
@@ -1460,8 +1537,26 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "GetClientRect", reinterpret_cast<void*>(&hle_get_client_rect));
     register_function("USER32.DLL", "GetWindowRect", reinterpret_cast<void*>(&hle_get_window_rect));
     register_function("USER32.DLL", "PeekMessageA", reinterpret_cast<void*>(&hle_peek_message_a));
+    register_function("USER32.DLL", "GetMessageA", reinterpret_cast<void*>(&hle_get_message_a));
     register_function("USER32.DLL", "DispatchMessageA", reinterpret_cast<void*>(&hle_dispatch_message_a));
     register_function("USER32.DLL", "TranslateMessage", reinterpret_cast<void*>(&hle_translate_message));
+    register_function("USER32.DLL", "RegisterClassA", reinterpret_cast<void*>(&hle_register_class_a));
+    register_function("USER32.DLL", "RegisterClassExA", reinterpret_cast<void*>(&hle_register_class_a));
+    register_function("USER32.DLL", "CreateWindowExA", reinterpret_cast<void*>(&hle_create_window_ex_a));
+    register_function("USER32.DLL", "CreateWindowA", reinterpret_cast<void*>(&hle_create_window_ex_a));
+    register_function("USER32.DLL", "DestroyWindow", reinterpret_cast<void*>(&hle_destroy_window));
+    register_function("USER32.DLL", "ShowWindow", reinterpret_cast<void*>(&hle_show_window));
+    register_function("USER32.DLL", "UpdateWindow", reinterpret_cast<void*>(&hle_update_window));
+    register_function("USER32.DLL", "DefWindowProcA", reinterpret_cast<void*>(&hle_def_window_proc_a));
+    register_function("USER32.DLL", "PostQuitMessage", reinterpret_cast<void*>(&hle_post_quit_message));
+    register_function("USER32.DLL", "PostMessageA", reinterpret_cast<void*>(&hle_post_message_a));
+    register_function("USER32.DLL", "SendMessageA", reinterpret_cast<void*>(&hle_send_message_a));
+    register_function("USER32.DLL", "GetDC", reinterpret_cast<void*>(&hle_get_dc));
+    register_function("USER32.DLL", "ReleaseDC", reinterpret_cast<void*>(&hle_release_dc));
+    register_function("USER32.DLL", "BeginPaint", reinterpret_cast<void*>(&generic_stub_null));
+    register_function("USER32.DLL", "EndPaint", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("USER32.DLL", "InvalidateRect", reinterpret_cast<void*>(&generic_stub_success));
+    register_function("USER32.DLL", "MessageBoxA", reinterpret_cast<void*>(&generic_stub_zero));
 
     register_function("GDI32.DLL", "SelectObject", reinterpret_cast<void*>(&generic_stub_success));
     register_function("GDI32.DLL", "GetPixel", reinterpret_cast<void*>(&generic_stub_zero));

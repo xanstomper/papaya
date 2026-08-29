@@ -1,0 +1,374 @@
+#include "papaya/win32/win32_window.hpp"
+#include "papaya/common/logger.hpp"
+
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <cstring>
+#include <cstdlib>
+
+namespace papaya::win32 {
+
+// ---------------------------------------------------------------------------
+// Singleton manager instance
+// ---------------------------------------------------------------------------
+static X11WindowManager g_window_mgr;
+X11WindowManager& window_manager() { return g_window_mgr; }
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+X11WindowManager::X11WindowManager() = default;
+X11WindowManager::~X11WindowManager() { shutdown(); }
+
+bool X11WindowManager::initialize() {
+    if (initialized_) return true;
+    display_ = XOpenDisplay(nullptr);
+    if (!display_) {
+        log::warn("WINDOW", "X11 display unavailable (DISPLAY={}) — window creation disabled",
+                  getenv("DISPLAY") ? getenv("DISPLAY") : "(unset)");
+        initialized_ = false;
+        return false;
+    }
+    initialized_ = true;
+    log::info("WINDOW", "X11 window manager initialized (server: {})", DisplayString(display_));
+    return true;
+}
+
+void X11WindowManager::shutdown() {
+    for (auto& [k, w] : windows_) {
+        if (w->xid && display_) XDestroyWindow(display_, static_cast<Window>(w->xid));
+        if (w->gc && display_) XFreeGC(display_, w->gc);
+    }
+    windows_.clear();
+    if (display_) { XCloseDisplay(display_); display_ = nullptr; }
+    initialized_ = false;
+}
+
+// ---------------------------------------------------------------------------
+// Window classes
+// ---------------------------------------------------------------------------
+void* X11WindowManager::register_class(const char* name, void* wndproc, void* hinstance) {
+    if (!name || !wndproc) return nullptr;
+    auto& c = classes_[std::string(name)];
+    c.name = name;
+    c.window_proc = wndproc;
+    c.instance_handle = hinstance;
+    c.registered = true;
+    return &c;   // ATOM / class handle
+}
+
+void* X11WindowManager::find_class(const char* name) {
+    if (!name) return nullptr;
+    auto it = classes_.find(std::string(name));
+    return it == classes_.end() ? nullptr : &it->second;
+}
+
+// ---------------------------------------------------------------------------
+// Window creation
+// ---------------------------------------------------------------------------
+void* X11WindowManager::create_window_ex(const char* class_name, const char* title, u32 style,
+                                         int x, int y, int w, int h, void* parent,
+                                         void* instance, void* param, bool hide) {
+    (void)parent; (void)instance; (void)param;
+    if (!initialized_ && !initialize()) return nullptr;
+
+    auto* cls = static_cast<NativeWindowClass*>(find_class(class_name));
+    if (!cls) { log::warn("WINDOW", "CreateWindow: unknown class '{}'", class_name ? class_name : "?"); return nullptr; }
+
+    auto win = std::make_unique<NativeWindow>();
+    win->cls = cls;
+    win->title = title ? title : class_name;
+    win->display = display_;
+    win->style = style;
+    win->width  = w > 0 ? w : 640;
+    win->height = h > 0 ? h : 480;
+    win->x = (x == 0 && w == 0) ? 0 : x;
+    win->y = (y == 0 && h == 0) ? 0 : y;
+
+    XSetWindowAttributes attrs{};
+    attrs.border_pixel = 0;
+    attrs.background_pixel = BlackPixel(display_, DefaultScreen(display_));
+    attrs.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask |
+                       ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
+                       StructureNotifyMask | FocusChangeMask;
+
+    Window xw = XCreateWindow(display_, DefaultRootWindow(display_),
+                              win->x, win->y, win->width, win->height, 0,
+                              CopyFromParent, InputOutput, CopyFromParent,
+                              CWBackPixel | CWBorderPixel | CWEventMask, &attrs);
+    if (!xw) { log::error("WINDOW", "XCreateWindow failed"); return nullptr; }
+
+    XStoreName(display_, xw, win->title.c_str());
+    win->xid = static_cast<std::uint64_t>(xw);
+    win->gc  = XCreateGC(display_, xw, 0, nullptr);
+    // HWND identity = the NativeWindow pointer.
+    win->hwnd = win.get();
+
+    void* hwnd = win.get();
+    const char* w_title = win->title.c_str();
+    const int   w_w = win->width, w_h = win->height;
+    windows_[hwnd] = std::move(win);
+
+    log::info("WINDOW", "Created native window '{}' [{}x{}] hwnd={} xid=0x{:X}",
+              w_title, w_w, w_h,
+              reinterpret_cast<u64>(hwnd), static_cast<unsigned long long>(xw));
+
+    if (!hide) show_window(hwnd, 5 /*SW_SHOW*/);
+    return hwnd;
+}
+
+void X11WindowManager::destroy_window(void* hwnd) {
+    auto* w = window_from_hwnd(hwnd);
+    if (!w) return;
+    // Let the app handle WM_DESTROY first.
+    dispatch_message_impl(hwnd, WM_DESTROY, 0, 0);
+    if (w->display && w->xid) XDestroyWindow(w->display, static_cast<Window>(w->xid));
+    if (w->gc) XFreeGC(w->display, w->gc);
+    windows_.erase(hwnd);
+}
+
+void X11WindowManager::show_window(void* hwnd, int /*cmd_show*/) {
+    auto* w = window_from_hwnd(hwnd);
+    if (!w || !w->display || !w->xid) return;
+    XMapRaised(w->display, static_cast<Window>(w->xid));
+    XFlush(w->display);
+    w->visible = true;
+}
+
+void X11WindowManager::update_window(void* hwnd) {
+    auto* w = window_from_hwnd(hwnd);
+    if (w && w->display) XFlush(w->display);
+}
+
+void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
+    auto* w = window_from_hwnd(hwnd);
+    if (!w || !lpRect) return;
+    auto* r = static_cast<s32*>(lpRect);
+    // RECT: left, top, right, bottom.
+    XWindowAttributes wa{};
+    if (w->display && w->xid && XGetWindowAttributes(w->display, static_cast<Window>(w->xid), &wa)) {
+        r[0] = wa.x; r[1] = wa.y; r[2] = wa.x + wa.width; r[3] = wa.y + wa.height;
+    } else {
+        r[0] = w->x; r[1] = w->y; r[2] = w->x + w->width; r[3] = w->y + w->height;
+    }
+}
+
+void X11WindowManager::get_client_rect(void* hwnd, void* lpRect) {
+    auto* w = window_from_hwnd(hwnd);
+    if (!w || !lpRect) return;
+    auto* r = static_cast<s32*>(lpRect);
+    r[0] = 0; r[1] = 0; r[2] = w->width; r[3] = w->height;
+}
+
+// ---------------------------------------------------------------------------
+// Message pump
+// ---------------------------------------------------------------------------
+static void XTranslateKey(KeySym ks, bool& down, u32& vk) {
+    down = (ks & 0xffff) != 0;
+    switch (ks) {
+        case XK_Return: vk = 0x0D; break;
+        case XK_Escape: vk = 0x1B; break;
+        case XK_space:  vk = 0x20; break;
+        case XK_BackSpace: vk = 0x08; break;
+        case XK_Tab:    vk = 0x09; break;
+        default:
+            if (ks >= XK_a && ks <= XK_z) vk = 0x41 + (ks - XK_a);
+            else if (ks >= XK_0 && ks <= XK_9) vk = 0x30 + (ks - XK_0);
+            else vk = 0x00;
+    }
+}
+
+void X11WindowManager::pump_x11_events() {
+    if (!display_ || !initialized_) return;
+    while (XPending(display_) > 0) {
+        XEvent ev;
+        XNextEvent(display_, &ev);
+        // Find which of our windows owns this event's X window.
+        NativeWindow* target = nullptr;
+        for (auto& [k, w] : windows_) {
+            if (w->xid == static_cast<std::uint64_t>(ev.xany.window)) { target = w.get(); break; }
+        }
+        if (!target) continue;
+
+        Win32Message msg{};
+        msg.hwnd = target->hwnd;
+        msg.time = static_cast<u32>(ev.xany.serial & 0xFFFFFFFF);
+        msg.pt_x = ev.xany.window ? ev.xbutton.x : 0;
+        msg.pt_y = ev.xany.window ? ev.xbutton.y : 0;
+
+        switch (ev.type) {
+            case Expose:
+                msg.message = WM_PAINT;
+                msg.w_param = 0; msg.l_param = 0;
+                break;
+            case ConfigureNotify:
+                target->width  = ev.xconfigure.width;
+                target->height = ev.xconfigure.height;
+                msg.message = WM_SIZE;
+                msg.w_param = 0; msg.l_param = (static_cast<u64>(ev.xconfigure.height) << 32) |
+                                              static_cast<u32>(ev.xconfigure.width);
+                break;
+            case KeyPress:
+            case KeyRelease: {
+                KeySym ks = XLookupKeysym(&ev.xkey, 0);
+                bool down; u32 vk;
+                XTranslateKey(ks, down, vk);
+                msg.message = down ? WM_KEYDOWN : WM_KEYUP;
+                msg.w_param = vk; msg.l_param = 0;
+                break;
+            }
+            case ButtonPress:
+            case ButtonRelease: {
+                bool down = (ev.type == ButtonPress);
+                u32 vk = 0;
+                if (ev.xbutton.button == 1) vk = 0x01;      // WM_LBUTTON
+                else if (ev.xbutton.button == 3) vk = 0x02; // WM_RBUTTON
+                else if (ev.xbutton.button == 2) vk = 0x04; // WM_MBUTTON
+                msg.message = down ? WM_LBUTTONDOWN : WM_LBUTTONUP;
+                if (vk == 0x02) msg.message = down ? 0x0204 : 0x0205; // RBUTTON
+                if (vk == 0x04) msg.message = down ? 0x0207 : 0x0208; // MBUTTON
+                msg.w_param = vk;
+                msg.l_param = (static_cast<u64>(ev.xbutton.y) << 16) |
+                              static_cast<u16>(ev.xbutton.x);
+                msg.pt_x = ev.xbutton.x; msg.pt_y = ev.xbutton.y;
+                break;
+            }
+            case MotionNotify:
+                msg.message = WM_MOUSEMOVE;
+                msg.w_param = 0;
+                msg.l_param = (static_cast<u64>(ev.xmotion.y) << 16) |
+                              static_cast<u16>(ev.xmotion.x);
+                msg.pt_x = ev.xmotion.x; msg.pt_y = ev.xmotion.y;
+                break;
+            case DestroyNotify:
+                msg.message = WM_DESTROY;
+                break;
+            default:
+                continue;
+        }
+        push_message(msg);
+    }
+}
+
+bool X11WindowManager::pop_message(Win32Message& out) {
+    std::lock_guard<std::mutex> lk(q_mutex_);
+    if (queue_.empty()) return false;
+    out = queue_.front();
+    queue_.pop_front();
+    return true;
+}
+
+int X11WindowManager::get_message(void* lpMsg, void* hwnd, u32 min, u32 max) {
+    // get_message blocks until a message is available. Pump X11 then wait.
+    for (;;) {
+        if (quit_requested_ && queue_.empty()) {
+            if (lpMsg) {
+                auto* m = static_cast<Win32Message*>(lpMsg);
+                m->message = WM_QUIT;
+                m->w_param = static_cast<u64>(exit_code_);
+            }
+            return 0;   // WM_QUIT -> GetMessage returns 0
+        }
+        pump_x11_events();
+        Win32Message m;
+        if (pop_message(m)) {
+            if (hwnd && m.hwnd != hwnd) { push_message(m); continue; }
+            if (min || max) { if (m.message < min || m.message > max) { push_message(m); continue; } }
+            if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+            return m.message == WM_QUIT ? 0 : 1;
+        }
+        // No message yet: flush X and yield briefly.
+        XFlush(display_);
+        struct timespec ts{0, 2'000'000};
+        nanosleep(&ts, nullptr);   // 2ms
+    }
+}
+
+int X11WindowManager::peek_message(void* lpMsg, void* hwnd, u32 min, u32 max, u32 remove) {
+    pump_x11_events();
+    Win32Message m;
+    for (;;) {
+        if (!pop_message(m)) return 0; // PM_NOREMOVE would need false too
+        if (hwnd && m.hwnd != hwnd) { continue; }
+        if (min || max) { if (m.message < min || m.message > max) continue; }
+        if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+        if (!(remove & 1)) push_message(m);   // PM_REMOVE == 1
+        return 1;
+    }
+}
+
+int X11WindowManager::translate_message(const void* /*lpMsg*/) { return 1; }
+
+int X11WindowManager::dispatch_message(const void* lpMsg) {
+    if (!lpMsg) return 0;
+    const auto* m = static_cast<const Win32Message*>(lpMsg);
+    return static_cast<int>(dispatch_message_impl(m->hwnd, m->message, m->w_param, m->l_param));
+}
+
+// Internal: call the guest WNDPROC or DefWindowProc.
+s64 X11WindowManager::dispatch_message_impl(void* hwnd, u32 msg, u64 wparam, s64 lparam) {
+    auto* w = window_from_hwnd(hwnd);
+    if (!w || !w->cls || !w->cls->window_proc) return 0;
+    using WndProc = s64 (__attribute__((ms_abi))*)(void*, u32, u64, s64);
+    auto fn = reinterpret_cast<WndProc>(w->cls->window_proc);
+    return fn(hwnd, msg, wparam, lparam);
+}
+
+void X11WindowManager::post_quit_message(int exit_code) {
+    exit_code_ = exit_code;
+    quit_requested_ = true;
+    Win32Message m{};
+    m.message = WM_QUIT;
+    m.w_param = static_cast<u64>(exit_code);
+    push_message(m);
+}
+
+int X11WindowManager::post_message_a(void* hwnd, u32 msg, u64 wparam, s64 lparam) {
+    Win32Message m{};
+    m.hwnd = hwnd; m.message = msg; m.w_param = wparam; m.l_param = lparam;
+    push_message(m);
+    return 1;
+}
+
+int X11WindowManager::send_message_a(void* hwnd, u32 msg, u64 wparam, s64 lparam) {
+    return static_cast<int>(dispatch_message_impl(hwnd, msg, wparam, lparam));
+}
+
+// ---------------------------------------------------------------------------
+// DefWindowProc default handling
+// ---------------------------------------------------------------------------
+s64 X11WindowManager::def_window_proc(void* hwnd, u32 msg, u64 wparam, s64 lparam) {
+    auto* w = window_from_hwnd(hwnd);
+    switch (msg) {
+        case WM_CLOSE:
+            destroy_window(hwnd);
+            return 0;
+        case WM_DESTROY:
+            post_quit_message(0);
+            return 0;
+        case WM_SIZE:
+        case WM_PAINT:
+        case WM_MOUSEMOVE:
+            return 0;
+        case WM_CREATE:
+            return 0;
+        case 0x0024: // WM_GETMINMAXINFO
+            return 0;
+        default:
+            (void)w; (void)lparam; (void)wparam;
+            return 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DC / GDI
+// ---------------------------------------------------------------------------
+void* X11WindowManager::get_dc(void* hwnd) {
+    auto* w = window_from_hwnd(hwnd);
+    return w ? static_cast<void*>(w->gc) : nullptr;
+}
+int X11WindowManager::release_dc(void* hwnd, void* dc) {
+    (void)hwnd; (void)dc; return 1;
+}
+
+} // namespace papaya::win32
