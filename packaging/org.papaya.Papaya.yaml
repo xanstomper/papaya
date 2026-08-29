@@ -1,0 +1,38 @@
+app-id: org.papaya.Papaya
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: papaya-daemon
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=all
+  - --filesystem=host
+  - --filesystem=xdg-run/game-controller:ro
+  - --allow=devel
+  - --env=MANGOHUD=1
+  - --env=DXVK_STATE_CACHE=1
+
+modules:
+  - name: papaya-core
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DPAPAYA_BUILD_TESTS=OFF
+    sources:
+      - type: dir
+        path: ..
+
+  - name: papaya-daemon
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 src/orchestrator/python/papaya_daemon.py /app/bin/papaya-daemon
+      - install -Dm644 src/orchestrator/data/compatibility_db.json /app/share/papaya/compatibility_db.json
+      - install -Dm644 packaging/org.papaya.Papaya.desktop /app/share/applications/org.papaya.Papaya.desktop
+      - install -Dm644 packaging/org.papaya.Papaya.metainfo.xml /app/share/metainfo/org.papaya.Papaya.metainfo.xml
+    sources:
+      - type: dir
+        path: ..

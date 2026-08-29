@@ -1,24 +1,24 @@
-Start testing: Aug 29 02:32 EDT
+Start testing: Aug 29 02:33 EDT
 ----------------------------------------------------------
 1/17 Testing: SteamStubTest
 1/17 Test: SteamStubTest
 Command: "/home/jewboy420/papaya/build/tests/test_steam_stub"
 Directory: /home/jewboy420/papaya/build/tests
-"SteamStubTest" start time: Aug 29 02:32 EDT
+"SteamStubTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_steam_stub[0m
-[32m[02:32:19] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 1086940, Player: 'Odin2Gamer', SteamID: 0x1100001031AAD4E][0m
-[32m[02:32:19] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
-[32m[02:32:19] [INFO] [STEAM] SteamAPI_RestartAppIfNecessary called for AppID 1086940 - returning false (no restart needed)[0m
-[32m[02:32:19] [INFO] [STEAM] Achievement Unlocked: 'ACH_FIRST_KILL' for AppID 1086940[0m
-[32m[02:32:19] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_steam_stub PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_steam_stub[0m
+[32m[02:33:42] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 1086940, Player: 'Odin2Gamer', SteamID: 0x1100001031AAD4E][0m
+[32m[02:33:42] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
+[32m[02:33:42] [INFO] [STEAM] SteamAPI_RestartAppIfNecessary called for AppID 1086940 - returning false (no restart needed)[0m
+[32m[02:33:42] [INFO] [STEAM] Achievement Unlocked: 'ACH_FIRST_KILL' for AppID 1086940[0m
+[32m[02:33:42] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_steam_stub PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SteamStubTest" end time: Aug 29 02:32 EDT
+"SteamStubTest" end time: Aug 29 02:33 EDT
 "SteamStubTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -26,17 +26,17 @@ Test Passed.
 2/17 Test: CpuPagesTest
 Command: "/home/jewboy420/papaya/build/tests/test_cpu_pages"
 Directory: /home/jewboy420/papaya/build/tests
-"CpuPagesTest" start time: Aug 29 02:32 EDT
+"CpuPagesTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_cpu_pages[0m
-[32m[02:32:19] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:32:19] [INFO] [TEST] >>> test_cpu_pages PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_cpu_pages[0m
+[32m[02:33:42] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:33:42] [INFO] [TEST] >>> test_cpu_pages PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"CpuPagesTest" end time: Aug 29 02:32 EDT
+"CpuPagesTest" end time: Aug 29 02:33 EDT
 "CpuPagesTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -44,17 +44,17 @@ Test Passed.
 3/17 Test: PotatoGpuTest
 Command: "/home/jewboy420/papaya/build/tests/test_potato_gpu"
 Directory: /home/jewboy420/papaya/build/tests
-"PotatoGpuTest" start time: Aug 29 02:32 EDT
+"PotatoGpuTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_potato_gpu[0m
-[32m[02:32:19] [INFO] [TEST] Potato Mode stripped 1 textures and saved 63 MB VRAM[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_potato_gpu PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_potato_gpu[0m
+[32m[02:33:42] [INFO] [TEST] Potato Mode stripped 1 textures and saved 63 MB VRAM[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_potato_gpu PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"PotatoGpuTest" end time: Aug 29 02:32 EDT
+"PotatoGpuTest" end time: Aug 29 02:33 EDT
 "PotatoGpuTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -62,16 +62,16 @@ Test Passed.
 4/17 Test: ShaderStrippingTest
 Command: "/home/jewboy420/papaya/build/tests/test_shader_stripping"
 Directory: /home/jewboy420/papaya/build/tests
-"ShaderStrippingTest" start time: Aug 29 02:32 EDT
+"ShaderStrippingTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_shader_stripping[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_shader_stripping PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_shader_stripping[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_shader_stripping PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"ShaderStrippingTest" end time: Aug 29 02:32 EDT
+"ShaderStrippingTest" end time: Aug 29 02:33 EDT
 "ShaderStrippingTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -79,17 +79,17 @@ Test Passed.
 5/17 Test: SwapchainUpscalerTest
 Command: "/home/jewboy420/papaya/build/tests/test_swapchain_upscaler"
 Directory: /home/jewboy420/papaya/build/tests
-"SwapchainUpscalerTest" start time: Aug 29 02:32 EDT
+"SwapchainUpscalerTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_swapchain_upscaler[0m
-[32m[02:32:19] [INFO] [UPSCALER] Forcing Internal Render Target: 960x540 -> Present Target: 1920x1080 (4.0x reduction)[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_swapchain_upscaler PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_swapchain_upscaler[0m
+[32m[02:33:42] [INFO] [UPSCALER] Forcing Internal Render Target: 960x540 -> Present Target: 1920x1080 (4.0x reduction)[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_swapchain_upscaler PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.05 sec
+Test time =   0.03 sec
 ----------------------------------------------------------
 Test Passed.
-"SwapchainUpscalerTest" end time: Aug 29 02:32 EDT
+"SwapchainUpscalerTest" end time: Aug 29 02:33 EDT
 "SwapchainUpscalerTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -97,18 +97,18 @@ Test Passed.
 6/17 Test: HardwareSpooferTest
 Command: "/home/jewboy420/papaya/build/tests/test_hardware_spoofer"
 Directory: /home/jewboy420/papaya/build/tests
-"HardwareSpooferTest" start time: Aug 29 02:32 EDT
+"HardwareSpooferTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_hardware_spoofer[0m
-[32m[02:32:19] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Intel(R) HD Graphics 4000' (Vendor: 0x8086, VRAM: 1024 MB)[0m
-[32m[02:32:19] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Adreno (TM) 740 (Mesa Turnip)' (Vendor: 0x5143, VRAM: 4096 MB)[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_hardware_spoofer PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_hardware_spoofer[0m
+[32m[02:33:42] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Intel(R) HD Graphics 4000' (Vendor: 0x8086, VRAM: 1024 MB)[0m
+[32m[02:33:42] [INFO] [SPOOF] Spoofed DXGI Adapter Query: 'Adreno (TM) 740 (Mesa Turnip)' (Vendor: 0x5143, VRAM: 4096 MB)[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_hardware_spoofer PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"HardwareSpooferTest" end time: Aug 29 02:32 EDT
+"HardwareSpooferTest" end time: Aug 29 02:33 EDT
 "HardwareSpooferTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -116,17 +116,17 @@ Test Passed.
 7/17 Test: AutoConfiguratorTest
 Command: "/home/jewboy420/papaya/build/tests/test_auto_configurator"
 Directory: /home/jewboy420/papaya/build/tests
-"AutoConfiguratorTest" start time: Aug 29 02:32 EDT
+"AutoConfiguratorTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_auto_configurator[0m
-[32m[02:32:19] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_auto_configurator PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_auto_configurator[0m
+[32m[02:33:42] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_auto_configurator PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"AutoConfiguratorTest" end time: Aug 29 02:32 EDT
+"AutoConfiguratorTest" end time: Aug 29 02:33 EDT
 "AutoConfiguratorTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -134,18 +134,18 @@ Test Passed.
 8/17 Test: MemoryWatchdogTest
 Command: "/home/jewboy420/papaya/build/tests/test_memory_watchdog"
 Directory: /home/jewboy420/papaya/build/tests
-"MemoryWatchdogTest" start time: Aug 29 02:32 EDT
+"MemoryWatchdogTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_memory_watchdog[0m
-[33m[02:32:19] [WARN] [WATCHDOG] Memory pressure critical (83.0% used, threshold: 1.0%)! Flushing texture caches...[0m
-[32m[02:32:19] [INFO] [TEST] Memory watchdog queried 11707 MB RAM, pressure=83.0%[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_memory_watchdog PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_memory_watchdog[0m
+[33m[02:33:42] [WARN] [WATCHDOG] Memory pressure critical (84.6% used, threshold: 1.0%)! Flushing texture caches...[0m
+[32m[02:33:42] [INFO] [TEST] Memory watchdog queried 11707 MB RAM, pressure=84.6%[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_memory_watchdog PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.00 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"MemoryWatchdogTest" end time: Aug 29 02:32 EDT
+"MemoryWatchdogTest" end time: Aug 29 02:33 EDT
 "MemoryWatchdogTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -153,19 +153,19 @@ Test Passed.
 9/17 Test: NtSyncIoUringTest
 Command: "/home/jewboy420/papaya/build/tests/test_ntsync_iouring"
 Directory: /home/jewboy420/papaya/build/tests
-"NtSyncIoUringTest" start time: Aug 29 02:32 EDT
+"NtSyncIoUringTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_ntsync_iouring[0m
-[32m[02:32:19] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:32:19] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 128][0m
-[32m[02:32:19] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:32:19] [INFO] [TEST] >>> test_ntsync_iouring PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_ntsync_iouring[0m
+[32m[02:33:42] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:33:42] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 128][0m
+[32m[02:33:42] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:33:42] [INFO] [TEST] >>> test_ntsync_iouring PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.00 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"NtSyncIoUringTest" end time: Aug 29 02:32 EDT
+"NtSyncIoUringTest" end time: Aug 29 02:33 EDT
 "NtSyncIoUringTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -173,19 +173,19 @@ Test Passed.
 10/17 Test: AudioInputTest
 Command: "/home/jewboy420/papaya/build/tests/test_audio_input"
 Directory: /home/jewboy420/papaya/build/tests
-"AudioInputTest" start time: Aug 29 02:32 EDT
+"AudioInputTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_audio_input[0m
-[32m[02:32:19] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
-[32m[02:32:19] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:512, R:512][0m
-[32m[02:32:19] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_audio_input PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_audio_input[0m
+[32m[02:33:42] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
+[32m[02:33:42] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:512, R:512][0m
+[32m[02:33:42] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_audio_input PASSED ALL CHECKS! <<<[0m
 <end of output>
-Test time =   0.00 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"AudioInputTest" end time: Aug 29 02:32 EDT
+"AudioInputTest" end time: Aug 29 02:33 EDT
 "AudioInputTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -193,34 +193,34 @@ Test Passed.
 11/17 Test: FullRuntimeStackTest
 Command: "/home/jewboy420/papaya/build/tests/test_full_runtime_stack"
 Directory: /home/jewboy420/papaya/build/tests
-"FullRuntimeStackTest" start time: Aug 29 02:32 EDT
+"FullRuntimeStackTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running integration test: test_full_runtime_stack[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:32:19] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
-[32m[02:32:19] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
-[32m[02:32:19] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
-[32m[02:32:19] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:32:19] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:32:19] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
-[32m[02:32:19] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:32:19] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
-[32m[02:32:19] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
-[32m[02:32:19] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
-[32m[02:32:19] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
-[32m[02:32:19] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: 'test_game.exe'[0m
-[32m[02:32:19] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
-[32m[02:32:19] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_full_runtime_stack PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running integration test: test_full_runtime_stack[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:33:42] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:33:42] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:33:42] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
+[32m[02:33:42] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:33:42] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:33:42] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:33:42] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:33:42] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
+[32m[02:33:42] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
+[32m[02:33:42] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:33:42] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:33:42] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: 'test_game.exe'[0m
+[32m[02:33:42] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
+[32m[02:33:42] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_full_runtime_stack PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"FullRuntimeStackTest" end time: Aug 29 02:32 EDT
+"FullRuntimeStackTest" end time: Aug 29 02:33 EDT
 "FullRuntimeStackTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -228,17 +228,17 @@ Test Passed.
 12/17 Test: RomLoaderTest
 Command: "/home/jewboy420/papaya/build/tests/test_rom_loader"
 Directory: /home/jewboy420/papaya/build/tests
-"RomLoaderTest" start time: Aug 29 02:32 EDT
+"RomLoaderTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_rom_loader[0m
-[32m[02:32:19] [INFO] [ROM] Mounted ROM Image [Title: 'PAPAYA_TEST_ISO', Serial: 'SLUS-20062', Format: 0x1, Sectors: 32, Size: 0 MB][0m
-[32m[02:32:19] [INFO] [TEST] >>> test_rom_loader PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_rom_loader[0m
+[32m[02:33:42] [INFO] [ROM] Mounted ROM Image [Title: 'PAPAYA_TEST_ISO', Serial: 'SLUS-20062', Format: 0x1, Sectors: 32, Size: 0 MB][0m
+[32m[02:33:42] [INFO] [TEST] >>> test_rom_loader PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"RomLoaderTest" end time: Aug 29 02:32 EDT
+"RomLoaderTest" end time: Aug 29 02:33 EDT
 "RomLoaderTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -246,19 +246,19 @@ Test Passed.
 13/17 Test: SteamRomBridgeTest
 Command: "/home/jewboy420/papaya/build/tests/test_steam_rom_bridge"
 Directory: /home/jewboy420/papaya/build/tests
-"SteamRomBridgeTest" start time: Aug 29 02:32 EDT
+"SteamRomBridgeTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_steam_rom_bridge[0m
-[32m[02:32:19] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
-[32m[02:32:19] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
-[32m[02:32:19] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 327793340][0m
-[32m[02:32:19] [INFO] [TEST] >>> test_steam_rom_bridge PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_steam_rom_bridge[0m
+[32m[02:33:42] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
+[32m[02:33:42] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 327793340 for ROM 'GrandTheftAuto_SanAndreas' (Serial: 'SLUS-20946')[0m
+[32m[02:33:42] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 327793340][0m
+[32m[02:33:42] [INFO] [TEST] >>> test_steam_rom_bridge PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"SteamRomBridgeTest" end time: Aug 29 02:32 EDT
+"SteamRomBridgeTest" end time: Aug 29 02:33 EDT
 "SteamRomBridgeTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -266,35 +266,35 @@ Test Passed.
 14/17 Test: AndroidStorageBridgeTest
 Command: "/home/jewboy420/papaya/build/tests/test_android_storage_bridge"
 Directory: /home/jewboy420/papaya/build/tests
-"AndroidStorageBridgeTest" start time: Aug 29 02:32 EDT
+"AndroidStorageBridgeTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_android_storage_bridge[0m
-[32m[02:32:19] [INFO] [JNI] Android NDK JNI: Initializing Papaya Runtime (Potato: 1, Tier: 2)[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:32:19] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
-[32m[02:32:19] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
-[32m[02:32:19] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
-[32m[02:32:19] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:32:19] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:32:19] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
-[32m[02:32:19] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:32:19] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
-[32m[02:32:19] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
-[32m[02:32:19] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: NO, Title: 'Project Papaya - Steam ARM Runtime'][0m
-[32m[02:32:19] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
-[32m[02:32:19] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
-[32m[02:32:19] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:32:19] [INFO] [JNI] Android NDK JNI: Runtime shut down cleanly[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_android_storage_bridge PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_android_storage_bridge[0m
+[32m[02:33:42] [INFO] [JNI] Android NDK JNI: Initializing Papaya Runtime (Potato: 1, Tier: 2)[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:33:42] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:33:42] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:33:42] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
+[32m[02:33:42] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:33:42] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:33:42] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:33:42] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:33:42] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
+[32m[02:33:42] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
+[32m[02:33:42] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: NO, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:33:42] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:33:42] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
+[32m[02:33:42] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:33:42] [INFO] [JNI] Android NDK JNI: Runtime shut down cleanly[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_android_storage_bridge PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"AndroidStorageBridgeTest" end time: Aug 29 02:32 EDT
+"AndroidStorageBridgeTest" end time: Aug 29 02:33 EDT
 "AndroidStorageBridgeTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -302,38 +302,38 @@ Test Passed.
 15/17 Test: RomGameLoopTest
 Command: "/home/jewboy420/papaya/build/tests/test_rom_game_loop"
 Directory: /home/jewboy420/papaya/build/tests
-"RomGameLoopTest" start time: Aug 29 02:32 EDT
+"RomGameLoopTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running integration test: test_rom_game_loop[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
-[32m[02:32:19] [INFO] [RUNTIME] ==========================================================[0m
-[32m[02:32:19] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
-[32m[02:32:19] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
-[32m[02:32:19] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
-[32m[02:32:19] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
-[32m[02:32:19] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
-[32m[02:32:19] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
-[32m[02:32:19] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
-[32m[02:32:19] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
-[32m[02:32:19] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
-[32m[02:32:19] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
-[32m[02:32:19] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
-[32m[02:32:19] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
-[32m[02:32:19] [INFO] [ROM] Mounted ROM Image [Title: 'GTA_SAN_ANDREAS', Serial: 'SLUS-20946', Format: 0x1, Sectors: 32, Size: 0 MB][0m
-[32m[02:32:19] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 1157600662 for ROM 'GTA_SAN_ANDREAS' (Serial: 'SLUS-20946')[0m
-[32m[02:32:19] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 1157600662][0m
-[32m[02:32:19] [INFO] [RUNTIME] Mounting and launching ROM image via Steam compatibility layer: './san_andreas_loop.iso'[0m
-[32m[02:32:19] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: './san_andreas_loop.iso'[0m
-[32m[02:32:19] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
-[32m[02:32:19] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_rom_game_loop PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running integration test: test_rom_game_loop[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [RUNTIME] Initializing Papaya ARM Steam Compatibility Layer Core[0m
+[32m[02:33:42] [INFO] [RUNTIME] ==========================================================[0m
+[32m[02:33:42] [INFO] [AUTOCONFIG] Detected Desktop x86-64 host -> Activating DesktopLinux Native Profile[0m
+[32m[02:33:42] [INFO] [VK_LAYER] Initializing Papaya Vulkan 1.3 Optimization & Potato Interceptor Layer[0m
+[32m[02:33:42] [INFO] [STEAM] Initializing Papaya Clean-Room Steam API Stub [AppID: 480, Player: 'PapayaPlayer', SteamID: 0x1100001025E4C01][0m
+[32m[02:33:42] [INFO] [STEAM] Loaded 1 achievements and 1 stats from disk.[0m
+[32m[02:33:42] [INFO] [CPU] Initializing CPU Execution Core [Arch: x86_64, Model: 'Intel(R) N97', PageSize: 4 KB, 16K Mode: NO][0m
+[32m[02:33:42] [INFO] [NTSYNC] /dev/ntsync not present on host kernel - engaging ultra-fast userspace futex sync emulation[0m
+[32m[02:33:42] [INFO] [IO_URING] Initializing Linux Direct I/O Bypass Engine [QueueDepth: 256][0m
+[32m[02:33:42] [INFO] [PREFIX] Initialized Papaya Wine Prefix [Path: './papaya_prefix', User: 'steamuser'][0m
+[32m[02:33:42] [INFO] [AUDIO] Initializing Low-Latency Audio Stream [Rate: 48000 Hz, Channels: 2, Buffer: 1024 frames][0m
+[32m[02:33:42] [INFO] [INPUT] Initializing Virtual XInput Controller Subsystem (4 Gamepad Slots Ready)[0m
+[32m[02:33:42] [INFO] [WINDOW] Initializing Display Server Window [1920x1080, Headless: YES, Title: 'Project Papaya - Steam ARM Runtime'][0m
+[32m[02:33:42] [INFO] [RUNTIME] All Papaya subsystems successfully initialized and primed for execution![0m
+[32m[02:33:42] [INFO] [ROM] Mounted ROM Image [Title: 'GTA_SAN_ANDREAS', Serial: 'SLUS-20946', Format: 0x1, Sectors: 32, Size: 0 MB][0m
+[32m[02:33:42] [INFO] [STEAM_ROM] Generated Virtual Steam AppID 1157600662 for ROM 'GTA_SAN_ANDREAS' (Serial: 'SLUS-20946')[0m
+[32m[02:33:42] [INFO] [STEAM_ROM] Seamlessly bound ROM to Steamworks API Stub [VirtualAppID: 1157600662][0m
+[32m[02:33:42] [INFO] [RUNTIME] Mounting and launching ROM image via Steam compatibility layer: './san_andreas_loop.iso'[0m
+[32m[02:33:42] [INFO] [RUNTIME] Priming execution pipeline for Steam Title: './san_andreas_loop.iso'[0m
+[32m[02:33:42] [INFO] [AUDIO] Audio Stream stopped cleanly [Frames: W:0, R:0][0m
+[32m[02:33:42] [INFO] [STEAM] Steam API Stub successfully shut down.[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_rom_game_loop PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"RomGameLoopTest" end time: Aug 29 02:32 EDT
+"RomGameLoopTest" end time: Aug 29 02:33 EDT
 "RomGameLoopTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -341,22 +341,22 @@ Test Passed.
 16/17 Test: OrchestratorTest
 Command: "/home/jewboy420/papaya/build/tests/test_orchestrator"
 Directory: /home/jewboy420/papaya/build/tests
-"OrchestratorTest" start time: Aug 29 02:32 EDT
+"OrchestratorTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
-[32m[02:32:19] [INFO] [TEST] Running unit test: test_orchestrator[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] Built isolated Wine sandbox: './test_papaya_sandbox/Prefixes/prefix_1245620'[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] Injected DXVK Potato Mode and Shader State Cache into './test_papaya_sandbox/Staging/EldenRing_Benchmark'[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] Decoupled Steamworks DRM and injected Goldberg Stub for AppID 1245620[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] Linked Save Vault for 'EldenRing_Benchmark' -> './test_papaya_sandbox/Saves/1245620'[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] Generated Native Desktop / Big Picture Shortcut: './test_papaya_sandbox/Shortcuts/papaya_1245620.desktop'[0m
-[32m[02:32:19] [INFO] [ORCHESTRATOR] >>> Game 'EldenRing_Benchmark' (AppID: 1245620) completely deployed and ready to play! <<<[0m
-[32m[02:32:19] [INFO] [TEST] >>> test_orchestrator PASSED ALL CHECKS! <<<[0m
+[32m[02:33:42] [INFO] [TEST] Running unit test: test_orchestrator[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] Built isolated Wine sandbox: './test_papaya_sandbox/Prefixes/prefix_1245620'[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] Injected DXVK Potato Mode and Shader State Cache into './test_papaya_sandbox/Staging/EldenRing_Benchmark'[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] Decoupled Steamworks DRM and injected Goldberg Stub for AppID 1245620[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] Linked Save Vault for 'EldenRing_Benchmark' -> './test_papaya_sandbox/Saves/1245620'[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] Generated Native Desktop / Big Picture Shortcut: './test_papaya_sandbox/Shortcuts/papaya_1245620.desktop'[0m
+[32m[02:33:42] [INFO] [ORCHESTRATOR] >>> Game 'EldenRing_Benchmark' (AppID: 1245620) completely deployed and ready to play! <<<[0m
+[32m[02:33:42] [INFO] [TEST] >>> test_orchestrator PASSED ALL CHECKS! <<<[0m
 <end of output>
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"OrchestratorTest" end time: Aug 29 02:32 EDT
+"OrchestratorTest" end time: Aug 29 02:33 EDT
 "OrchestratorTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -364,7 +364,7 @@ Test Passed.
 17/17 Test: PythonDaemonTest
 Command: "/usr/bin/python3" "/home/jewboy420/papaya/tests/test_daemon.py"
 Directory: /home/jewboy420/papaya/build/tests
-"PythonDaemonTest" start time: Aug 29 02:32 EDT
+"PythonDaemonTest" start time: Aug 29 02:33 EDT
 Output:
 ----------------------------------------------------------
 [TEST] Running test_compatibility_database...
@@ -402,11 +402,11 @@ Output:
 >>> ALL PYTHON ORCHESTRATOR TESTS PASSED! <<<
 
 <end of output>
-Test time =   0.13 sec
+Test time =   0.24 sec
 ----------------------------------------------------------
 Test Passed.
-"PythonDaemonTest" end time: Aug 29 02:32 EDT
+"PythonDaemonTest" end time: Aug 29 02:33 EDT
 "PythonDaemonTest" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 29 02:32 EDT
+End testing: Aug 29 02:33 EDT

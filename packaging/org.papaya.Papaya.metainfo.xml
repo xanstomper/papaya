@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.papaya.Papaya</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Papaya</name>
+  <summary>Autonomous ARM Steam &amp; ROM Gaming Runtime</summary>
+  <description>
+    <p>
+      Papaya is a next-generation compatibility runtime and ROM translation layer designed to run
+      Windows Steam games and console optical disc images (ISO/CSO/CHD) on ARM handhelds, SBCs, and Linux devices.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Drag-and-Drop Autonomous Ingestion &amp; Prefix Isolation</li>
+      <li>Potato Mode 1x1 Texture Stripping &amp; Mipmap LOD Bias Clamping</li>
+      <li>Forced 540p Resolution Downscale with Spatial FSR Upscaling</li>
+      <li>Linux 6.14+ NTSync Kernel Primitives &amp; io_uring DirectStorage I/O</li>
+      <li>Decoupled Steamworks DRM with Goldberg Stub &amp; Save Vault Sync</li>
+      <li>P2P WireGuard Multiplayer LAN Tunneling</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/xanstomper/papaya</url>
+  <provides>
+    <binary>papaya</binary>
+    <binary>papaya-daemon</binary>
+  </provides>
+</component>
