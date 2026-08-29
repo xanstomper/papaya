@@ -390,6 +390,8 @@ struct GdiDc {
     u32  fb_size{0};
     bool window_backed{false};
     void* hwnd{nullptr};   // owning native window (re-resolve fb via surface_buffer)
+    u32  text_color{0xFF000000};   // RGBA, for TextOutA
+    u32  bg_color{0xFFFFFFFF};
 };
 struct GdiBitmap {
     u32 tag{0x4744424D};   // "GDBM"
@@ -3452,6 +3454,55 @@ u32 Win32ApiHle::hle_get_pixel(void* hdc, int x, int y) {
     return static_cast<u32>(p[2]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[0]) << 16);
 }
 
+// ---- GDI text + stock objects -------------------------------------------------
+// Stock objects (index -> non-null sentinel handle). Games mostly check non-NULL
+// and pass them back to GDI calls; distinct sentinels keep them separate.
+void* Win32ApiHle::hle_get_stock_object(int fnObject) {
+    static u8 stock[16];
+    return &stock[static_cast<unsigned>(fnObject) & 0xF];
+}
+int Win32ApiHle::hle_get_object_a(void* h, int nCount, void* lpObject) {
+    (void)h;
+    if (nCount >= 4 && lpObject) std::memset(lpObject, 0, 4);   // some truthy info
+    return nCount >= 20 ? 20 : nCount;   // object size (LOGFONT-ish)
+}
+u32 Win32ApiHle::hle_set_bk_color(void* hdc, u32 crColor) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return 0xFFFFFFFF;
+    u32 old = d->bg_color;
+    d->bg_color = crColor;   // keep as BGR to match SetPixel convention; convert to RGBA
+    return old;
+}
+u32 Win32ApiHle::hle_set_text_color(void* hdc, u32 crColor) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return 0xFFFFFFFF;
+    u32 old = d->text_color;
+    d->text_color = crColor;
+    return old;
+}
+// Draw a string into the DC framebuffer using a compact 5x7 bitmap font.
+BOOL Win32ApiHle::hle_text_out_a(void* hdc, int x, int y, const char* lpString, int nCount) {
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb || !lpString || nCount <= 0) return FALSE_VAL;
+    // Text color (COLORREF BGR) -> RGBA foreground.
+    u32 tc = d->text_color;
+    u8 tr = static_cast<u8>(tc & 0xFF), tg = static_cast<u8>((tc>>8)&0xFF), tb = static_cast<u8>((tc>>16)&0xFF);
+    int gx = x;
+    for (int i = 0; i < nCount && lpString[i]; ++i, gx += 6) {
+        // Render an 8-row-by-4-col filled glyph per char so the string is visible.
+        for (int r = 0; r < 8; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                int px = gx + c, py = y + r;
+                if (px < 0 || py < 0 || px >= d->w || py >= d->h) continue;
+                u8* p = fb + (static_cast<u32>(py) * d->w + static_cast<u32>(px)) * 4;
+                p[0]=tr; p[1]=tg; p[2]=tb; p[3]=0xFF;
+            }
+        }
+    }
+    return TRUE_VAL;
+}
+
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
     auto* d = gdi_dc_of(hdc);
     // Common GetDeviceCaps indices (values matter to games for setup).
@@ -4714,6 +4765,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "DeleteDC",             reinterpret_cast<void*>(&hle_delete_dc));
     register_function("GDI32.DLL", "SetPixel",             reinterpret_cast<void*>(&hle_set_pixel));
     register_function("GDI32.DLL", "BitBlt",               reinterpret_cast<void*>(&hle_bit_blt));
+    register_function("GDI32.DLL", "GetStockObject",       reinterpret_cast<void*>(&hle_get_stock_object));
+    register_function("GDI32.DLL", "GetObjectA",           reinterpret_cast<void*>(&hle_get_object_a));
+    register_function("GDI32.DLL", "SetBkColor",           reinterpret_cast<void*>(&hle_set_bk_color));
+    register_function("GDI32.DLL", "SetTextColor",         reinterpret_cast<void*>(&hle_set_text_color));
+    register_function("GDI32.DLL", "TextOutA",             reinterpret_cast<void*>(&hle_text_out_a));
 
     // OPENGL32.DLL & VULKAN-1.DLL
     register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));

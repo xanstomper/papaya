@@ -576,6 +576,11 @@ public:
                                            void* src_dc, int sx, int sy, u32 rop);
     static PAPAYA_MS_ABI u32   hle_get_pixel(void* hdc, int x, int y);
     static PAPAYA_MS_ABI int   hle_get_device_caps(void* hdc, int nIndex);
+    static PAPAYA_MS_ABI void* hle_get_stock_object(int fnObject);
+    static PAPAYA_MS_ABI int   hle_get_object_a(void* h, int nCount, void* lpObject);
+    static PAPAYA_MS_ABI u32   hle_set_bk_color(void* hdc, u32 crColor);
+    static PAPAYA_MS_ABI u32   hle_set_text_color(void* hdc, u32 crColor);
+    static PAPAYA_MS_ABI BOOL  hle_text_out_a(void* hdc, int x, int y, const char* lpString, int nCount);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 
