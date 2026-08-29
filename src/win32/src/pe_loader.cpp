@@ -2,6 +2,7 @@
 #include "papaya/common/logger.hpp"
 #include <fstream>
 #include <cstring>
+#include <cstdlib>
 #include <sys/mman.h>
 #include <unistd.h>
 #if defined(__x86_64__) || defined(_M_X64)
@@ -216,6 +217,18 @@ Result<LoadedPeImage> PeLoader::load_from_memory(std::span<const u8> file_data) 
     if (!prot_res) {
         munmap(allocated_base, size_of_image);
         return prot_res.error();
+    }
+
+    // Process the PE TLS directory (__declspec(thread) support).
+    const auto& tls_dir = nt.data_directory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (tls_dir.virtual_address != 0 && tls_dir.size >= 40) {
+        ImageTlsDirectory tls{};
+        std::memcpy(&tls, reinterpret_cast<u8*>(allocated_base) + tls_dir.virtual_address,
+                    sizeof(ImageTlsDirectory));
+        auto tls_res = setup_tls_directory(reinterpret_cast<u8*>(allocated_base), size_of_image, tls, is_64bit);
+        if (!tls_res) {
+            log::warn("PE_LOADER", "TLS directory present but setup failed — continuing without per-thread TLS");
+        }
     }
 
     log::info("PE_LOADER", "Loaded PE Image [Base: 0x{:X}, Entry: 0x{:X}, Size: {} KB, Sections: {}, Arch: {}]",
@@ -488,6 +501,8 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
         teb_->peb = peb_;
         teb_->client_id_proc = getpid();
         teb_->client_id_thread = getpid();
+        // Wire __declspec(thread) storage: TLS index 0 -> per-process block.
+        if (tls_.enabled) teb_->tls_slots[0] = tls_.storage;
     }
 
 #if defined(__x86_64__) || defined(_M_X64)
@@ -501,6 +516,51 @@ Result<void*> PeLoader::setup_execution_environment(const LoadedPeImage& image) 
 #endif
 
     return teb_;
+}
+
+// -------------------------------------------------------------
+// TLS Directory (__declspec(thread))
+// -------------------------------------------------------------
+Result<> PeLoader::setup_tls_directory(u8* base_bytes, u64 size_of_image,
+                                       const ImageTlsDirectory& tls, bool is_64bit) {
+    if (tls.start_address_of_raw_data == 0 || tls.end_address_of_raw_data == 0) return {};
+
+    // Translate guest VAs to mapped base offsets (image loaded at allocated_base).
+    u8* guest_start = base_bytes + (tls.start_address_of_raw_data - reinterpret_cast<u64>(base_bytes));
+    if (tls.start_address_of_raw_data < reinterpret_cast<u64>(base_bytes)) return ErrorCode::RomCorruptHeader;
+
+    u64 template_size = tls.end_address_of_raw_data - tls.start_address_of_raw_data;
+    u64 block_size = template_size + tls.size_of_zero_fill;
+    if (block_size == 0) return {};
+
+    // Allocate a host TLS block (single shared TLS for this process; per-thread
+    // isolation is a later layer, but __declspec(thread) reads/writes work).
+    void* tls_block = std::calloc(1, block_size);
+    if (!tls_block) return ErrorCode::OutOfMemory;
+    std::memcpy(tls_block, guest_start, template_size);
+
+    tls_.enabled = true;
+    tls_.template_va = guest_start;
+    tls_.template_size = template_size;
+    tls_.zero_fill = tls.size_of_zero_fill;
+    tls_.storage = static_cast<void**>(tls_block);
+    tls_.callbacks = reinterpret_cast<void*>(base_bytes + (tls.address_of_call_backs - reinterpret_cast<u64>(base_bytes)));
+
+    // Set the TLS index slot so guest `_tls_index` reads resolve (value 0).
+    if (tls.address_of_index) {
+        void* index_va = base_bytes + (tls.address_of_index - reinterpret_cast<u64>(base_bytes));
+        u32* index_slot = static_cast<u32*>(index_va);
+        *index_slot = 0;
+        tls_.index_slot = index_slot;
+    }
+
+    // Point the TEB's TLS slots at our block. The TEB is created later by
+    // setup_execution_environment(); it reads tls_.storage there.
+    (void)is_64bit;
+
+    log::info("PE_LOADER", "TLS directory: {} bytes template + {} zero-fill -> block {} (index=0)",
+              template_size, tls.size_of_zero_fill, reinterpret_cast<u64>(tls_block));
+    return {};
 }
 
 // -------------------------------------------------------------

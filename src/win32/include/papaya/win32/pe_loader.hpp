@@ -56,9 +56,16 @@ private:
 
     Result<> resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& nt);
 
+    // Process the PE TLS directory: allocate per-thread TLS block from the
+    // template, set the TLS index slot, and mark callbacks for run-on-load.
+    Result<> setup_tls_directory(u8* base_bytes, u64 size_of_image,
+                                 const ImageTlsDirectory& tls, bool is_64bit);
+
     std::shared_ptr<Win32ApiHle> hle_;
     WinTeb64* teb_{nullptr};
     WinPeb64* peb_{nullptr};
+    // Per-process TLS block + a stable index (single-threaded for now).
+    ImgTlsContext tls_;
 };
 
 } // namespace papaya::win32

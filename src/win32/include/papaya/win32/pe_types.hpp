@@ -189,6 +189,28 @@ struct ImageNtHeadersUnified {
     ImageDataDirectory data_directory[16]{};
 };
 
+// TLS (Thread-Local Storage) directory for __declspec(thread) support.
+// On-disk layout matches IMAGE_TLS_DIRECTORY (64-bit variant).
+struct ImageTlsDirectory {
+    u64  start_address_of_raw_data;  // VA of TLS initial data (template)
+    u64  end_address_of_raw_data;    // VA of end of TLS initial data
+    u64  address_of_index;           // VA of the TLS index (u32 slot)
+    u64  address_of_call_backs;      // VA of TLS callback array (0-terminated)
+    u32  size_of_zero_fill;          // bytes of zero-fill past template
+    u32  characteristics;            // reserved
+};
+
+// Context the loader captures for per-thread TLS init.
+struct ImgTlsContext {
+    bool      enabled{false};
+    void*     template_va;       // guest VA where TLS initial data lives
+    u64       template_size;     // bytes copied from template
+    u32       zero_fill;         // bytes zeroed past template
+    u32*      index_slot;        // guest VA of the TLS index (u32)
+    void*     callbacks;         // guest VA of TLS callback array
+    void**    storage;           // head of per-thread TLS block chain
+};
+
 struct ImageSectionHeader {
     u8  name[8];
     union {
