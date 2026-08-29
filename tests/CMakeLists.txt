@@ -56,9 +56,19 @@ target_link_libraries(test_gcn_state PRIVATE
     papaya-gpu
 )
 
+add_executable(test_shader_translator
+    test_shader_translator.cpp
+)
+
+target_link_libraries(test_shader_translator PRIVATE
+    papaya-common
+    papaya-gpu
+)
+
 add_test(NAME KvmBootTest COMMAND test_kvm_boot)
 add_test(NAME GpuPm4Test COMMAND test_gpu_pm4)
 add_test(NAME PeLoaderTest COMMAND test_pe_loader)
 add_test(NAME HleThunkTest COMMAND test_hle_thunk)
 add_test(NAME LongModePeBootTest COMMAND test_long_mode_pe_boot)
 add_test(NAME GcnStateTest COMMAND test_gcn_state)
+add_test(NAME ShaderTranslatorTest COMMAND test_shader_translator)

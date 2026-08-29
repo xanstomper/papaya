@@ -2,6 +2,9 @@ add_library(papaya-gpu STATIC
     src/gpu_core.cpp
     src/gcn_pm4.cpp
     src/gcn_state.cpp
+    src/gcn_isa.cpp
+    src/spirv_builder.cpp
+    src/shader_translator.cpp
     src/command_processor.cpp
     src/vulkan_backend.cpp
 )
