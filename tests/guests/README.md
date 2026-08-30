@@ -12,6 +12,7 @@ tier must additionally produce **zero unresolved-import boot noise**.
 | `wstest.c` | strict | USER32 `wsprintfA` core formatting (`%5d`, `%-5d`, `%05d`, `%x`, `%X`, `%c`) |
 | `wsprintf_boot.c` | strict | Full documented wsprintfA spec: register **and stack** varargs, size prefixes (`ld lu lx lX hd hu`), `Ix/IX` 64-bit hex, `#`/`0`/`-` flags, width, precision, `%p`, `%%` |
 | `wsp_min2.c` | strict | msvcrt FILE\* lifecycle: `fopen` (incl. `C:\` path translation), `fprintf`, `fflush`, `fclose` — regression for the host FILE\* registry |
+| `godot_path.c` | strict | `GetFileAttributesW` path normalization for Godot 4.3+ wide/device paths (`\\?\C:\...` and `C:\...` resolve to CWD-relative files) — regression for `normalize_win_path` |
 | `msgpump_test.c` | loose | Window class registration, creation, message pump |
 | `strgl_test.c` | loose | String/heap CRT family through the HLE |
 | `pump_min.c` | loose | Minimal WM_PAINT paint cycle (BeginPaint/EndPaint) |

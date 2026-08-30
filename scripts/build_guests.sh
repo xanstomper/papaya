@@ -22,6 +22,8 @@ build wstest      -luser32
 build wsprintf_boot -luser32
 # msvcrt FILE* registry + fopen path translation regression
 build wsp_min2
+# GetFileAttributes path normalization for Godot 4.3+ wide paths
+build godot_path
 # window / message pump suite
 build msgpump_test -luser32 -lgdi32
 build strgl_test   -luser32 -lgdi32

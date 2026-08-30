@@ -858,8 +858,10 @@ static std::string normalize_win_path(const char* p) {
     std::replace(s.begin(), s.end(), '\\', '/');
     // Strip Win32 extended/device path prefixes: \\?\C:\..., \\?\UNC\...,
     // \\.\device\... (Godot 4.3+ generates \\?\ paths for pack lookups).
+    bool had_extended = false;
     while (s.rfind("//?/", 0) == 0 || s.rfind("//./", 0) == 0) {
         s = s.substr(4);
+        had_extended = true;
     }
     if (s.rfind("UNC/", 0) == 0) s = "//" + s.substr(4);
     if (s.size() >= 2 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':') {
@@ -868,6 +870,13 @@ static std::string normalize_win_path(const char* p) {
         if (access(s.c_str(), F_OK) != 0) {
             return stripped.empty() ? "." : stripped;
         }
+    }
+    // A device-prefixed path with no drive letter ("\\?\home\...", as emitted by
+    // Godot when it strips the C: drive from a module path) is a host-absolute
+    // path whose leading separator was consumed by the prefix. Re-attach it so
+    // these resolve against the real root instead of the process CWD.
+    if (had_extended && !s.empty() && s[0] != '/') {
+        s = "/" + s;
     }
     return s;
 }
