@@ -6005,10 +6005,9 @@ static PAPAYA_MS_ABI void* hle_fopen(const char* filename, const char* mode) {
 }
 static PAPAYA_MS_ABI void* hle_wfopen(const wchar_t* filename, const wchar_t* mode) {
     if (!filename || !mode) return nullptr;
-    char mb_file[1024], mb_mode[32];
-    wcstombs(mb_file, filename, sizeof(mb_file));
-    wcstombs(mb_mode, mode, sizeof(mb_mode));
-    return hle_fopen(mb_file, mb_mode);
+    std::string mb_file = win_utf16_to_utf8(filename);
+    std::string mb_mode = win_utf16_to_utf8(mode);
+    return hle_fopen(mb_file.c_str(), mb_mode.c_str());
 }
 static PAPAYA_MS_ABI int hle_wfopen_s(void** pFile, const wchar_t* filename, const wchar_t* mode) {
     if (!pFile) return -1;
