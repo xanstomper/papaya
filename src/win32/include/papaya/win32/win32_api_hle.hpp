@@ -397,6 +397,7 @@ public:
     static PAPAYA_MS_ABI int   hle_msvcrt_fprintf(void*, const char*, ...);
     static PAPAYA_MS_ABI int   hle_msvcrt_vfprintf(void*, const char*, va_list);
     static PAPAYA_MS_ABI int   hle_msvcrt_sprintf(char*, const char*, ...);
+    static PAPAYA_MS_ABI int   hle_user32_wsprintf_a(char* buf, const char* fmt, ...);
     static PAPAYA_MS_ABI size_t hle_msvcrt_fwrite(const void*, size_t, size_t, void*);
     static PAPAYA_MS_ABI int   hle_msvcrt_puts(const char*);
     static PAPAYA_MS_ABI int   hle_msvcrt_fputs(const char*, void*);

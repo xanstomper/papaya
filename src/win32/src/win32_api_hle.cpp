@@ -2587,6 +2587,74 @@ int Win32ApiHle::hle_msvcrt_sprintf(char* buf, const char* fmt, ...) {
     int r = vsprintf(buf, fmt, ap);
     va_end(ap); return r;
 }
+// Windows wsprintfA: no buffer-size parameter; format into the caller's
+// buffer with the same unbounded semantics (caller guarantees capacity).
+// Guest ms_abi varargs arrive in r8/r9 (2 named args consume rcx/rdx) with
+// further args on the guest stack at entry_rsp+0x20 (mingw's 0x18 shadow). GCC's ms_abi va_start
+// produces an uninitialized tag (verified in-session), so we capture the
+// registers ourselves and format the documented wsprintfA subset
+// (%d %i %u %x %X %c %s %%) with per-arg snprintf.
+int Win32ApiHle::hle_user32_wsprintf_a(char* buf, const char* fmt, ...) {
+    if (!buf || !fmt) return -1;
+    unsigned long long g1 = 0, g2 = 0, entry_rsp = 0;
+    asm volatile("movq %%r8, %0\n\tmovq %%r9, %1\n\tmovq %%rsp, %2"
+                 : "=r"(g1), "=r"(g2), "=r"(entry_rsp));
+    const unsigned long long* stack_args =
+        reinterpret_cast<const unsigned long long*>(entry_rsp + 0x20);
+
+    char* dst = buf;
+    const char* p = fmt;
+    int arg_idx = 0;
+    auto next_arg = [&]() -> unsigned long long {
+        unsigned long long v;
+        if (arg_idx == 0) v = g1;
+        else if (arg_idx == 1) v = g2;
+        else v = stack_args[arg_idx - 2];
+        arg_idx++;
+        return v;
+    };
+    while (*p) {
+        if (*p != '%') { *dst++ = *p++; continue; }
+        p++;
+        if (*p == '%') { *dst++ = '%'; p++; continue; }
+        bool left = false, zero = false;
+        int width = 0, prec = -1;
+        for (;;) {
+            if (*p == '-') { left = true; p++; }
+            else if (*p == '0') { zero = true; p++; }
+            else break;
+        }
+        while (*p >= '0' && *p <= '9') { width = width * 10 + (*p - '0'); p++; }
+        if (*p == '.') { p++; prec = 0; while (*p >= '0' && *p <= '9') { prec = prec * 10 + (*p - '0'); p++; } }
+        char spec = *p++;
+        char tmp[64];
+        int len = 0;
+        switch (spec) {
+            case 'd': case 'i': len = snprintf(tmp, sizeof(tmp), "%lld", (long long)(int)next_arg()); break;
+            case 'u': len = snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)(unsigned)next_arg()); break;
+            case 'x': len = snprintf(tmp, sizeof(tmp), "%llx", (unsigned long long)(unsigned)next_arg()); break;
+            case 'X': len = snprintf(tmp, sizeof(tmp), "%llX", (unsigned long long)(unsigned)next_arg()); break;
+            case 'c': *dst++ = (char)(int)next_arg(); continue;
+            case 's': {
+                const char* str = reinterpret_cast<const char*>(next_arg());
+                if (!str) str = "(null)";
+                len = (int)strlen(str);
+                if (prec >= 0 && prec < len) len = prec;
+                if (len >= (int)sizeof(tmp)) len = (int)sizeof(tmp) - 1;
+                memcpy(tmp, str, len); tmp[len] = 0;
+                break;
+            }
+            default: *dst++ = '%'; *dst++ = spec; continue;
+        }
+        int spaces = width - len;
+        if (spaces > 0 && !left) { memset(dst, zero ? '0' : ' ', spaces); dst += spaces; }
+        memcpy(dst, tmp, len); dst += len;
+        if (spaces > 0 && left) { memset(dst, ' ', spaces); dst += spaces; }
+    }
+    *dst = 0;
+    return (int)(dst - buf);
+}
+
 size_t Win32ApiHle::hle_msvcrt_fwrite(const void* ptr, size_t sz, size_t n, void* stream) {
     FILE* f = host_file_for(stream); if (!f) f = stdout;
     return fwrite(ptr, sz, n, f);
@@ -6259,6 +6327,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "FindClose", reinterpret_cast<void*>(&hle_find_close));
 
     register_function("KERNEL32.DLL", "IsDBCSLeadByteEx", reinterpret_cast<void*>(&hle_isdbcs_lead_byte_ex));
+    register_function("KERNEL32.DLL", "__C_specific_handler", reinterpret_cast<void*>(&hle_msvcrt___C_specific_handler));
     register_function("KERNEL32.DLL", "GetProcAddress", reinterpret_cast<void*>(&hle_get_proc_address));
     register_function("KERNEL32.DLL", "GetModuleHandleA", reinterpret_cast<void*>(&hle_get_module_handle_a));
     register_function("KERNEL32.DLL", "GetModuleHandleW", reinterpret_cast<void*>(&hle_get_module_handle_w));
@@ -6380,6 +6449,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("msvcrt.dll", "__p__doserrno", reinterpret_cast<void*>(&hle_msvcrt_doserrno));
 
     // USER32.DLL & GDI32.DLL
+    register_function("USER32.DLL", "wsprintfA", reinterpret_cast<void*>(&hle_user32_wsprintf_a));
     register_function("USER32.DLL", "GetSystemMetrics", reinterpret_cast<void*>(&hle_get_system_metrics));
     register_function("USER32.DLL", "SetProcessDPIAware", reinterpret_cast<void*>(&hle_set_process_dpi_aware));
     register_function("USER32.DLL", "GetClientRect", reinterpret_cast<void*>(&hle_get_client_rect));
