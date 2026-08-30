@@ -274,19 +274,23 @@ Concrete repo audit + cleanup tasks (2026-08-30 status):
   localeconv, strerror (all msvcrt). These show as unresolved-import
   warnings and fall to fallback_iat_stub; implementing them (host-crt-backed)
   would remove boot-time noise and enable full printf-family behavior.
-- **STS2 / Godot 4.3+ resource-pack stall (diagnosed 2026-08-30).** The exe
-  (Godot 4.3 UCRT export) maps and runs in-process. Pack detection probes
-  `C:\SlayTheSpire2.pck` and `\\?\\home\...\SlayTheSpire2.pck` and both now
-  resolve (see `normalize_win_path` handle for no-drive extended paths,
-  committed `728ecd5`). But Godot **never issues `CreateFile`/`_wfopen`** for
-  the `.pck` (no file-open HLE calls observed), so the pack is never mounted
-  as `res://` and it dies on `project.binary`/`project.godot` (error 12) →
-  "Couldn't load project data at path '.'". Also worth noting: `GetModuleFileName`
-  must stay `C:\<name>` (CWD-relative); returning a full host path under a fake
-  `C:` breaks resolution under the `C:`→CWD convention. Open question to
-  resolve next: how Godot 4.3's `FileAccess`/pack-open routes (it is neither
-  KERNEL32.CreateFile nor MSVCRT._wfopen in practice) so papaya can intercept
-  it.
+- **STS2 / Godot 4.5.1 Mono resource-pack load (solved 2026-08-30).** The exe
+  is a Godot **4.5.1 Mono** (`.NET`) export, not 4.3. Pack open was 100% blocked
+  by `hle_wfopen` using `wcstombs`, which fails under the host locale and yields
+  an empty path (so the `.pck` was never opened). Fixed in `41e14f2` by
+  converting guest UTF-16→UTF-8 with the same `win_utf16_to_utf8` used by
+  `CreateFileW`. Verified *live*: STS2 now opens `SlayTheSpire2.pck`, opens
+  `godot.log`, and reaches the .NET/Mono host load before dumping core.
+  Regression guest: `wfopen_path`.
+  - **Next blocker:** Godot 4.5.1 Mono needs a .NET CLR host (MonoCoreCLR /
+    hostfxr, assembly loader, `DllGetClassObject`, `GDExtension`/`gdextension`)
+    to run. This is a large subsystem (essentially embedding a .NET runtime;
+    consider grafting an existing managed host such as Wine's Mono or a
+    bundled .NET host). Also note `GetModuleFileName` must stay `C:\<name>`
+    (CWD-relative); a full host path under a fake `C:` breaks the `C:`→CWD
+    convention.
+  - Path resolution convention: `C:\...` maps to the process CWD
+    (`normalize_win_path`), so games launched with CWD = own dir resolve fine.
 
 ## 6. Immediate next tasks (when resuming, in order)
 
