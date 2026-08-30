@@ -3,6 +3,7 @@
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_dsound.hpp"
 #include "papaya/win32/win32_dinput.hpp"
+#include "papaya/win32/win32_mmdevice.hpp"
 #include "papaya/win32/win32_gl.hpp"
 #include "papaya/win32/win32_registry.hpp"
 #include "papaya/win32/win32_audio.hpp"
@@ -2588,69 +2589,121 @@ int Win32ApiHle::hle_msvcrt_sprintf(char* buf, const char* fmt, ...) {
     va_end(ap); return r;
 }
 // Windows wsprintfA: no buffer-size parameter; format into the caller's
-// buffer with the same unbounded semantics (caller guarantees capacity).
-// Guest ms_abi varargs arrive in r8/r9 (2 named args consume rcx/rdx) with
-// further args on the guest stack at entry_rsp+0x20 (mingw's 0x18 shadow). GCC's ms_abi va_start
-// produces an uninitialized tag (verified in-session), so we capture the
-// registers ourselves and format the documented wsprintfA subset
-// (%d %i %u %x %X %c %s %%) with per-arg snprintf.
+// buffer with the documented wsprintfA subset (winuser.h):
+//   %[-][#][0][width][.precision]type
+//   types: d i u x X c s p, hd hu, ld li lu lx lX, Ix IX, and %% (no floats).
+// Varargs arrive with the guest ms_abi convention. GCC's generic va_start
+// leaves the va_list tag uninitialized for ms_abi functions (guest crash;
+// verified in-session on GCC 13.3), so consume them with the explicit
+// MS-ABI varargs builtins, which handle register (r8/r9) and stack args
+// for any argument count. Windows long is 32-bit, so ld/li == d, lu == u,
+// lx/lX == x/X numerically; Ix/IX print the full 64-bit slot value.
 int Win32ApiHle::hle_user32_wsprintf_a(char* buf, const char* fmt, ...) {
     if (!buf || !fmt) return -1;
-    unsigned long long g1 = 0, g2 = 0, entry_rsp = 0;
-    asm volatile("movq %%r8, %0\n\tmovq %%r9, %1\n\tmovq %%rsp, %2"
-                 : "=r"(g1), "=r"(g2), "=r"(entry_rsp));
-    const unsigned long long* stack_args =
-        reinterpret_cast<const unsigned long long*>(entry_rsp + 0x20);
-
+    __builtin_ms_va_list ap;
+    __builtin_ms_va_start(ap, fmt);
     char* dst = buf;
     const char* p = fmt;
-    int arg_idx = 0;
-    auto next_arg = [&]() -> unsigned long long {
-        unsigned long long v;
-        if (arg_idx == 0) v = g1;
-        else if (arg_idx == 1) v = g2;
-        else v = stack_args[arg_idx - 2];
-        arg_idx++;
-        return v;
-    };
     while (*p) {
         if (*p != '%') { *dst++ = *p++; continue; }
-        p++;
-        if (*p == '%') { *dst++ = '%'; p++; continue; }
-        bool left = false, zero = false;
-        int width = 0, prec = -1;
+        const char* dir = ++p;                  // first char after '%'
+        if (*p == '%') { *dst++ = '%'; ++p; continue; }
+        bool left = false, alt = false, zero = false;
         for (;;) {
-            if (*p == '-') { left = true; p++; }
-            else if (*p == '0') { zero = true; p++; }
+            if (*p == '-')      { left = true; ++p; }
+            else if (*p == '#') { alt = true; ++p; }
+            else if (*p == '0') { zero = true; ++p; }
             else break;
         }
-        while (*p >= '0' && *p <= '9') { width = width * 10 + (*p - '0'); p++; }
-        if (*p == '.') { p++; prec = 0; while (*p >= '0' && *p <= '9') { prec = prec * 10 + (*p - '0'); p++; } }
-        char spec = *p++;
-        char tmp[64];
-        int len = 0;
+        int width = 0;
+        while (*p >= '0' && *p <= '9') width = width * 10 + (*p++ - '0');
+        int prec = -1;
+        if (*p == '.') { ++p; prec = 0;
+            while (*p >= '0' && *p <= '9') prec = prec * 10 + (*p++ - '0'); }
+        bool hsize = false;
+        while (*p == 'l' || *p == 'h') { hsize = (*p == 'h'); ++p; }  // Windows long==int width
+        const bool i64hex = (p[0] == 'I' && (p[1] == 'x' || p[1] == 'X'));
+        char spec;
+        if (i64hex) { spec = p[1]; p += 2; }
+        else        { spec = *p++; }
+
+        auto pad = [&](int total) {              // width padding around body
+            int spaces = width - total;
+            if (spaces > 0 && !left)
+                for (int i = 0; i < spaces; ++i) *dst++ = ' ';
+            return spaces;
+        };
+
         switch (spec) {
-            case 'd': case 'i': len = snprintf(tmp, sizeof(tmp), "%lld", (long long)(int)next_arg()); break;
-            case 'u': len = snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)(unsigned)next_arg()); break;
-            case 'x': len = snprintf(tmp, sizeof(tmp), "%llx", (unsigned long long)(unsigned)next_arg()); break;
-            case 'X': len = snprintf(tmp, sizeof(tmp), "%llX", (unsigned long long)(unsigned)next_arg()); break;
-            case 'c': *dst++ = (char)(int)next_arg(); continue;
-            case 's': {
-                const char* str = reinterpret_cast<const char*>(next_arg());
-                if (!str) str = "(null)";
-                len = (int)strlen(str);
-                if (prec >= 0 && prec < len) len = prec;
-                if (len >= (int)sizeof(tmp)) len = (int)sizeof(tmp) - 1;
-                memcpy(tmp, str, len); tmp[len] = 0;
-                break;
+        case 'd': case 'i': case 'u': case 'x': case 'X': {
+            const unsigned long long uv = va_arg(ap, unsigned long long);
+            bool negative = false;
+            unsigned long long mag;
+            if (spec == 'd' || spec == 'i') {
+                long long sv = hsize ? (long long)(short)uv : (long long)(int)uv;
+                negative = sv < 0;
+                mag = negative ? 0ULL - (unsigned long long)sv : (unsigned long long)sv;
+            } else if (spec == 'u') {
+                mag = hsize ? (unsigned long long)(unsigned short)uv
+                            : (unsigned long long)(unsigned int)uv;
+            } else {                             // x / X (32-bit unless Ix/IX)
+                mag = i64hex ? uv
+                    : hsize ? (unsigned long long)(unsigned short)uv
+                            : (unsigned long long)(unsigned int)uv;
             }
-            default: *dst++ = '%'; *dst++ = spec; continue;
+            char digits[32];
+            int ndig = (spec == 'x') ? snprintf(digits, sizeof digits, "%llx", mag)
+                     : (spec == 'X') ? snprintf(digits, sizeof digits, "%llX", mag)
+                     :                 snprintf(digits, sizeof digits, "%llu", mag);
+            const char* prefix = (alt && spec == 'x') ? "0x"
+                               : (alt && spec == 'X') ? "0X" : nullptr;
+            int zeros = 0;
+            if (prec >= 0)      zeros = prec > ndig ? prec - ndig : 0;
+            else if (zero && !left) {
+                zeros = width - ndig - (prefix ? 2 : 0) - (negative ? 1 : 0);
+                if (zeros < 0) zeros = 0;
+            }
+            const int total = ndig + zeros + (prefix ? 2 : 0) + (negative ? 1 : 0);
+            const int spaces = pad(total);
+            (void)spaces;
+            if (negative) *dst++ = '-';
+            if (prefix)   { *dst++ = prefix[0]; *dst++ = prefix[1]; }
+            for (int i = 0; i < zeros; ++i) *dst++ = '0';
+            memcpy(dst, digits, (size_t)ndig); dst += ndig;
+            if (left) { int s = width - total;
+                for (int i = 0; i < ((s > 0) ? s : 0); ++i) *dst++ = ' '; }
+            break;
         }
-        int spaces = width - len;
-        if (spaces > 0 && !left) { memset(dst, zero ? '0' : ' ', spaces); dst += spaces; }
-        memcpy(dst, tmp, len); dst += len;
-        if (spaces > 0 && left) { memset(dst, ' ', spaces); dst += spaces; }
+        case 'c':
+            *dst++ = (char)va_arg(ap, unsigned int);
+            break;
+        case 's': {
+            const char* s = va_arg(ap, const char*);
+            if (!s) s = "(null)";
+            int len = (int)strlen(s);
+            if (prec >= 0 && prec < len) len = prec;
+            pad(len);
+            memcpy(dst, s, (size_t)len); dst += len;
+            if (left) { int s2 = width - len;
+                for (int i = 0; i < ((s2 > 0) ? s2 : 0); ++i) *dst++ = ' '; }
+            break;
+        }
+        case 'p': {                              // Windows-style 16-digit hex
+            const unsigned long long uv = va_arg(ap, unsigned long long);
+            char digits[32];
+            int ndig = snprintf(digits, sizeof digits, "%016llx", uv);
+            pad(ndig);
+            memcpy(dst, digits, (size_t)ndig); dst += ndig;
+            if (left) { int s = width - ndig;
+                for (int i = 0; i < ((s > 0) ? s : 0); ++i) *dst++ = ' '; }
+            break;
+        }
+        default:                                 // unknown directive: verbatim
+            for (const char* q = dir; q < p; ++q) *dst++ = *q;
+            break;
+        }
     }
+    __builtin_ms_va_end(ap);
     *dst = 0;
     return (int)(dst - buf);
 }
@@ -3967,8 +4020,10 @@ s32 Win32ApiHle::hle_co_initialize_ex(void* pvReserved, u32 dwCoInit) {
 void Win32ApiHle::hle_co_uninitialize() {}
 
 s32 Win32ApiHle::hle_co_create_instance(const void* rclsid, void* pUnkOuter, u32 dwClsContext, const void* riid, void** ppv) {
-    (void)rclsid; (void)pUnkOuter; (void)dwClsContext; (void)riid;
+    (void)pUnkOuter; (void)dwClsContext;
     if (ppv) *ppv = nullptr;
+    // WASAPI MMDevice enumerator (backed by PulseAudio) for audio drivers.
+    if (mmdevice_try_create(rclsid, riid, ppv)) return 0; // S_OK
     return static_cast<s32>(0x80004002); // E_NOINTERFACE
 }
 
@@ -3977,6 +4032,7 @@ void* Win32ApiHle::hle_co_task_mem_alloc(size_t cb) {
 }
 
 void Win32ApiHle::hle_co_task_mem_free(void* pv) {
+    if (!pv || mmdevice_is_static_ptr(pv)) return;  // never free COM-owned statics
     std::free(pv);
 }
 
@@ -7019,6 +7075,10 @@ Result<> Win32ApiHle::initialize() {
     register_function("dsound.dll", "DirectSoundCreate",  reinterpret_cast<void*>(&hle_direct_sound_create));
     register_function("dsound.dll", "DirectSoundCreate8", reinterpret_cast<void*>(&hle_direct_sound_create8));
     register_function("dsound.dll", "DirectSoundEnumerateA", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
+    register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&hle_direct_input8_create));
+    register_function("dinput.dll", "DirectInputCreateA", reinterpret_cast<void*>(&hle_direct_input_create_a));
+    register_function("dinput.dll", "DirectInputCreateW", reinterpret_cast<void*>(&hle_direct_input_create_a));
+    register_function("dinput.dll", "DirectInputCreateEx", reinterpret_cast<void*>(&hle_direct_input_create_a));
     // Synchronization additions (WaitOnAddress / WakeByAddress)
     register_function("KERNEL32.DLL", "WaitOnAddress",          reinterpret_cast<void*>(&hle_wait_on_address));
     register_function("KERNEL32.DLL", "WakeByAddressAll",       reinterpret_cast<void*>(&hle_wake_by_address_all));

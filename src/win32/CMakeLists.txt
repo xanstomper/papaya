@@ -4,6 +4,7 @@ add_library(papaya-win32 STATIC
     src/win32_seh.cpp
     src/win32_d3d.cpp
     src/win32_audio.cpp
+    src/win32_mmdevice.cpp
     src/win32_dsound.cpp
     src/win32_registry.cpp
     src/win32_dinput.cpp
