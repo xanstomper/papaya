@@ -631,10 +631,10 @@ public:
                                               const void* lpbmi, u32 usage);
 
     // DXGI & D3D11 software surface
-    static PAPAYA_MS_ABI long   hle_d3d11_create_device(void* adapter, u32 driver, u32 flags,
+    static PAPAYA_MS_ABI long   hle_d3d11_create_device(void* adapter, u32 driver, void* swrast, u32 flags,
                                                         const void* feature_levels, u32 nlev, u32 sdk,
                                                         void** device_out, void* feature_out, void** ctx_out);
-    static PAPAYA_MS_ABI long   hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, u32 flags,
+    static PAPAYA_MS_ABI long   hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, void* swrast, u32 flags,
                                                                       const void* feature_levels, u32 nlev, u32 sdk,
                                                                       void* swapchain_desc, void** swapchain_out,
                                                                       void** device_out, void* feature_out, void** ctx_out);

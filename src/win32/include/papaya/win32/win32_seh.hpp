@@ -66,7 +66,9 @@ u64 seh_image_base();
 // scope_table_rva = RVA of the handler's language-specific data (the SCOPE_TABLE
 // for __C_specific_handler), if present.
 const void* seh_find_unwind_info(u64 guest_ip, u64 image_base, u64* eh_rva_out,
-                                 u64* scope_table_rva_out = nullptr);
+                                 u64* scope_table_rva_out = nullptr,
+                                 u32* scope_inline_count_out = nullptr,
+                                 u64* scope_inline_records_va_out = nullptr);
 
 // Runs __C_specific_handler dispatch for the faulting IP against the scope table
 // at handler_base. Returns EXCEPTION_CONTINUE_EXECUTION (0) - meaning the caller

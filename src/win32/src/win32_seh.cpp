@@ -31,7 +31,9 @@ u64 seh_image_base() { return g_seh.image_base; }
 // Returns the number of bytes after the UNWIND_INFO header that hold the handler
 // RVA (+1 dword handler data) so callers can locate both.
 static u32 xdata_handler_slot(const RuntimeFunction& rf, u64 image_base,
-                              u64* eh_rva_out, u64* scope_table_rva_out) {
+                              u64* eh_rva_out, u64* scope_table_rva_out,
+                              u32* scope_inline_count_out = nullptr,
+                              u64* scope_inline_records_va_out = nullptr) {
     const u8* uw = reinterpret_cast<const u8*>(image_base + rf.unwind_info_address);
     if (!uw) return 0;
     u8 version_flags = uw[0];
@@ -43,22 +45,29 @@ static u32 xdata_handler_slot(const RuntimeFunction& rf, u64 image_base,
     u32 off = 4 + ((total_codes_bytes + 3) & ~3u);
     u32 handler_rva = 0;
     std::memcpy(&handler_rva, uw + off, sizeof(u32));
-    if (version_flags & 0x10) {  // UNW_FLAG_UHANDLER: handler data follows
-        u32 data_rva = 0;
-        std::memcpy(&data_rva, uw + off + 4, sizeof(u32));
-        if (scope_table_rva_out) *scope_table_rva_out = data_rva;
-    } else {
-        if (scope_table_rva_out) *scope_table_rva_out = 0;
-    }
+    // The dword after the handler RVA is the "handler data". Two conventions exist:
+    //  - MSVC __C_specific_handler: it is an RVA to [u32 count][ScopeRecord...] elsewhere.
+    //  - mingw GCC (.seh_handlerdata): it is the u32 scope COUNT itself, with the
+    //    ScopeRecords following inline right after it.
+    u32 data_dword = 0;
+    std::memcpy(&data_dword, uw + off + 4, sizeof(u32));
+    if (scope_table_rva_out) *scope_table_rva_out = data_dword;
+    if (scope_inline_count_out) *scope_inline_count_out = data_dword;
+    // GCC inline records live immediately after the data dword.
+    if (scope_inline_records_va_out)
+        *scope_inline_records_va_out = reinterpret_cast<u64>(uw + off + 8);
     if (eh_rva_out) *eh_rva_out = handler_rva;
     return off;
 }
 
 const void* seh_find_unwind_info(u64 guest_ip, u64 image_base, u64* eh_rva_out,
-                                 u64* scope_table_rva_out) {
+                                 u64* scope_table_rva_out, u32* scope_inline_count_out,
+                                 u64* scope_inline_records_va_out) {
     if (!g_seh.active) return nullptr;
     if (eh_rva_out) *eh_rva_out = 0;
     if (scope_table_rva_out) *scope_table_rva_out = 0;
+    if (scope_inline_count_out) *scope_inline_count_out = 0;
+    if (scope_inline_records_va_out) *scope_inline_records_va_out = 0;
 
     // .pdata is an array of RuntimeFunction (12 bytes each), sorted by begin.
     u64 ip_rva = guest_ip - image_base;
@@ -84,7 +93,8 @@ const void* seh_find_unwind_info(u64 guest_ip, u64 image_base, u64* eh_rva_out,
         uwa = indirect->unwind_info_address;
     }
 
-    xdata_handler_slot(*hit, image_base, eh_rva_out, scope_table_rva_out);
+    xdata_handler_slot(*hit, image_base, eh_rva_out, scope_table_rva_out,
+                       scope_inline_count_out, scope_inline_records_va_out);
     return reinterpret_cast<const void*>(image_base + (uwa & ~1u));
 }
 
@@ -151,26 +161,39 @@ bool seh_dispatch_fault(u64 fault_ip_at_exception, u64 image_base,
     g_seh.image_base = image_base;
 
     u64 eh_rva = 0, scope_rva = 0;
-    const void* uw = seh_find_unwind_info(fault_ip_at_exception, image_base, &eh_rva, &scope_rva);
+    u32 inline_count = 0;
+    u64 inline_records_va = 0;
+    const void* uw = seh_find_unwind_info(fault_ip_at_exception, image_base, &eh_rva, &scope_rva,
+                                          &inline_count, &inline_records_va);
     (void)uw;
-    if (eh_rva == 0 || scope_rva == 0) return false;      // not an EH frame
+    if (eh_rva == 0) return false;      // not an EH frame
 
-    // __C_specific_handler's scope table layout: [u32 count][ScopeRecord...].
-    const u8* scope_base = reinterpret_cast<const u8*>(image_base + scope_rva);
-    u32 count = *reinterpret_cast<const u32*>(scope_base);
-    if (count == 0 || count > 4096) return false;
-    const auto* records = reinterpret_cast<const ScopeRecord*>(scope_base + 4);
-    const u32* table_u32 = reinterpret_cast<const u32*>(scope_base);
+    // Two scope-table conventions (see xdata_handler_slot):
+    //  - mingw GCC: count inline; records directly after it in .xdata.
+    //  - MSVC:      data dword is an RVA to [count][records] elsewhere.
+    const u8* records_base;
+    u32 count;
+    if (inline_count > 0 && inline_count <= 4096 && inline_records_va != 0) {
+        records_base = reinterpret_cast<const u8*>(inline_records_va);
+        count = inline_count;
+    } else if (scope_rva != 0) {
+        records_base = reinterpret_cast<const u8*>(image_base + scope_rva);
+        count = *reinterpret_cast<const u32*>(records_base);
+        if (count == 0 || count > 4096) return false;
+        records_base += 4;
+    } else {
+        return false;
+    }
+    const auto* records = reinterpret_cast<const ScopeRecord*>(records_base);
 
-    // Each scope's begin/end are offsets FROM THE TABLE BASE to the try range.
-    u64 me = reinterpret_cast<u64>(table_u32);
+    // begin/end/handler are image-relative RVAs — compare directly against the
+    // faulting IP's RVA. (An earlier revision mixed table VA + RVA; ranges never
+    // matched and every fault looked unhandled.)
     u64 ip_rva = fault_ip_at_exception - image_base;
 
     for (u32 i = 0; i < count; ++i) {
         const auto& sc = records[i];
-        u64 try_lo = me + sc.begin_address - image_base;   // RVA of try start
-        u64 try_hi = me + sc.end_address - image_base;     // RVA of try end
-        if (ip_rva >= try_lo && ip_rva < try_hi) {
+        if (ip_rva >= sc.begin_address && ip_rva < sc.end_address) {
             // Found the enclosing __try. Resume at the __except handler.
             u64 handler_va = image_base + sc.handler_address;
             if (recovery_ip_out) *recovery_ip_out = handler_va;
@@ -195,6 +218,11 @@ namespace {
 // recovery twice, treat it as unhandled rather than spin forever.
 thread_local u64 last_fault_ip  = 0;
 thread_local u64 last_recovery  = 0;
+
+// Saved host dispositions (filled by seh_install_fault_handler) so the fault
+// handler can restore the default action when a guest fault is truly unhandled.
+struct sigaction g_old_segv{}, g_old_fpe{}, g_old_trap{}, g_old_ill{};
+bool& installed_flag() { static bool installed = false; return installed; }
 
 u64 guest_rip(const ucontext_t* uc) {
 #if defined(__x86_64__)
@@ -253,27 +281,38 @@ static void seh_fault_handler(int sig, siginfo_t* si, void* vctx) {
             return;
         }
     }
+
+    // Nothing handled this fault. Restore the default disposition and return so
+    // the kernel redelivers and the process dies with the real signal — without
+    // this, returning from the handler resumes at the faulting RIP and the
+    // kernel redelivers SIGSEGV forever (busy signal loop, process hangs).
+    if (sig == SIGSEGV) sigaction(SIGSEGV, &g_old_segv, nullptr);
+    else if (sig == SIGFPE)  sigaction(SIGFPE,  &g_old_fpe,  nullptr);
+    else if (sig == SIGTRAP) sigaction(SIGTRAP, &g_old_trap, nullptr);
+    else if (sig == SIGILL)  sigaction(SIGILL,  &g_old_ill,  nullptr);
+    installed_flag() = false;   // allow seh_install_fault_handler(true) to re-arm
 }
 
 void seh_install_fault_handler(bool install) {
-    static struct sigaction old_segv{}, old_fpe{}, old_trap{}, old_ill{};
     static bool installed = false;
     if (install && !installed) {
         struct sigaction sa{};
         sa.sa_sigaction = seh_fault_handler;
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sigemptyset(&sa.sa_mask);
-        sigaction(SIGSEGV, &sa, &old_segv);
-        sigaction(SIGFPE, &sa, &old_fpe);
-        sigaction(SIGTRAP, &sa, &old_trap);
-        sigaction(SIGILL, &sa, &old_ill);
+        sigaction(SIGSEGV, &sa, &g_old_segv);
+        sigaction(SIGFPE, &sa, &g_old_fpe);
+        sigaction(SIGTRAP, &sa, &g_old_trap);
+        sigaction(SIGILL, &sa, &g_old_ill);
         installed = true;
+        installed_flag() = true;
     } else if (!install && installed) {
-        sigaction(SIGSEGV, &old_segv, nullptr);
-        sigaction(SIGFPE, &old_fpe, nullptr);
-        sigaction(SIGTRAP, &old_trap, nullptr);
-        sigaction(SIGILL, &old_ill, nullptr);
+        sigaction(SIGSEGV, &g_old_segv, nullptr);
+        sigaction(SIGFPE, &g_old_fpe, nullptr);
+        sigaction(SIGTRAP, &g_old_trap, nullptr);
+        sigaction(SIGILL, &g_old_ill, nullptr);
         installed = false;
+        installed_flag() = false;
     }
 }
 

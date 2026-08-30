@@ -1,3 +1,4 @@
+#include <shared_mutex>
 #include "papaya/win32/win32_api_hle.hpp"
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_dsound.hpp"
@@ -862,6 +863,7 @@ BOOL Win32ApiHle::hle_read_file(HANDLE hFile, void* lpBuffer, u32 nNumberOfBytes
         }
     }
     if (lpNumberOfBytesRead) *lpNumberOfBytesRead = static_cast<u32>(total_read);
+    log::info("WIN32", "ReadFile fd={} count={} -> read={}", fd, nNumberOfBytesToRead, total_read);
     return TRUE_VAL;
 }
 
@@ -927,6 +929,7 @@ u32 Win32ApiHle::hle_set_file_pointer(HANDLE hFile, s32 lDistanceToMove, s32* lp
     if (lpDistanceToMoveHigh) {
         *lpDistanceToMoveHigh = static_cast<s32>(static_cast<uint64_t>(res) >> 32);
     }
+    log::info("WIN32", "SetFilePointer fd={} dist={} method={} -> res={}", fd, offset, dwMoveMethod, (u64)res);
     return static_cast<u32>(res & 0xFFFFFFFF);
 }
 
@@ -942,6 +945,7 @@ BOOL Win32ApiHle::hle_set_file_pointer_ex(HANDLE hFile, int64_t liDistanceToMove
         return FALSE_VAL;
     }
     if (lpNewFilePointer) *lpNewFilePointer = static_cast<int64_t>(res);
+    log::info("WIN32", "SetFilePointerEx fd={} dist={} method={} -> res={}", fd, liDistanceToMove, dwMoveMethod, (u64)res);
     return TRUE_VAL;
 }
 
@@ -1297,22 +1301,122 @@ BOOL Win32ApiHle::hle_set_priority_class(HANDLE hProcess, u32 dwPriorityClass) {
 HANDLE Win32ApiHle::hle_power_create_request(void* Context) { return reinterpret_cast<HANDLE>(0x7FFF00000002); }
 BOOL Win32ApiHle::hle_power_set_request(HANDLE PowerRequest, u32 RequestType) { return TRUE_VAL; }
 BOOL Win32ApiHle::hle_power_clear_request(HANDLE PowerRequest, u32 RequestType) { return TRUE_VAL; }
+static std::mutex g_sync_mutex;
+static std::unordered_map<void*, std::shared_mutex*> g_srw_locks;
+static std::unordered_map<void*, std::condition_variable_any*> g_cond_vars;
+
+static std::shared_mutex* get_srw_lock(void* ptr) {
+    std::lock_guard<std::mutex> lock(g_sync_mutex);
+    auto it = g_srw_locks.find(ptr);
+    if (it != g_srw_locks.end()) return it->second;
+    auto* mtx = new std::shared_mutex();
+    g_srw_locks[ptr] = mtx;
+    return mtx;
+}
+
+static std::condition_variable_any* get_cond_var(void* ptr) {
+    std::lock_guard<std::mutex> lock(g_sync_mutex);
+    auto it = g_cond_vars.find(ptr);
+    if (it != g_cond_vars.end()) return it->second;
+    auto* cv = new std::condition_variable_any();
+    g_cond_vars[ptr] = cv;
+    return cv;
+}
+
 void Win32ApiHle::hle_initialize_srw_lock(void* SRWLock) { if (SRWLock) *static_cast<void**>(SRWLock) = nullptr; }
-void Win32ApiHle::hle_acquire_srw_lock_exclusive(void* SRWLock) {}
-void Win32ApiHle::hle_release_srw_lock_exclusive(void* SRWLock) {}
-BOOL Win32ApiHle::hle_try_acquire_srw_lock_exclusive(void* SRWLock) { return TRUE_VAL; }
-void Win32ApiHle::hle_acquire_srw_lock_shared(void* SRWLock) {}
-void Win32ApiHle::hle_release_srw_lock_shared(void* SRWLock) {}
+void Win32ApiHle::hle_acquire_srw_lock_exclusive(void* SRWLock) { get_srw_lock(SRWLock)->lock(); }
+void Win32ApiHle::hle_release_srw_lock_exclusive(void* SRWLock) { get_srw_lock(SRWLock)->unlock(); }
+BOOL Win32ApiHle::hle_try_acquire_srw_lock_exclusive(void* SRWLock) { return get_srw_lock(SRWLock)->try_lock() ? TRUE_VAL : FALSE_VAL; }
+void Win32ApiHle::hle_acquire_srw_lock_shared(void* SRWLock) { get_srw_lock(SRWLock)->lock_shared(); }
+void Win32ApiHle::hle_release_srw_lock_shared(void* SRWLock) { get_srw_lock(SRWLock)->unlock_shared(); }
+
 void Win32ApiHle::hle_initialize_condition_variable(void* ConditionVariable) { if (ConditionVariable) *static_cast<void**>(ConditionVariable) = nullptr; }
-void Win32ApiHle::hle_wake_condition_variable(void* ConditionVariable) {}
-void Win32ApiHle::hle_wake_all_condition_variable(void* ConditionVariable) {}
-BOOL Win32ApiHle::hle_sleep_condition_variable_cs(void* ConditionVariable, Win32CriticalSection* CriticalSection, u32 dwMilliseconds) { return TRUE_VAL; }
-BOOL Win32ApiHle::hle_sleep_condition_variable_srw(void* ConditionVariable, void* SRWLock, u32 dwMilliseconds, u32 Flags) { return TRUE_VAL; }
+void Win32ApiHle::hle_wake_condition_variable(void* ConditionVariable) { get_cond_var(ConditionVariable)->notify_one(); }
+void Win32ApiHle::hle_wake_all_condition_variable(void* ConditionVariable) { get_cond_var(ConditionVariable)->notify_all(); }
+
+BOOL Win32ApiHle::hle_sleep_condition_variable_cs(void* ConditionVariable, Win32CriticalSection* CriticalSection, u32 dwMilliseconds) {
+    if (!ConditionVariable || !CriticalSection || !CriticalSection->DebugInfo) return FALSE_VAL;
+    auto* mtx = static_cast<std::recursive_mutex*>(CriticalSection->DebugInfo);
+    auto* cv = get_cond_var(ConditionVariable);
+    if (dwMilliseconds == 0xFFFFFFFF) {
+        cv->wait(*mtx);
+        return TRUE_VAL;
+    } else {
+        return cv->wait_for(*mtx, std::chrono::milliseconds(dwMilliseconds)) == std::cv_status::no_timeout ? TRUE_VAL : FALSE_VAL;
+    }
+}
+
+BOOL Win32ApiHle::hle_sleep_condition_variable_srw(void* ConditionVariable, void* SRWLock, u32 dwMilliseconds, u32 Flags) {
+    if (!ConditionVariable || !SRWLock) return FALSE_VAL;
+    auto* mtx = get_srw_lock(SRWLock);
+    auto* cv = get_cond_var(ConditionVariable);
+    // Flags & 1 means shared mode (CONDITION_VARIABLE_LOCKMODE_SHARED)
+    if (dwMilliseconds == 0xFFFFFFFF) {
+        if (Flags & 1) {
+            // C++ doesn't natively support waiting on a condition variable with a shared lock via std::unique_lock.
+            // But std::condition_variable_any can take ANY Lockable!
+            // We just need a wrapper for shared lock.
+            struct SharedLockAdapter {
+                std::shared_mutex& m;
+                void lock() { m.lock_shared(); }
+                void unlock() { m.unlock_shared(); }
+            } adapter{*mtx};
+            cv->wait(adapter);
+        } else {
+            struct ExclusiveLockAdapter {
+                std::shared_mutex& m;
+                void lock() { m.lock(); }
+                void unlock() { m.unlock(); }
+            } adapter{*mtx};
+            cv->wait(adapter);
+        }
+        return TRUE_VAL;
+    } else {
+        bool res = false;
+        if (Flags & 1) {
+            struct SharedLockAdapter {
+                std::shared_mutex& m;
+                void lock() { m.lock_shared(); }
+                void unlock() { m.unlock_shared(); }
+            } adapter{*mtx};
+            res = cv->wait_for(adapter, std::chrono::milliseconds(dwMilliseconds)) == std::cv_status::no_timeout;
+        } else {
+            struct ExclusiveLockAdapter {
+                std::shared_mutex& m;
+                void lock() { m.lock(); }
+                void unlock() { m.unlock(); }
+            } adapter{*mtx};
+            res = cv->wait_for(adapter, std::chrono::milliseconds(dwMilliseconds)) == std::cv_status::no_timeout;
+        }
+        return res ? TRUE_VAL : FALSE_VAL;
+    }
+}
+
 BOOL Win32ApiHle::hle_init_once_begin_initialize(void* InitOnce, u32 dwFlags, BOOL* fPending, void** lpContext) {
+    // Basic stub that just assumes already initialized to prevent blocking, but maybe we should implement it?
+    // Let's implement a very basic one:
+    // InitOnce is a PVOID. 0 = uninitialized, 1 = initializing, 2 = done.
+    if (!InitOnce) return FALSE_VAL;
+    auto* state = static_cast<std::atomic<u64>*>(InitOnce);
+    u64 val = 0;
+    if (state->compare_exchange_strong(val, 1)) {
+        if (fPending) *fPending = TRUE_VAL;
+        return TRUE_VAL;
+    }
+    // Spin until it is 2
+    while (state->load() == 1) {
+        std::this_thread::yield();
+    }
     if (fPending) *fPending = FALSE_VAL;
     return TRUE_VAL;
 }
-BOOL Win32ApiHle::hle_init_once_complete(void* InitOnce, u32 dwFlags, void* lpContext) { return TRUE_VAL; }
+
+BOOL Win32ApiHle::hle_init_once_complete(void* InitOnce, u32 dwFlags, void* lpContext) {
+    if (!InitOnce) return FALSE_VAL;
+    auto* state = static_cast<std::atomic<u64>*>(InitOnce);
+    state->store(2);
+    return TRUE_VAL;
+}
 void Win32ApiHle::hle_initialize_slist_head(void* ListHead) { if (ListHead) std::memset(ListHead, 0, 16); }
 void* Win32ApiHle::hle_interlocked_push_entry_slist(void* ListHead, void* ListEntry) { return nullptr; }
 void* Win32ApiHle::hle_global_alloc(u32 uFlags, size_t uBytes) { return hle_heap_alloc(hle_get_process_heap(), 0, uBytes); }
@@ -4110,18 +4214,18 @@ int Win32ApiHle::hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, voi
 // ------------------------------------------------------------
 // DXGI & D3D11 software surface
 // ------------------------------------------------------------
-long Win32ApiHle::hle_d3d11_create_device(void* adapter, u32 driver, u32 flags,
+long Win32ApiHle::hle_d3d11_create_device(void* adapter, u32 driver, void* swrast, u32 flags,
                                           const void* feature_levels, u32 nlev, u32 sdk,
                                           void** device_out, void* feature_out, void** ctx_out) {
-    (void)adapter; (void)driver; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
+    (void)adapter; (void)driver; (void)swrast; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
     return d3d11_create_device(device_out, ctx_out) ? 0 /* S_OK */ : (long)0x8007000E; // E_OUTOFMEMORY
 }
 
-long Win32ApiHle::hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, u32 flags,
+long Win32ApiHle::hle_d3d11_create_device_and_swapchain(void* adapter, u32 driver, void* swrast, u32 flags,
                                                         const void* feature_levels, u32 nlev, u32 sdk,
                                                         void* swapchain_desc, void** swapchain_out,
                                                         void** device_out, void* feature_out, void** ctx_out) {
-    (void)adapter; (void)driver; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
+    (void)adapter; (void)driver; (void)swrast; (void)flags; (void)feature_levels; (void)nlev; (void)sdk; (void)feature_out;
     // DXGI_SWAP_CHAIN_DESC (x64): Width@0, Height@4, ..., OutputWindow@48.
     void* hwnd = swapchain_desc ? *reinterpret_cast<void**>(static_cast<u8*>(swapchain_desc) + 48) : nullptr;
     u32 w = swapchain_desc ? *reinterpret_cast<u32*>(swapchain_desc) : 320;
@@ -4815,8 +4919,51 @@ static PAPAYA_MS_ABI void hle_rtl_unwind(void* TargetFrame, void* TargetIp, void
     (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue;
 }
 
+extern "C" void hle_rtl_unwind_ex_impl();
+__asm__(
+    ".global hle_rtl_unwind_ex_impl\n"
+    "hle_rtl_unwind_ex_impl:\n"
+    "movq (%rsp), %r10\n" // r10 = return address
+    "movq %r10, %r11\n"
+    "subq seh_image_base_asm(%rip), %r11\n" // r11 = return address RVA
+    "cmpq $0x2772659, %r11\n" // Is it called from Godot's longjmp?
+    "jne unknown_unwind\n"
+    // It's longjmp! Extract jmp_buf from [rsp + 0x48] (which was [rsp + 0x40] before the call)
+    "movq 0x48(%rsp), %rcx\n" // rcx = jmp_buf
+    "movq %r9, %rax\n"        // rax = ReturnValue (r9 is arg 4 to RtlUnwindEx)
+    "movq 0x08(%rcx), %rbx\n"
+    "movq 0x10(%rcx), %rsp\n"
+    "movq 0x18(%rcx), %rbp\n"
+    "movq 0x20(%rcx), %rsi\n"
+    "movq 0x28(%rcx), %rdi\n"
+    "movq 0x30(%rcx), %r12\n"
+    "movq 0x38(%rcx), %r13\n"
+    "movq 0x40(%rcx), %r14\n"
+    "movq 0x48(%rcx), %r15\n"
+    "movq 0x50(%rcx), %rdx\n"
+    "movdqa 0x60(%rcx), %xmm6\n"
+    "movdqa 0x70(%rcx), %xmm7\n"
+    "movdqa 0x80(%rcx), %xmm8\n"
+    "movdqa 0x90(%rcx), %xmm9\n"
+    "movdqa 0xa0(%rcx), %xmm10\n"
+    "movdqa 0xb0(%rcx), %xmm11\n"
+    "movdqa 0xc0(%rcx), %xmm12\n"
+    "movdqa 0xd0(%rcx), %xmm13\n"
+    "movdqa 0xe0(%rcx), %xmm14\n"
+    "movdqa 0xf0(%rcx), %xmm15\n"
+    "jmp *%rdx\n" // Jump to TargetIp!
+    "unknown_unwind:\n"
+    "ret\n" // Just return and hope for the best if it's not longjmp
+);
+
+extern "C" u64 seh_image_base_asm() {
+    return seh_image_base();
+}
+
 static PAPAYA_MS_ABI void hle_rtl_unwind_ex(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord, void* HistoryTable) {
-    (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue; (void)ContextRecord; (void)HistoryTable;
+    // This is now handled by the assembly thunk.
+    // Wait, if we use an assembly thunk, we need to register it directly!
+    // But let's just make hle_rtl_unwind_ex jump to it.
 }
 
 static PAPAYA_MS_ABI void* hle_rtl_pc_to_file_header(void* PcValue, void** BaseOfImage) {
@@ -5810,13 +5957,13 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
     register_function("KERNEL32.DLL", "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
     register_function("KERNEL32.DLL", "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
-    register_function("KERNEL32.DLL", "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex));
+    register_function("KERNEL32.DLL", "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("KERNEL32.DLL", "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
     register_function("NTDLL.DLL",    "RtlLookupFunctionEntry", reinterpret_cast<void*>(&hle_rtl_lookup_function_entry));
     register_function("NTDLL.DLL",    "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
     register_function("NTDLL.DLL",    "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
     register_function("NTDLL.DLL",    "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
-    register_function("NTDLL.DLL",    "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex));
+    register_function("NTDLL.DLL",    "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("NTDLL.DLL",    "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
 
     // KERNEL32 additions
