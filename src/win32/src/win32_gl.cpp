@@ -56,6 +56,9 @@ int wgl_make_current(void* hdc, HWGL hglrc) {
     // via the window manager below.
     Window xwin = 0;
     void* hw = window_manager().first_window();
+    if (!hw) {
+        hw = window_manager().create_window_ex("PapayaGame", "Papaya Game", 0x10CF0000, 0, 0, 1280, 720, nullptr, nullptr, nullptr, false);
+    }
     if (hw) xwin = window_manager().xwindow_of(hw);
     if (!xwin) xwin = DefaultRootWindow(c->dpy);
     Bool ok = glXMakeCurrent(c->dpy, xwin, c->glx);

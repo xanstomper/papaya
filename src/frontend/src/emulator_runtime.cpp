@@ -195,17 +195,17 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     std::string jar_file;
     bool is_java = detect_java_jar(game_p, jar_file);
 
-    // Determine Execution Mode
+    // Determine Execution Mode: Pure Papaya Native Engine / Win32 HLE Only (Zero Wine/Proton/Bottles)
     ExecutionMode mode = config_.execution_mode;
     if (mode == ExecutionMode::Auto) {
-        if (is_java || is_godot) {
+        if (game_p.extension() == ".jar") {
             mode = ExecutionMode::NativeEngine;
         } else {
             mode = ExecutionMode::NativeWin32;
         }
     }
 
-    // Load PE Image if relevant
+    // Load PE Image via Papaya Native In-Process PE Loader
     win32::LoadedPeImage loaded_img{};
     if (std::filesystem::exists(game_p) && game_p.extension() == ".exe") {
         if (!game_p.parent_path().empty()) {
@@ -233,18 +233,17 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             << "papaya.mipLodBias = 3.0\n";
     }
 
-    if ((mode == ExecutionMode::NativeWin32 || mode == ExecutionMode::NativeEngine) && loaded_img.entry_point != nullptr) {
-        log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine!) <<<");
-        std::thread([this, loaded_img]() {
-            auto ret = pe_loader_->execute_native(loaded_img);
-            log::info("NATIVE_WIN32", "PE execution completed with return code: {}", ret.value_or(0));
-        }).detach();
+    if (mode == ExecutionMode::NativeWin32 && loaded_img.entry_point != nullptr) {
+        log::info("NATIVE_WIN32", ">>> Papaya In-Process Native Win32 HLE Execution (Zero Wine / Zero Proton / Pure Papaya) <<<");
         is_running_ = true;
+        auto ret = pe_loader_->execute_native(loaded_img);
+        log::info("NATIVE_WIN32", "PE execution completed with return code: {}", ret.value_or(0));
+        is_running_ = false;
         return {};
     }
 
-    // Interactive mode forks a real child process to run external engine runners.
-    if (!config_.headless && std::filesystem::exists(game_p)) {
+    // Interactive or external runner mode for pure Engine targets (Java JARs / Godot PCKs)
+    if (!config_.headless && std::filesystem::exists(game_p) && mode == ExecutionMode::NativeEngine) {
         pid_t pid = fork();
         if (pid < 0) {
             log::error("RUNTIME", "Failed to fork game process");
@@ -262,49 +261,48 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
             if (!disp) setenv("DISPLAY", ":0", 1);
 
             setenv("PAPAYA_POTATO_MODE", "1", 1);
-            setenv("PAPAYA_APP_ID", std::to_string(steam_stub_->get_app_id()).c_str(), 1);
+            std::string app_id_str = std::to_string(steam_stub_->get_app_id());
+            setenv("PAPAYA_APP_ID", app_id_str.c_str(), 1);
+            setenv("SteamAppId", app_id_str.c_str(), 1);
+            setenv("SteamGameId", app_id_str.c_str(), 1);
 
-            if (mode == ExecutionMode::NativeEngine) {
-                if (is_java) {
-                    log::info("ENGINE", ">>> Papaya Native Java Engine Bridge: Executing '{}' via Host JVM (Zero Wine!) <<<", jar_file);
+            if (is_java || game_p.extension() == ".jar") {
+                log::info("ENGINE", ">>> Papaya Native Java Engine Bridge: Executing '{}' via Host JVM <<<", jar_file.empty() ? game_p.string() : jar_file);
+                std::string target_jar = jar_file.empty() ? game_p.string() : jar_file;
+                char* args[] = {
+                    const_cast<char*>("java"),
+                    const_cast<char*>("-jar"),
+                    const_cast<char*>(target_jar.c_str()),
+                    nullptr
+                };
+                execvp("java", args);
+                _exit(127);
+            } else if (is_godot || game_p.extension() == ".pck") {
+                std::string target_pck = pck_file.empty() ? game_p.string() : pck_file;
+                log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' <<<", target_pck);
+                const char* runners[] = {
+                    "/home/jewboy420/.local/bin/godot",
+                    "/home/jewboy420/.local/bin/godot4",
+                    "/usr/local/bin/godot",
+                    "godot",
+                    "godot4",
+                    "godot3",
+                    nullptr
+                };
+                for (int i = 0; runners[i] != nullptr; ++i) {
                     char* args[] = {
-                        const_cast<char*>("java"),
-                        const_cast<char*>("-jar"),
-                        const_cast<char*>(jar_file.c_str()),
+                        const_cast<char*>(runners[i]),
+                        const_cast<char*>("--main-pack"),
+                        const_cast<char*>(target_pck.c_str()),
                         nullptr
                     };
-                    execvp("java", args);
-                    _exit(127);
-                } else if (is_godot) {
-                    log::info("ENGINE", ">>> Papaya Native Godot Engine Bridge: Executing package '{}' (Zero Wine!) <<<", pck_file);
-                    const char* runners[] = {
-                        "/home/jewboy420/.local/bin/godot",
-                        "/home/jewboy420/.local/bin/godot4",
-                        "/usr/local/bin/godot",
-                        "godot",
-                        "godot4",
-                        "godot3",
-                        nullptr
-                    };
-                    for (int i = 0; runners[i] != nullptr; ++i) {
-                        char* args[] = {
-                            const_cast<char*>(runners[i]),
-                            const_cast<char*>("--main-pack"),
-                            const_cast<char*>(pck_file.c_str()),
-                            nullptr
-                        };
-                        execvp(runners[i], args);
-                    }
-                    log::warn("ENGINE", "No standalone native Godot runner found in PATH, engaging Papaya Native Win32 HLE Matrix");
+                    execvp(runners[i], args);
                 }
+                log::error("ENGINE", "No standalone native Godot runner found in PATH");
+                _exit(127);
             }
 
-            // NO WINE. If we reach here, the native path couldn't handle this binary.
-            log::error("NATIVE_WIN32",
-                       "Papaya native translation layer could not execute '{}' "
-                       "(no Wine/Proton/Bottles fallback is permitted). "
-                       "The binary was not mapped or its architecture is unsupported.",
-                       game_p.string());
+            log::error("RUNTIME", "Unsupported engine target for '{}'", game_p.string());
             _exit(127);
         }
 

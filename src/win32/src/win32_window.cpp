@@ -144,6 +144,37 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
               w_title, w_w, w_h,
               reinterpret_cast<u64>(hwnd), static_cast<unsigned long long>(xw));
 
+    // Post Win32 window creation messages to the queue so they are delivered
+    // when the guest calls PeekMessage/GetMessage in its own message loop.
+    // Do NOT dispatch synchronously — Godot's WndProc accesses display-server
+    // state that isn't initialized yet and will deadlock before the main loop runs.
+    {
+        Win32Message m{};
+        m.hwnd = hwnd;
+
+        // WM_NCCREATE (0x81) — signals window created; lParam = 1 (non-zero) = success
+        m.message = 0x0081; m.w_param = 0; m.l_param = 1;
+        push_message(m);
+
+        // WM_CREATE (0x01)
+        m.message = WM_CREATE; m.w_param = 0; m.l_param = 0;
+        push_message(m);
+
+        // WM_SIZE — report initial client area
+        m.message = WM_SIZE;
+        m.w_param = 0;
+        m.l_param = static_cast<s64>((static_cast<u64>(w_h) << 16) | static_cast<u16>(w_w));
+        push_message(m);
+
+        // WM_ACTIVATE — WA_ACTIVE=1 in low word
+        m.message = WM_ACTIVATE; m.w_param = 1; m.l_param = 0;
+        push_message(m);
+
+        // WM_SETFOCUS
+        m.message = WM_SETFOCUS; m.w_param = 0; m.l_param = 0;
+        push_message(m);
+    }
+
     if (!hide) show_window(hwnd, 5 /*SW_SHOW*/);
     return hwnd;
 }
@@ -179,12 +210,24 @@ void X11WindowManager::show_window(void* hwnd, int /*cmd_show*/) {
                SubstructureRedirectMask | SubstructureNotifyMask, &xev);
 
     XFlush(w->display);
+    XSync(w->display, False);
     w->visible = true;
+
+    // Post show/activate/focus to queue — do NOT dispatch synchronously
+    Win32Message m{};
+    m.hwnd = hwnd;
+    m.message = 0x0018 /*WM_SHOWWINDOW*/; m.w_param = 1; m.l_param = 0; push_message(m);
+    m.message = WM_ACTIVATE; m.w_param = 1; m.l_param = 0; push_message(m);
+    m.message = WM_SETFOCUS; m.w_param = 0; m.l_param = 0; push_message(m);
+    // Mark window dirty for first WM_PAINT delivery
+    invalidate(hwnd);
 }
 
 void X11WindowManager::update_window(void* hwnd) {
     auto* w = window_from_hwnd(hwnd);
-    if (w && w->display) XFlush(w->display);
+    if (!w || !w->display || !w->xid) return;
+    XFlush(w->display);
+    XSync(w->display, False);
 }
 
 // Ensure the window has a software backbuffer of the requested size and return it.
@@ -245,7 +288,10 @@ std::uint64_t X11WindowManager::get_window_long(void* hwnd, int nIndex) {
     auto* w = it->second.get();
     switch (nIndex) {
         case -21: return w->userdata;   // GWLP_USERDATA
-        case -16: return w->style;      // GWL_STYLE (u32 field)
+        case -20: return w->ex_style;   // GWL_EXSTYLE
+        case -16: return w->style;      // GWL_STYLE
+        case -4:  return reinterpret_cast<std::uint64_t>(w->custom_wndproc ? w->custom_wndproc : (w->cls ? w->cls->window_proc : nullptr)); // GWLP_WNDPROC
+        case -6:  return reinterpret_cast<std::uint64_t>(w->cls ? w->cls->instance_handle : nullptr); // GWLP_HINSTANCE
         default:  return 0;
     }
 }
@@ -254,7 +300,9 @@ void X11WindowManager::set_window_long(void* hwnd, int nIndex, std::uint64_t val
     if (it == windows_.end()) return;
     auto* w = it->second.get();
     if (nIndex == -21) w->userdata = value;
+    else if (nIndex == -20) w->ex_style = static_cast<u32>(value);
     else if (nIndex == -16) w->style = static_cast<u32>(value);
+    else if (nIndex == -4) w->custom_wndproc = reinterpret_cast<void*>(value);
 }
 
 // ---- Win32 timers --------------------------------------------------------------
@@ -450,65 +498,75 @@ bool X11WindowManager::synthesize_paint(void* hwnd, Win32Message& out) {
 }
 
 int X11WindowManager::get_message(void* lpMsg, void* hwnd, u32 min, u32 max) {
-    // get_message blocks until a message is available. Pump X11 then wait.
     for (;;) {
-        if (quit_requested_ && queue_.empty()) {
-            if (lpMsg) {
-                auto* m = static_cast<Win32Message*>(lpMsg);
-                m->message = WM_QUIT;
-                m->w_param = static_cast<u64>(exit_code_);
+        if (quit_requested_) {
+            std::lock_guard<std::mutex> lk(q_mutex_);
+            if (queue_.empty()) {
+                if (lpMsg) {
+                    auto* m = static_cast<Win32Message*>(lpMsg);
+                    m->hwnd = hwnd;
+                    m->message = WM_QUIT;
+                    m->w_param = static_cast<u64>(exit_code_);
+                    m->l_param = 0;
+                }
+                return 0;
             }
-            return 0;   // WM_QUIT -> GetMessage returns 0
         }
         pump_x11_events();
-        Win32Message m;
-        if (pop_message(m)) {
-            if (hwnd && m.hwnd != hwnd) { push_message(m); continue; }
-            if (min || max) { if (m.message < min || m.message > max) { push_message(m); continue; } }
-            if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
-            return m.message == WM_QUIT ? 0 : 1;
+        {
+            std::lock_guard<std::mutex> lk(q_mutex_);
+            for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+                if (hwnd && it->hwnd != hwnd) continue;
+                if (min || max) {
+                    if (it->message < min || it->message > max) continue;
+                }
+                Win32Message m = *it;
+                queue_.erase(it);
+                if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+                return (m.message == WM_QUIT) ? 0 : 1;
+            }
         }
-        // No queued message: if a window needs a paint, deliver WM_PAINT when the
-        // queue drains (Windows InvalidateRect semantics). hwnd==0 = any window.
+        Win32Message m;
         if (synthesize_paint(hwnd, m)) {
             if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
             return 1;
         }
-        // Elapsed Win32 timers fire a WM_TIMER when the queue is drained.
         if (poll_timer(m)) {
             if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
             return 1;
         }
-        // No message yet: flush X and yield briefly.
-        XFlush(display_);
+        if (display_) XFlush(display_);
         struct timespec ts{0, 2'000'000};
-        nanosleep(&ts, nullptr);   // 2ms
+        nanosleep(&ts, nullptr);
     }
 }
 
 int X11WindowManager::peek_message(void* lpMsg, void* hwnd, u32 min, u32 max, u32 remove) {
     pump_x11_events();
-    Win32Message m;
-    for (;;) {
-        if (!pop_message(m)) {
-            // Queue empty: if a paint is pending, report it (Windows removes the
-            // update when WM_PAINT is retrieved; honor PM_REMOVE semantics).
-            if (synthesize_paint(hwnd, m)) {
-                if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
-                return 1;
+    {
+        std::lock_guard<std::mutex> lk(q_mutex_);
+        for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+            if (hwnd && it->hwnd != hwnd) continue;
+            if (min || max) {
+                if (it->message < min || it->message > max) continue;
             }
-            if (poll_timer(m)) {
-                if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
-                return 1;
+            if (lpMsg) *static_cast<Win32Message*>(lpMsg) = *it;
+            if (remove & 1) { // PM_REMOVE
+                queue_.erase(it);
             }
-            return 0;
+            return 1;
         }
-        if (hwnd && m.hwnd != hwnd) { continue; }
-        if (min || max) { if (m.message < min || m.message > max) continue; }
+    }
+    Win32Message m;
+    if (synthesize_paint(hwnd, m)) {
         if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
-        if (!(remove & 1)) push_message(m);   // PM_REMOVE == 1
         return 1;
     }
+    if (poll_timer(m)) {
+        if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+        return 1;
+    }
+    return 0;
 }
 
 int X11WindowManager::translate_message(const void* /*lpMsg*/) { return 1; }
@@ -522,10 +580,16 @@ int X11WindowManager::dispatch_message(const void* lpMsg) {
 // Internal: call the guest WNDPROC or DefWindowProc.
 s64 X11WindowManager::dispatch_message_impl(void* hwnd, u32 msg, u64 wparam, s64 lparam) {
     auto* w = window_from_hwnd(hwnd);
-    if (!w || !w->cls || !w->cls->window_proc) return 0;
+    if (!w) return 0;
+    void* proc = w->custom_wndproc ? w->custom_wndproc : (w->cls ? w->cls->window_proc : nullptr);
+    if (!proc) return 0;
     using WndProc = s64 (__attribute__((ms_abi))*)(void*, u32, u64, s64);
-    auto fn = reinterpret_cast<WndProc>(w->cls->window_proc);
-    return fn(hwnd, msg, wparam, lparam);
+    auto fn = reinterpret_cast<WndProc>(proc);
+    try {
+        return fn(hwnd, msg, wparam, lparam);
+    } catch (...) {
+        return 0;
+    }
 }
 
 void X11WindowManager::post_quit_message(int exit_code) {

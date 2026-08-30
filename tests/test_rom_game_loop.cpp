@@ -42,12 +42,11 @@ int main() {
     }
 
     // 2. Initialize Emulator Runtime in Potato Mode (UltraLowEnd handheld tier)
-    RuntimeConfig cfg{
-        .device_tier = DeviceTier::MobileHighTier, // AYN Odin 2 / Snapdragon 8 Gen 2
-        .performance_mode = PerformanceMode::Performance,
-        .headless = true,
-        .force_potato_mode = false
-    };
+    RuntimeConfig cfg{};
+    cfg.device_tier = DeviceTier::MobileHighTier; // AYN Odin 2 / Snapdragon 8 Gen 2
+    cfg.performance_mode = PerformanceMode::Performance;
+    cfg.headless = true;
+    cfg.force_potato_mode = false;
 
     EmulatorRuntime runtime(cfg);
     auto init_res = runtime.initialize();

@@ -213,27 +213,50 @@ void set_guest_rip(ucontext_t* uc, u64 ip) {
 } // namespace
 
 static void seh_fault_handler(int sig, siginfo_t* si, void* vctx) {
-    (void)sig; (void)si;
+    (void)si;
     auto* uc = static_cast<ucontext_t*>(vctx);
     u64 ip = guest_rip(uc);
+    u64 img_base = papaya::win32::seh_image_base();
 
     u64 recovery = 0;
-    if (!papaya::win32::seh_dispatch_fault(ip, papaya::win32::seh_image_base(), &recovery)) {
-        return;   // no matching scope -> re-raise (normal crash)
+    if (papaya::win32::seh_dispatch_fault(ip, img_base, &recovery)) {
+        if (last_fault_ip != ip || last_recovery != recovery) {
+            last_fault_ip = ip;
+            last_recovery = recovery;
+            set_guest_rip(uc, recovery);
+            return;
+        }
     }
 
-    // Loop guard: same IP -> same recovery twice = not making progress.
-    if (last_fault_ip == ip && last_recovery == recovery) {
-        return;
+    // Walk up the stack to check caller frames for an active SEH try-block
+#if defined(__x86_64__)
+    auto* rsp_ptr = reinterpret_cast<const u64*>(uc->uc_mcontext.gregs[REG_RSP]);
+    if (rsp_ptr) {
+        for (int i = 0; i < 64; ++i) {
+            u64 caller = rsp_ptr[i];
+            if (caller >= img_base && caller < img_base + 0x20000000) {
+                if (papaya::win32::seh_dispatch_fault(caller, img_base, &recovery)) {
+                    uc->uc_mcontext.gregs[REG_RSP] = reinterpret_cast<greg_t>(&rsp_ptr[i + 1]);
+                    set_guest_rip(uc, recovery);
+                    return;
+                }
+            }
+        }
     }
-    last_fault_ip = ip;
-    last_recovery = recovery;
+#endif
 
-    set_guest_rip(uc, recovery);   // continue at __except handler
+    // For SIGTRAP on int3 instructions, step over if unhandled
+    if (sig == SIGTRAP) {
+        const auto* code_ptr = reinterpret_cast<const u8*>(ip);
+        if (code_ptr && (*code_ptr == 0xCC || (ip > 0 && *(code_ptr - 1) == 0xCC))) {
+            set_guest_rip(uc, (*code_ptr == 0xCC) ? ip + 1 : ip);
+            return;
+        }
+    }
 }
 
 void seh_install_fault_handler(bool install) {
-    static struct sigaction old_segv{}, old_fpe{};
+    static struct sigaction old_segv{}, old_fpe{}, old_trap{}, old_ill{};
     static bool installed = false;
     if (install && !installed) {
         struct sigaction sa{};
@@ -242,10 +265,14 @@ void seh_install_fault_handler(bool install) {
         sigemptyset(&sa.sa_mask);
         sigaction(SIGSEGV, &sa, &old_segv);
         sigaction(SIGFPE, &sa, &old_fpe);
+        sigaction(SIGTRAP, &sa, &old_trap);
+        sigaction(SIGILL, &sa, &old_ill);
         installed = true;
     } else if (!install && installed) {
         sigaction(SIGSEGV, &old_segv, nullptr);
         sigaction(SIGFPE, &old_fpe, nullptr);
+        sigaction(SIGTRAP, &old_trap, nullptr);
+        sigaction(SIGILL, &old_ill, nullptr);
         installed = false;
     }
 }

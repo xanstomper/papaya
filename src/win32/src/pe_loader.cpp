@@ -515,6 +515,7 @@ Result<> PeLoader::resolve_imports(u8* base_bytes, const ImageNtHeadersUnified& 
 
             if (!fn_ptr) {
                 ++failed;
+                log::warn("PE_LOADER", "Unresolved import: {}!{}", dll_name, sym_name);
                 fn_ptr = reinterpret_cast<void*>(&fallback_iat_stub);
             } else {
                 ++resolved;

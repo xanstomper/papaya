@@ -67,6 +67,8 @@ struct NativeWindow {
     int                x{0}, y{0}, width{0}, height{0};
     bool               visible{false};
     u32                style{0};
+    u32                ex_style{0};
+    void*              custom_wndproc{nullptr};
     // Software GDI backbuffer (RGBA, width*height*4), presented via XPutImage.
     u8*                fb{nullptr};
     u32                fb_size{0};
