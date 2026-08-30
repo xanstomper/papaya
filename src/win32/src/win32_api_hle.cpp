@@ -395,11 +395,17 @@ struct NativeFindState {
 struct NativeThreadState {
     u32       tag{kHandleThread};
     pthread_t handle{};
+    pid_t     tid{0};
+    std::atomic<bool> finished{false};
+    std::mutex mtx;
+    std::condition_variable cv;
 };
 
 struct ThreadParamBridge {
     void* lpStart;
     void* lpParam;
+    NativeThreadState* nts;
+    std::atomic<bool> ready{false};
 };
 
 // GDI32 software-surface handle types (a DC/bitmap is one of these; the window
@@ -453,7 +459,10 @@ static void* thread_trampoline(void* arg) {
     auto* tp = static_cast<ThreadParamBridge*>(arg);
     auto fn = reinterpret_cast<u32 (__attribute__((ms_abi))*)(void*)>(tp->lpStart);
     void* param = tp->lpParam;
-    delete tp;
+    auto* nts = tp->nts;
+    nts->tid = gettid();
+    tp->ready = true;
+
     // Give the new guest thread its own per-thread TEB + TLS block so
     // Win32 TLS API and __declspec(thread) are thread-local, not shared.
     if (auto* loader = PeLoader::active()) loader->setup_thread_tls();
@@ -464,20 +473,30 @@ static void* thread_trampoline(void* arg) {
     } catch (...) {
         log::warn("WIN32", "Caught unhandled C++ exception on guest worker thread");
     }
+    {
+        std::lock_guard<std::mutex> lock(nts->mtx);
+        nts->finished = true;
+    }
+    nts->cv.notify_all();
     return reinterpret_cast<void*>(static_cast<uintptr_t>(ret));
 }
 
 HANDLE Win32ApiHle::hle_create_thread(void* lpSec, size_t dwStack, void* lpStart, void* lpParam, u32 dwFlags, u32* lpId) {
+    auto* nts = new NativeThreadState();
+    nts->tag = kHandleThread;
+
+    auto* tp = new ThreadParamBridge{lpStart, lpParam, nts, false};
     pthread_t thread;
-    auto* tp = new ThreadParamBridge{lpStart, lpParam};
     if (pthread_create(&thread, nullptr, thread_trampoline, tp) == 0) {
-        auto* nts = new NativeThreadState();
-        nts->tag = kHandleThread;
         nts->handle = thread;
-        if (lpId) *lpId = static_cast<u32>(thread);
+        pthread_detach(thread);
+        while (!tp->ready) std::this_thread::yield();
+        if (lpId) *lpId = static_cast<u32>(nts->tid);
+        delete tp;
         return reinterpret_cast<HANDLE>(nts);
     }
     delete tp;
+    delete nts;
     return nullptr;
 }
 
@@ -657,16 +676,16 @@ u32 Win32ApiHle::hle_wait_for_single_object(HANDLE hHandle, u32 dwMilliseconds) 
     switch (handle_tag(hHandle)) {
         case kHandleThread: {
             auto* th = static_cast<NativeThreadState*>(hHandle);
-            u32 delay_ms = (dwMilliseconds == 0xFFFFFFFF) ? 30'000 : (dwMilliseconds ? dwMilliseconds : 0);
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += static_cast<long>(delay_ms) * 1'000'000ULL;
-            ts.tv_sec  += ts.tv_nsec / 1'000'000'000ULL;
-            ts.tv_nsec %= 1'000'000'000ULL;
-            int rc = pthread_timedjoin_np(th->handle, nullptr, &ts);
-            if (rc == 0) return 0;            // thread finished
-            if (rc == ETIMEDOUT) return 0x102; // still running
-            return 0;
+            std::unique_lock<std::mutex> lock(th->mtx);
+            if (th->finished.load()) return 0;
+            if (dwMilliseconds == 0) return 0x102;
+            if (dwMilliseconds == 0xFFFFFFFF) {
+                th->cv.wait(lock, [&]() { return th->finished.load(); });
+                return 0;
+            }
+            bool res = th->cv.wait_for(lock, std::chrono::milliseconds(dwMilliseconds),
+                                       [&]() { return th->finished.load(); });
+            return res ? 0 : 0x102;
         }
         case kHandleEvent: {
             auto* ev = static_cast<NativeEventState*>(hHandle);
@@ -1299,6 +1318,43 @@ void* Win32ApiHle::hle_interlocked_push_entry_slist(void* ListHead, void* ListEn
 void* Win32ApiHle::hle_global_alloc(u32 uFlags, size_t uBytes) { return hle_heap_alloc(hle_get_process_heap(), 0, uBytes); }
 void* Win32ApiHle::hle_global_lock(void* hMem) { return hMem; }
 BOOL Win32ApiHle::hle_global_unlock(void* hMem) { return TRUE_VAL; }
+
+// ---- Memory / string / locale helpers (added by Hermes) ------------------------
+void* Win32ApiHle::hle_global_free(void* hMem) {
+    if (hMem) hle_heap_free(hle_get_process_heap(), 0, hMem);
+    return nullptr;
+}
+char* Win32ApiHle::hle_lstrcat_a(char* dst, const char* src) {
+    if (dst && src) std::strcat(dst, src);
+    return dst;
+}
+int Win32ApiHle::hle_lstrlen_a(const char* str) { return str ? static_cast<int>(std::strlen(str)) : 0; }
+u32 Win32ApiHle::hle_wcslen(const void* str) {
+    if (!str) return 0;
+    // Guest wchar_t is 16-bit (UTF-16 units); count them directly (host
+    // wchar_t is 32-bit so std::wcslen would over-read).
+    const u16* p = static_cast<const u16*>(str);
+    u32 n = 0;
+    while (p[n] != 0) ++n;
+    return n;
+}
+u32 Win32ApiHle::hle_get_system_default_lang_id() { return 0x0409; }
+u32 Win32ApiHle::hle_get_user_default_lang_id() { return 0x0409; }
+u32 Win32ApiHle::hle_get_process_id(void* hProcess) {
+    return hProcess ? static_cast<u32>(reinterpret_cast<uintptr_t>(hProcess) & 0xFFFF) : 1u;
+}
+u32 Win32ApiHle::hle_get_thread_locale(u32 dwFlags) { (void)dwFlags; return 0x0409; }
+BOOL Win32ApiHle::hle_get_handle_information(void* hObject, u32* lpdwFlags) {
+    (void)hObject;
+    if (lpdwFlags) *lpdwFlags = 0;
+    return TRUE_VAL;
+}
+void Win32ApiHle::hle_secure_zero_memory(void* pv, u64 cb) {
+    if (pv && cb) {
+        volatile u8* p = static_cast<volatile u8*>(pv);
+        while (cb--) *p++ = 0;
+    }
+}
 
 HANDLE Win32ApiHle::hle_find_first_file_a(const char* lpFileName, Win32FileFindDataA* lpFindFileData) {
     if (!lpFileName || !lpFindFileData) {
@@ -5195,9 +5251,15 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "InitializeSListHead", reinterpret_cast<void*>(&hle_initialize_slist_head));
     register_function("KERNEL32.DLL", "InterlockedPushEntrySList", reinterpret_cast<void*>(&hle_interlocked_push_entry_slist));
     register_function("KERNEL32.DLL", "GlobalAlloc", reinterpret_cast<void*>(&hle_global_alloc));
+    register_function("KERNEL32.DLL", "GlobalFree", reinterpret_cast<void*>(&hle_global_free));
     register_function("KERNEL32.DLL", "GlobalLock", reinterpret_cast<void*>(&hle_global_lock));
     register_function("KERNEL32.DLL", "GlobalUnlock", reinterpret_cast<void*>(&hle_global_unlock));
+    register_function("KERNEL32.DLL", "LocalAlloc", reinterpret_cast<void*>(&hle_global_alloc));
     register_function("KERNEL32.DLL", "LocalFree", reinterpret_cast<void*>(&hle_local_free));
+    register_function("KERNEL32.DLL", "SecureZeroMemory", reinterpret_cast<void*>(&hle_secure_zero_memory));
+    register_function("KERNEL32.DLL", "GetSystemDefaultLangID", reinterpret_cast<void*>(&hle_get_system_default_lang_id));
+    register_function("KERNEL32.DLL", "GetUserDefaultLangID", reinterpret_cast<void*>(&hle_get_user_default_lang_id));
+    register_function("KERNEL32.DLL", "GetThreadLocale", reinterpret_cast<void*>(&hle_get_thread_locale));
     register_function("KERNEL32.DLL", "FindFirstFileA", reinterpret_cast<void*>(&hle_find_first_file_a));
     register_function("KERNEL32.DLL", "FindFirstFileW", reinterpret_cast<void*>(&hle_find_first_file_w));
     register_function("KERNEL32.DLL", "FindFirstFileExW", reinterpret_cast<void*>(&hle_find_first_file_ex_w));
@@ -5231,6 +5293,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "QueryPerformanceFrequency", reinterpret_cast<void*>(&hle_query_performance_frequency));
     register_function("KERNEL32.DLL", "GetTickCount", reinterpret_cast<void*>(&hle_get_tick_count));
     register_function("KERNEL32.DLL", "lstrcpyA", reinterpret_cast<void*>(&hle_lstrcpy_a));
+    register_function("KERNEL32.DLL", "lstrcatA", reinterpret_cast<void*>(&hle_lstrcat_a));
+    register_function("KERNEL32.DLL", "lstrlenA", reinterpret_cast<void*>(&hle_lstrlen_a));
+    register_function("KERNEL32.DLL", "wcslen", reinterpret_cast<void*>(&hle_wcslen));
+    register_function("KERNEL32.DLL", "GetProcessId", reinterpret_cast<void*>(&hle_get_process_id));
+    register_function("KERNEL32.DLL", "GetHandleInformation", reinterpret_cast<void*>(&hle_get_handle_information));
     register_function("KERNEL32.DLL", "lstrcmpA", reinterpret_cast<void*>(&hle_lstrcmp_a));
     register_function("KERNEL32.DLL", "GetThreadPriority", reinterpret_cast<void*>(&hle_get_thread_priority));
     register_function("KERNEL32.DLL", "GetPrivateProfileStringA", reinterpret_cast<void*>(&hle_get_private_profile_string_a));

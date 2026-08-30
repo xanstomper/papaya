@@ -243,6 +243,7 @@ public:
     static PAPAYA_MS_ABI void   hle_initialize_slist_head(void* ListHead);
     static PAPAYA_MS_ABI void*  hle_interlocked_push_entry_slist(void* ListHead, void* ListEntry);
     static PAPAYA_MS_ABI void*  hle_global_alloc(u32 uFlags, size_t uBytes);
+    static PAPAYA_MS_ABI void*  hle_global_free(void* hMem);
     static PAPAYA_MS_ABI void*  hle_global_lock(void* hMem);
     static PAPAYA_MS_ABI BOOL   hle_global_unlock(void* hMem);
     static PAPAYA_MS_ABI HANDLE hle_find_first_file_a(const char* lpFileName, Win32FileFindDataA* lpFindFileData);
@@ -617,6 +618,15 @@ public:
     static PAPAYA_MS_ABI void* hle_monitor_from_window(HWND hwnd, u32 dwFlags);
     static PAPAYA_MS_ABI BOOL  hle_get_monitor_info_a(void* hMonitor, void* lpmi);
     static PAPAYA_MS_ABI BOOL  hle_enum_display_monitors(void* hdc, void* lpRect, void* lpProc, void* lParam);
+    static PAPAYA_MS_ABI char* hle_lstrcat_a(char* dst, const char* src);
+    static PAPAYA_MS_ABI int   hle_lstrlen_a(const char* str);
+    static PAPAYA_MS_ABI u32   hle_wcslen(const void* str);
+    static PAPAYA_MS_ABI u32   hle_get_system_default_lang_id();
+    static PAPAYA_MS_ABI u32   hle_get_user_default_lang_id();
+    static PAPAYA_MS_ABI u32   hle_get_process_id(void* hProcess);
+    static PAPAYA_MS_ABI u32   hle_get_thread_locale(u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL  hle_get_handle_information(void* hObject, u32* lpdwFlags);
+    static PAPAYA_MS_ABI void  hle_secure_zero_memory(void* pv, u64 cb);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 
