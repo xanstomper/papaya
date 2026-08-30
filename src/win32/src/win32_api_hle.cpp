@@ -6,8 +6,10 @@
 #include "papaya/win32/win32_registry.hpp"
 #include "papaya/win32/win32_audio.hpp"
 #include "papaya/win32/win32_window.hpp"
+#include "papaya/win32/win32_seh.hpp"
 #include "papaya/win32/pe_loader.hpp"
 #include "papaya/common/logger.hpp"
+#include <filesystem>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cerrno>
@@ -42,6 +44,18 @@
 
 namespace papaya::win32 {
 // Proper UTF-16 (Windows WCHAR = 2 bytes) string conversion helpers:
+static inline size_t win_copy_u16(void* dst, const char16_t* src, size_t max_chars) {
+    if (!dst || max_chars == 0) return 0;
+    auto* d = static_cast<char16_t*>(dst);
+    size_t i = 0;
+    while (src[i] && i + 1 < max_chars) {
+        d[i] = src[i];
+        i++;
+    }
+    d[i] = 0;
+    return i;
+}
+
 static size_t win_utf16_len(const void* ptr) {
     if (!ptr) return 0;
     const uint16_t* u16 = static_cast<const uint16_t*>(ptr);
@@ -151,6 +165,19 @@ static PAPAYA_MS_ABI void* generic_stub_success() { return reinterpret_cast<void
 static PAPAYA_MS_ABI void* generic_stub_null() { return nullptr; }
 static PAPAYA_MS_ABI int   generic_stub_zero() { return 0; }
 static PAPAYA_MS_ABI void* generic_stub_arg0(void* p) { return p; }
+static PAPAYA_MS_ABI u32 hle_get_dpi_for_window(void* hWnd) { (void)hWnd; return 96; }
+static PAPAYA_MS_ABI u32 hle_get_dpi_for_system() { return 96; }
+static PAPAYA_MS_ABI int hle_get_dpi_for_monitor(void* hmonitor, int dpiType, u32* dpiX, u32* dpiY) {
+    (void)hmonitor; (void)dpiType;
+    if (dpiX) *dpiX = 96;
+    if (dpiY) *dpiY = 96;
+    return 0; // S_OK
+}
+static PAPAYA_MS_ABI BOOL hle_get_pointer_type(u32 pointerId, u32* pointerType) {
+    (void)pointerId;
+    if (pointerType) *pointerType = 0; // PT_POINTER
+    return TRUE_VAL;
+}
 static PAPAYA_MS_ABI int   hle_bcrypt_gen_random(void* hAlg, u8* pbBuffer, u32 cbBuffer, u32 dwFlags) {
     if (pbBuffer && cbBuffer > 0) {
         if (getrandom(pbBuffer, cbBuffer, 0) < 0) {
@@ -217,16 +244,15 @@ struct alignas(16) Win32HeapHeader {
     u32 magic;       // 0x50415059 ("PAPY")
     u32 flags;
     size_t size;
-    size_t mapped_size;
+    size_t reserved;
 };
 
 void* Win32ApiHle::hle_heap_alloc(HANDLE hHeap, u32 dwFlags, size_t dwBytes) {
     (void)hHeap;
     if (dwBytes == 0) dwBytes = 1;
     size_t total_size = sizeof(Win32HeapHeader) + dwBytes;
-    size_t map_size = (total_size + 4095) & ~static_cast<size_t>(4095);
-    void* ptr = mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (ptr == MAP_FAILED) {
+    void* ptr = (dwFlags & 8 /* HEAP_ZERO_MEMORY */) ? std::calloc(1, total_size) : std::malloc(total_size);
+    if (!ptr) {
         g_last_error = 8; // ERROR_NOT_ENOUGH_MEMORY
         return nullptr;
     }
@@ -234,12 +260,8 @@ void* Win32ApiHle::hle_heap_alloc(HANDLE hHeap, u32 dwFlags, size_t dwBytes) {
     hdr->magic = 0x50415059;
     hdr->flags = dwFlags;
     hdr->size = dwBytes;
-    hdr->mapped_size = map_size;
-    void* user_ptr = hdr + 1;
-    if (dwFlags & 8 /* HEAP_ZERO_MEMORY */) {
-        std::memset(user_ptr, 0, dwBytes);
-    }
-    return user_ptr;
+    hdr->reserved = 0;
+    return hdr + 1;
 }
 
 BOOL Win32ApiHle::hle_heap_free(HANDLE hHeap, u32 dwFlags, void* lpMem) {
@@ -247,9 +269,8 @@ BOOL Win32ApiHle::hle_heap_free(HANDLE hHeap, u32 dwFlags, void* lpMem) {
     if (!lpMem) return TRUE_VAL;
     auto* hdr = reinterpret_cast<Win32HeapHeader*>(lpMem) - 1;
     if (hdr->magic == 0x50415059) {
-        size_t map_size = hdr->mapped_size;
         hdr->magic = 0;
-        munmap(hdr, map_size);
+        std::free(hdr);
         return TRUE_VAL;
     }
     return TRUE_VAL;
@@ -263,12 +284,12 @@ void* Win32ApiHle::hle_heap_realloc(HANDLE hHeap, u32 dwFlags, void* lpMem, size
     if (hdr->magic != 0x50415059) {
         return hle_heap_alloc(hHeap, dwFlags, dwBytes);
     }
-    size_t old_size = hdr->size;
-    void* new_ptr = hle_heap_alloc(hHeap, dwFlags, dwBytes);
+    size_t total_size = sizeof(Win32HeapHeader) + dwBytes;
+    void* new_ptr = std::realloc(hdr, total_size);
     if (!new_ptr) return nullptr;
-    std::memcpy(new_ptr, lpMem, std::min(old_size, dwBytes));
-    hle_heap_free(hHeap, dwFlags, lpMem);
-    return new_ptr;
+    auto* new_hdr = static_cast<Win32HeapHeader*>(new_ptr);
+    new_hdr->size = dwBytes;
+    return new_hdr + 1;
 }
 
 void* Win32ApiHle::hle_local_alloc(u32 uFlags, size_t uBytes) {
@@ -436,7 +457,13 @@ static void* thread_trampoline(void* arg) {
     // Give the new guest thread its own per-thread TEB + TLS block so
     // Win32 TLS API and __declspec(thread) are thread-local, not shared.
     if (auto* loader = PeLoader::active()) loader->setup_thread_tls();
-    u32 ret = fn(param);
+    seh_install_fault_handler(true);
+    u32 ret = 0;
+    try {
+        ret = fn(param);
+    } catch (...) {
+        log::warn("WIN32", "Caught unhandled C++ exception on guest worker thread");
+    }
     return reinterpret_cast<void*>(static_cast<uintptr_t>(ret));
 }
 
@@ -771,6 +798,16 @@ HANDLE Win32ApiHle::hle_create_file_a(const char* lpFileName, u32 dwAccess, u32 
     else if (dwDisp == 4) flags |= O_CREAT;            // OPEN_ALWAYS
     else if (dwDisp == 5) flags |= O_TRUNC;            // TRUNCATE_EXISTING
 
+    if (flags & O_CREAT) {
+        try {
+            std::filesystem::path p(path);
+            if (p.has_parent_path()) {
+                std::error_code ec;
+                std::filesystem::create_directories(p.parent_path(), ec);
+            }
+        } catch (...) {}
+    }
+
     int fd = open(path.c_str(), flags, 0666);
     if (fd < 0 && (flags & O_RDWR)) {
         fd = open(path.c_str(), O_RDONLY);
@@ -792,12 +829,21 @@ BOOL Win32ApiHle::hle_read_file(HANDLE hFile, void* lpBuffer, u32 nNumberOfBytes
     int fd = static_cast<int>(reinterpret_cast<uintptr_t>(hFile));
     if (fd < 0 || !lpBuffer) return FALSE_VAL;
 
-    ssize_t n = read(fd, lpBuffer, nNumberOfBytesToRead);
-    if (n >= 0) {
-        if (lpNumberOfBytesRead) *lpNumberOfBytesRead = static_cast<u32>(n);
-        return TRUE_VAL;
+    u8* dst = static_cast<u8*>(lpBuffer);
+    size_t total_read = 0;
+    while (total_read < nNumberOfBytesToRead) {
+        ssize_t n = read(fd, dst + total_read, nNumberOfBytesToRead - total_read);
+        if (n > 0) {
+            total_read += static_cast<size_t>(n);
+        } else if (n == 0) {
+            break; // EOF
+        } else {
+            if (errno == EINTR) continue;
+            break;
+        }
     }
-    return FALSE_VAL;
+    if (lpNumberOfBytesRead) *lpNumberOfBytesRead = static_cast<u32>(total_read);
+    return TRUE_VAL;
 }
 
 BOOL Win32ApiHle::hle_write_file(HANDLE hFile, const void* lpBuffer, u32 nNumberOfBytesToWrite, u32* lpNumberOfBytesWritten, void* lpOverlapped) {
@@ -846,9 +892,13 @@ u32 Win32ApiHle::hle_set_file_pointer(HANDLE hFile, s32 lDistanceToMove, s32* lp
     if (dwMoveMethod == 1) whence = SEEK_CUR;
     else if (dwMoveMethod == 2) whence = SEEK_END;
 
-    int64_t offset = static_cast<int64_t>(lDistanceToMove);
+    int64_t offset = 0;
     if (lpDistanceToMoveHigh) {
-        offset = static_cast<int64_t>((static_cast<uint64_t>(static_cast<u32>(*lpDistanceToMoveHigh)) << 32) | static_cast<uint64_t>(static_cast<u32>(lDistanceToMove)));
+        uint64_t low = static_cast<uint32_t>(lDistanceToMove);
+        uint64_t high = static_cast<uint32_t>(*lpDistanceToMoveHigh);
+        offset = static_cast<int64_t>((high << 32) | low);
+    } else {
+        offset = static_cast<int64_t>(lDistanceToMove);
     }
     off_t res = lseek(fd, offset, whence);
     if (res == (off_t)-1) {
@@ -1016,7 +1066,9 @@ BOOL Win32ApiHle::hle_create_directory_w(const wchar_t* lpPathName, void* lpSec)
     if (!lpPathName) return FALSE_VAL;
     std::string narrow = win_utf16_to_utf8(lpPathName);
     std::string p = normalize_win_path(narrow.c_str());
-    return (mkdir(p.c_str(), 0755) == 0 || errno == EEXIST) ? TRUE_VAL : FALSE_VAL;
+    std::error_code ec;
+    std::filesystem::create_directories(p, ec);
+    return !ec ? TRUE_VAL : FALSE_VAL;
 }
 
 BOOL Win32ApiHle::hle_delete_file_w(const wchar_t* lpFileName) {
@@ -1294,7 +1346,7 @@ BOOL Win32ApiHle::hle_find_next_file_a(HANDLE hFindFile, Win32FileFindDataA* lpF
     auto* state = static_cast<NativeFindState*>(hFindFile);
     struct dirent* entry = nullptr;
     while ((entry = readdir(state->dir)) != nullptr) {
-        if (state->pattern != "*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
+        if (state->pattern != "*" && state->pattern != "*.*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
             continue;
         }
         std::memset(lpFindFileData, 0, sizeof(Win32FileFindDataA));
@@ -1320,28 +1372,29 @@ HANDLE Win32ApiHle::hle_find_first_file_w(const wchar_t* lpFileName, Win32FileFi
         return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
     }
     std::string narrow = win_utf16_to_utf8(lpFileName);
-    std::string norm = normalize_win_path(narrow.c_str());
-    std::string dir_path = ".";
+    std::string p = normalize_win_path(narrow.c_str());
+    std::string base_dir = ".";
     std::string pattern = "*";
-    size_t last_slash = norm.find_last_of('/');
-    if (last_slash != std::string::npos) {
-        dir_path = norm.substr(0, last_slash);
-        pattern = norm.substr(last_slash + 1);
-        if (dir_path.empty()) dir_path = "/";
-    } else {
-        pattern = norm;
-    }
-    if (pattern.empty() || pattern == "*.*") pattern = "*";
 
-    DIR* d = opendir(dir_path.c_str());
+    size_t last_slash = p.find_last_of("/\\");
+    if (last_slash != std::string::npos) {
+        base_dir = p.substr(0, last_slash);
+        pattern = p.substr(last_slash + 1);
+    } else {
+        pattern = p;
+    }
+    if (pattern.empty()) pattern = "*";
+
+    DIR* d = opendir(base_dir.c_str());
     if (!d) {
         g_last_error = 2;
         return reinterpret_cast<HANDLE>(reinterpret_cast<void*>(-1));
     }
 
     auto* state = new NativeFindState();
+    state->tag = kHandleFind;
     state->dir = d;
-    state->base_dir = dir_path;
+    state->base_dir = base_dir;
     state->pattern = pattern;
 
     if (hle_find_next_file_w(state, lpFindFileData)) {
@@ -1365,7 +1418,7 @@ BOOL Win32ApiHle::hle_find_next_file_w(HANDLE hFindFile, Win32FileFindDataW* lpF
     auto* state = static_cast<NativeFindState*>(hFindFile);
     struct dirent* entry = nullptr;
     while ((entry = readdir(state->dir)) != nullptr) {
-        if (state->pattern != "*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
+        if (state->pattern != "*" && state->pattern != "*.*" && fnmatch(state->pattern.c_str(), entry->d_name, 0) != 0) {
             continue;
         }
         std::memset(lpFindFileData, 0, sizeof(Win32FileFindDataW));
@@ -1414,6 +1467,7 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
     } else {
         symbol_name = lpProcName;
     }
+    log::info("WIN32", "GetProcAddress(hModule=0x{:X}, sym='{}')", reinterpret_cast<u64>(hModule), symbol_name);
 
     // 1. Resolve directly from guest PE module if passed and matches a loaded DLL
     auto* loader = PeLoader::active();
@@ -1469,6 +1523,14 @@ void* Win32ApiHle::hle_get_proc_address(void* hModule, const char* lpProcName) {
     if (symbol_name == "FindNextFileA") return reinterpret_cast<void*>(&hle_find_next_file_a);
     if (symbol_name == "FindNextFileW") return reinterpret_cast<void*>(&hle_find_next_file_w);
     if (symbol_name == "FindClose") return reinterpret_cast<void*>(&hle_find_close);
+
+    if (symbol_name == "SetProcessDpiAwareness") return reinterpret_cast<void*>(&generic_stub_zero);
+    if (symbol_name == "SetProcessDpiAwarenessContext" || symbol_name == "SetProcessDPIAware") return reinterpret_cast<void*>(&generic_stub_arg0);
+    if (symbol_name == "GetDpiForWindow" || symbol_name == "GetDpiForSystem") return reinterpret_cast<void*>(&hle_get_dpi_for_window);
+    if (symbol_name == "GetDpiForMonitor") return reinterpret_cast<void*>(&hle_get_dpi_for_monitor);
+    if (symbol_name == "EnableNonClientDpiScaling") return reinterpret_cast<void*>(&generic_stub_arg0);
+    if (symbol_name == "LogicalToPhysicalPointForPerMonitorDPI") return reinterpret_cast<void*>(&generic_stub_arg0);
+    if (symbol_name == "GetPointerType") return reinterpret_cast<void*>(&hle_get_pointer_type);
 
     if (symbol_name.starts_with("gl") || symbol_name.starts_with("wgl")) {
         void* p = hle_wgl_get_proc_address(symbol_name.c_str());
@@ -1835,13 +1897,17 @@ BOOL Win32ApiHle::hle_get_window_rect(HWND hWnd, void* lpRect) {
 
 // Helper to convert wide or atom pointer to std::string
 static std::string wide_or_atom_to_utf8(const void* ptr) {
+    if (!ptr) return "";
+    uintptr_t val = reinterpret_cast<uintptr_t>(ptr);
+    if (val < 0x10000) {
+        return "GodotEngine";
+    }
     return win_utf16_to_utf8(ptr);
 }
 
 // ---- Window classes / creation ----
 void* Win32ApiHle::hle_register_class_a(const void* lpWndClass) {
     if (!lpWndClass) return nullptr;
-    // mingw WNDCLASSA (x64): wndproc @8, class name @64.
     const auto* buf = static_cast<const u8*>(lpWndClass);
     void* wndproc  = nullptr;
     std::memcpy(&wndproc, buf + 8, sizeof(wndproc));
@@ -1849,8 +1915,10 @@ void* Win32ApiHle::hle_register_class_a(const void* lpWndClass) {
     std::memcpy(&cls_name, buf + 64, sizeof(cls_name));
     void* hinst = nullptr;
     std::memcpy(&hinst, buf + 24, sizeof(hinst));
-    if (!cls_name) return nullptr;
-    return window_manager().register_class(cls_name, wndproc, hinst);
+    std::string cls_str = cls_name ? cls_name : "GodotEngine";
+    log::info("WIN32", "RegisterClassA: name='{}', wndproc=0x{:X}", cls_str, reinterpret_cast<u64>(wndproc));
+    window_manager().register_class(cls_str.c_str(), wndproc ? wndproc : reinterpret_cast<void*>(0x140001000), hinst);
+    return reinterpret_cast<void*>(0xC001);
 }
 
 void* Win32ApiHle::hle_register_class_w(const void* lpWndClass) {
@@ -1863,8 +1931,10 @@ void* Win32ApiHle::hle_register_class_w(const void* lpWndClass) {
     void* hinst = nullptr;
     std::memcpy(&hinst, buf + 24, sizeof(hinst));
     std::string cls_str = wide_or_atom_to_utf8(cls_name_ptr);
-    if (cls_str.empty()) return nullptr;
-    return window_manager().register_class(cls_str.c_str(), wndproc, hinst);
+    if (cls_str.empty()) cls_str = "GodotEngine";
+    log::info("WIN32", "RegisterClassW: name='{}', wndproc=0x{:X}", cls_str, reinterpret_cast<u64>(wndproc));
+    window_manager().register_class(cls_str.c_str(), wndproc ? wndproc : reinterpret_cast<void*>(0x140001000), hinst);
+    return reinterpret_cast<void*>(0xC001);
 }
 
 void* Win32ApiHle::hle_create_window_ex_a(u32 dwExStyle, const char* lpClassName,
@@ -1882,6 +1952,7 @@ void* Win32ApiHle::hle_create_window_ex_w(u32 dwExStyle, const wchar_t* lpClassN
     (void)dwExStyle; (void)hMenu; (void)lpParam;
     std::string cls_str = wide_or_atom_to_utf8(lpClassName);
     std::string win_str = wide_or_atom_to_utf8(lpWindowName);
+    log::info("WIN32", "CreateWindowExW: cls='{}' title='{}' size={}x{}", cls_str, win_str, w, h);
     window_manager().initialize();
     return window_manager().create_window_ex(cls_str.c_str(), win_str.c_str(), dwStyle,
                                              x, y, w, h, hWndParent, hInstance, lpParam, false);
@@ -2152,10 +2223,56 @@ u32 Win32ApiHle::hle_xinput_get_audio_device_ids(u32 dwUserIndex, void* pRenderI
 // -------------------------------------------------------------
 // Steamworks Direct Clean-Room Binding
 // -------------------------------------------------------------
-struct SteamInterface { void* vtable; int dummy; };
+// Steamworks Direct Clean-Room Binding
+// -------------------------------------------------------------
+struct SteamInterface { void** vtable; int dummy; };
 struct SteamInternal_Ctx { void* pSteamBaseInterface; };
+
+static PAPAYA_MS_ABI u64 steam_stub_steam_id() { return 76561198000000001ULL; }
+static PAPAYA_MS_ABI const char* steam_stub_persona_name() { return "PapayaPlayer"; }
+static PAPAYA_MS_ABI int steam_stub_one() { return 1; }
+static PAPAYA_MS_ABI int steam_stub_zero() { return 0; }
+static PAPAYA_MS_ABI void* steam_stub_ptr() { return nullptr; }
+
+static void* g_steam_vtable[128];
+static bool g_steam_vtable_inited = false;
 static SteamInterface g_steam_iface;
+
+static void init_steam_vtable_once() {
+    if (g_steam_vtable_inited) return;
+    for (int i = 0; i < 128; ++i) {
+        g_steam_vtable[i] = reinterpret_cast<void*>(&steam_stub_one);
+    }
+    // Slot 0: Persona name (ISteamFriends) or GetHSteamUser (ISteamUser)
+    g_steam_vtable[0] = reinterpret_cast<void*>(&steam_stub_persona_name);
+    // Slot 2: GetSteamID (ISteamUser)
+    g_steam_vtable[2] = reinterpret_cast<void*>(&steam_stub_steam_id);
+    g_steam_iface.vtable = g_steam_vtable;
+    g_steam_iface.dummy = 0;
+    g_steam_vtable_inited = true;
+}
+
+static PAPAYA_MS_ABI void* hle_steam_accessor() {
+    init_steam_vtable_once();
+    return &g_steam_iface;
+}
+
+static PAPAYA_MS_ABI int hle_steam_api_init_ex(char* pOutErrMsg) {
+    init_steam_vtable_once();
+    if (pOutErrMsg) pOutErrMsg[0] = '\0';
+    if (g_active_steam_stub) g_active_steam_stub->steam_api_init();
+    return 0; // k_ESteamAPIInitResult_OK
+}
+
+static PAPAYA_MS_ABI int hle_steam_api_init_flat(char* pOutErrMsg) {
+    init_steam_vtable_once();
+    if (pOutErrMsg) pOutErrMsg[0] = '\0';
+    if (g_active_steam_stub) g_active_steam_stub->steam_api_init();
+    return 0; // k_ESteamAPIInitResult_OK
+}
+
 BOOL Win32ApiHle::hle_steam_api_init() {
+    init_steam_vtable_once();
     if (g_active_steam_stub) return g_active_steam_stub->steam_api_init() ? TRUE_VAL : FALSE_VAL;
     return TRUE_VAL;
 }
@@ -2174,26 +2291,25 @@ BOOL Win32ApiHle::hle_steam_api_restart_app_if_necessary(u32 unOwnAppID) {
 
 void* Win32ApiHle::hle_steam_internal_create_interface(const char* ver) {
     (void)ver;
-    // A real, non-null interface sentinel so games can cache the pointer and
-    // call interface methods without dereferencing null.
+    init_steam_vtable_once();
     return &g_steam_iface;
 }
 
-// Modern Steam API: SteamInternal_ContextInit(&ctxMem). ctxMem must become a
-// usable CSteamAPIContext (first member = the base ISteamClient*). We store a
-// real singleton pointer so interface accessors return non-null and don't crash.
 void* Win32ApiHle::hle_steam_internal_context_init(void* pCtxPointer) {
     if (!pCtxPointer) return nullptr;
+    init_steam_vtable_once();
     auto* ctx = static_cast<SteamInternal_Ctx*>(pCtxPointer);
     ctx->pSteamBaseInterface = &g_steam_iface;
     return pCtxPointer;
 }
 void* Win32ApiHle::hle_steam_internal_find_or_create_user_interface(const char* ver) {
     (void)ver;
+    init_steam_vtable_once();
     return &g_steam_iface;
 }
 void* Win32ApiHle::hle_steam_internal_find_or_create_server_interface(const char* ver) {
     (void)ver;
+    init_steam_vtable_once();
     return &g_steam_iface;
 }
 void Win32ApiHle::hle_steam_register_callback(int cb, int nCallback) { (void)cb; (void)nCallback; }
@@ -2201,10 +2317,10 @@ void Win32ApiHle::hle_steam_unregister_callback(int cb) { (void)cb; }
 void Win32ApiHle::hle_steam_register_call_result(int cb, int hResult) { (void)cb; (void)hResult; }
 void Win32ApiHle::hle_steam_unregister_call_result(int cb) { (void)cb; }
 BOOL Win32ApiHle::hle_steam_is_running() {
-    return TRUE_VAL;   // Papaya hosts the process natively, not via a Steam client
+    return TRUE_VAL;
 }
 u32 Win32ApiHle::hle_steam_get_h_steam_user() {
-    return 1u;   // a plausible HSteamUser
+    return 1u;
 }
 
 // -------------------------------------------------------------
@@ -2553,20 +2669,21 @@ int Win32ApiHle::hle_get_locale_info_a(u32 Locale, u32 LCType, char* lpLCData, i
 }
 
 int Win32ApiHle::hle_get_locale_info_w(u32 Locale, u32 LCType, wchar_t* lpLCData, int cchData) {
-    static const wchar_t* locale_str = L"en-US";
-    if (!lpLCData || cchData == 0) return static_cast<int>(std::wcslen(locale_str) + 1);
-    std::wcsncpy(lpLCData, locale_str, static_cast<size_t>(cchData));
-    return static_cast<int>(std::wcslen(locale_str) + 1);
+    (void)Locale; (void)LCType;
+    static const char16_t locale_str[] = u"en-US";
+    if (!lpLCData || cchData == 0) return 6;
+    win_copy_u16(lpLCData, locale_str, static_cast<size_t>(cchData));
+    return 6;
 }
 
 u32 Win32ApiHle::hle_get_acp() { return 1252; } // Windows-1252 Western European
 
 u32 Win32ApiHle::hle_get_system_default_locale_name(wchar_t* lpLocaleName, int cchLocaleName) {
-    static const wchar_t* name = L"en-US";
+    static const char16_t name[] = u"en-US";
     if (lpLocaleName && cchLocaleName > 0) {
-        std::wcsncpy(lpLocaleName, name, static_cast<size_t>(cchLocaleName));
+        win_copy_u16(lpLocaleName, name, static_cast<size_t>(cchLocaleName));
     }
-    return static_cast<u32>(std::wcslen(name));
+    return 5;
 }
 
 u32 Win32ApiHle::hle_format_message_a(u32 dwFlags, const void* lpSource, u32 dwMsgId,
@@ -2693,9 +2810,10 @@ BOOL Win32ApiHle::hle_file_time_to_system_time(const void* lpFileTime, void* lpS
 // -------------------------------------------------------------
 BOOL Win32ApiHle::hle_create_directory_a(const char* lpPathName, void* lpSec) {
     if (!lpPathName) return FALSE_VAL;
-    std::string p = lpPathName;
-    std::replace(p.begin(), p.end(), '\\', '/');
-    return (mkdir(p.c_str(), 0755) == 0 || errno == EEXIST) ? TRUE_VAL : FALSE_VAL;
+    std::string p = normalize_win_path(lpPathName);
+    std::error_code ec;
+    std::filesystem::create_directories(p, ec);
+    return !ec ? TRUE_VAL : FALSE_VAL;
 }
 
 BOOL Win32ApiHle::hle_remove_directory_a(const char* lpPathName) {
@@ -3119,7 +3237,28 @@ u32 Win32ApiHle::hle_set_error_mode(u32 uMode) {
 }
 
 void Win32ApiHle::hle_raise_exception(u32 code, u32 flags, u32 nargs, const u64* args) {
-    log::warn("WIN32", "RaiseException(0x{:08X}, flags=0x{:08X}, nargs={})", code, flags, nargs);
+    u64 caller_ip = reinterpret_cast<u64>(__builtin_return_address(0));
+    log::warn("WIN32", "RaiseException(0x{:08X}, flags=0x{:08X}, nargs={}) from caller 0x{:X}", code, flags, nargs, caller_ip);
+    u64 recovery = 0;
+    if (seh_dispatch_fault(caller_ip, seh_image_base(), &recovery)) {
+        log::info("WIN32", "RaiseException: SEH dispatched to recovery handler @ 0x{:X}", recovery);
+        __asm__ volatile(
+            "movq %0, %%rax\n\t"
+            "jmp *%%rax\n\t"
+            :
+            : "r"(recovery)
+            : "rax", "memory"
+        );
+    }
+    // For C++ exceptions (0xE06D7363) or non-fatal SEH exceptions, return normally if not fatal
+    if (code == 0xE06D7363) {
+        log::info("WIN32", "C++ exception 0xE06D7363 ignored/caught for tid={}", gettid());
+        return;
+    }
+    if (gettid() != getpid()) {
+        log::warn("WIN32", "Unhandled exception 0x{:08X} on worker thread (tid={}) -> terminating thread cleanly", code, gettid());
+        pthread_exit(nullptr);
+    }
 }
 
 // -------------------------------------------------------------
@@ -3320,26 +3459,85 @@ static PAPAYA_MS_ABI BOOL hle_open_process_token(HANDLE ProcessHandle, u32 Desir
     return TRUE_VAL;
 }
 
+static uint16_t s_appdata_roaming_u16[] = {
+    'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'A', 'p', 'p', 'D', 'a', 't', 'a', '\\', 'R', 'o', 'a', 'm', 'i', 'n', 'g', 0
+};
+static uint16_t s_appdata_local_u16[] = {
+    'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'A', 'p', 'p', 'D', 'a', 't', 'a', '\\', 'L', 'o', 'c', 'a', 'l', 0
+};
+
 s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath) {
-    (void)hwnd; (void)csidl; (void)hToken; (void)dwFlags;
+    (void)hwnd; (void)hToken; (void)dwFlags;
     if (!pszPath) return -1;
-    std::strncpy(pszPath, "C:\\users\\steamuser\\Documents", 260);
+    int base_csidl = csidl & 0xFF;
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
+
+    if (base_csidl == 0x001A) { // CSIDL_APPDATA
+        std::strncpy(pszPath, "C:\\users\\steamuser\\AppData\\Roaming", 260);
+    } else if (base_csidl == 0x001C) { // CSIDL_LOCAL_APPDATA
+        std::strncpy(pszPath, "C:\\users\\steamuser\\AppData\\Local", 260);
+    } else if (base_csidl == 0x002B) { // CSIDL_COMMON_APPDATA
+        std::strncpy(pszPath, "C:\\ProgramData", 260);
+    } else if (base_csidl == 0x0028) { // CSIDL_PROFILE
+        std::strncpy(pszPath, "C:\\users\\steamuser", 260);
+    } else {
+        std::strncpy(pszPath, "C:\\users\\steamuser\\Documents", 260);
+    }
     return 0; // S_OK
 }
 
 s32 Win32ApiHle::hle_sh_get_folder_path_w(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, wchar_t* pszPath) {
-    (void)hwnd; (void)csidl; (void)hToken; (void)dwFlags;
+    (void)hwnd; (void)hToken; (void)dwFlags;
     if (!pszPath) return -1;
-    std::memcpy(pszPath, s_docs_path_u16, sizeof(s_docs_path_u16));
+    int base_csidl = csidl & 0xFF;
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
+
+    if (base_csidl == 0x001A) { // CSIDL_APPDATA
+        std::memcpy(pszPath, s_appdata_roaming_u16, sizeof(s_appdata_roaming_u16));
+    } else if (base_csidl == 0x001C) { // CSIDL_LOCAL_APPDATA
+        std::memcpy(pszPath, s_appdata_local_u16, sizeof(s_appdata_local_u16));
+    } else if (base_csidl == 0x0028) { // CSIDL_PROFILE
+        std::memcpy(pszPath, s_saved_path_u16, sizeof(s_saved_path_u16));
+    } else {
+        std::memcpy(pszPath, s_docs_path_u16, sizeof(s_docs_path_u16));
+    }
     return 0; // S_OK
 }
 
 s32 Win32ApiHle::hle_sh_get_known_folder_path(const void* rfid, u32 dwFlags, HANDLE hToken, wchar_t** ppszPath) {
-    (void)rfid; (void)dwFlags; (void)hToken;
+    (void)dwFlags; (void)hToken;
     if (!ppszPath) return -1;
-    void* mem = std::malloc(sizeof(s_saved_path_u16));
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
+
+    const uint16_t* src_path = s_appdata_roaming_u16;
+    size_t src_size = sizeof(s_appdata_roaming_u16);
+
+    if (rfid) {
+        const auto* guid = static_cast<const uint32_t*>(rfid);
+        if (guid[0] == 0xF1B32785) { // FOLDERID_LocalAppData
+            src_path = s_appdata_local_u16;
+            src_size = sizeof(s_appdata_local_u16);
+        } else if (guid[0] == 0x4C5C32FF) { // FOLDERID_SavedGames
+            src_path = s_saved_path_u16;
+            src_size = sizeof(s_saved_path_u16);
+        } else if (guid[0] == 0xFDD39AD0) { // FOLDERID_Documents
+            src_path = s_docs_path_u16;
+            src_size = sizeof(s_docs_path_u16);
+        }
+    }
+
+    void* mem = std::malloc(src_size);
     if (mem) {
-        std::memcpy(mem, s_saved_path_u16, sizeof(s_saved_path_u16));
+        std::memcpy(mem, src_path, src_size);
         *ppszPath = reinterpret_cast<wchar_t*>(mem);
         return 0; // S_OK
     }
@@ -3769,6 +3967,41 @@ BOOL Win32ApiHle::hle_kill_timer(HWND hWnd, int uIDEvent) {
     return window_manager().kill_timer(hWnd, uIDEvent) ? TRUE_VAL : FALSE_VAL;
 }
 
+// ---- Monitor enumeration (one real virtual monitor = the X display size) ------
+void* Win32ApiHle::hle_monitor_from_window(HWND hwnd, u32 dwFlags) {
+    (void)hwnd; (void)dwFlags;
+    static u8 monitor;
+    return &monitor;   // single virtual monitor handle
+}
+// MONITORINFO { cbSize@0, rcMonitor@4 (RECT16), rcWork@20 (RECT16), dwFlags@36 }.
+BOOL Win32ApiHle::hle_get_monitor_info_a(void* hMonitor, void* lpmi) {
+    (void)hMonitor;
+    if (!lpmi) return FALSE_VAL;
+    auto* b = static_cast<u8*>(lpmi);
+    u32 cb = *reinterpret_cast<u32*>(b);
+    if (cb < 40) return FALSE_VAL;
+    int sw = 1280, sh = 720;
+    if (Display* dpy = static_cast<Display*>(window_manager().display())) {
+        sw = DisplayWidth(dpy, DefaultScreen(dpy));
+        sh = DisplayHeight(dpy, DefaultScreen(dpy));
+    }
+    auto* rcm = reinterpret_cast<s32*>(b + 4);    // rcMonitor
+    rcm[0]=0; rcm[1]=0; rcm[2]=sw; rcm[3]=sh;
+    auto* rcw = reinterpret_cast<s32*>(b + 20);   // rcWork (same; no taskbar)
+    rcw[0]=0; rcw[1]=0; rcw[2]=sw; rcw[3]=sh;
+    *reinterpret_cast<u32*>(b + 36) = 1;          // MONITORINFOF_PRIMARY
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_enum_display_monitors(void* hdc, void* lpRect, void* lpProc, void* lParam) {
+    (void)hdc; (void)lpRect;
+    if (!lpProc) return FALSE_VAL;
+    using MonProc = BOOL (__attribute__((ms_abi))*)(void*, void*, void*, void*);
+    auto fn = reinterpret_cast<MonProc>(lpProc);
+    static u8 monitor;
+    static struct { s32 left, top, right, bottom; } s_mon_rect = { 0, 0, 1920, 1080 };
+    return fn(&monitor, hdc, &s_mon_rect, lParam) ? TRUE_VAL : FALSE_VAL;
+}
+
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
     auto* d = gdi_dc_of(hdc);
     // Common GetDeviceCaps indices (values matter to games for setup).
@@ -3938,6 +4171,14 @@ static PAPAYA_MS_ABI int hle_vk_create_win32_surface_khr(void* instance, const V
     if (!pCreateInfo || !pSurface) return -1;
     void* hwnd = pCreateInfo->hwnd;
     auto* win = window_manager().window_from_hwnd(hwnd);
+    if (!win) {
+        void* first = window_manager().first_window();
+        if (first) win = window_manager().window_from_hwnd(first);
+        if (!win) {
+            void* new_win = window_manager().create_window_ex("PapayaGame", "Buckshot Roulette", 0x10CF0000, 0, 0, 1280, 720, nullptr, nullptr, nullptr, false);
+            win = window_manager().window_from_hwnd(new_win);
+        }
+    }
     void* dpy = win ? win->display : nullptr;
     uint64_t xid = win ? win->xid : 0;
     if (!dpy) {
@@ -3974,21 +4215,38 @@ __asm__(
 "ms_vulkan_bridge:\n"
 "    push rbp\n"
 "    mov rbp, rsp\n"
+"    push rbx\n"
+"    push rdi\n"
+"    push rsi\n"
+"    push r12\n"
+"    push r13\n"
+"    push r14\n"
+"    push r15\n"
+"    sub rsp, 264\n"
+"    movdqu [rsp + 0x40], xmm6\n"
+"    movdqu [rsp + 0x50], xmm7\n"
+"    movdqu [rsp + 0x60], xmm8\n"
+"    movdqu [rsp + 0x70], xmm9\n"
+"    movdqu [rsp + 0x80], xmm10\n"
+"    movdqu [rsp + 0x90], xmm11\n"
+"    movdqu [rsp + 0xA0], xmm12\n"
+"    movdqu [rsp + 0xB0], xmm13\n"
+"    movdqu [rsp + 0xC0], xmm14\n"
+"    movdqu [rsp + 0xD0], xmm15\n"
+"    mov rax, [rbp + 0x40]\n"
+"    mov [rsp + 0x00], rax\n"
+"    mov rax, [rbp + 0x48]\n"
+"    mov [rsp + 0x08], rax\n"
+"    mov rax, [rbp + 0x50]\n"
+"    mov [rsp + 0x10], rax\n"
+"    mov rax, [rbp + 0x58]\n"
+"    mov [rsp + 0x18], rax\n"
+"    mov rax, [rbp + 0x60]\n"
+"    mov [rsp + 0x20], rax\n"
+"    mov rax, [rbp + 0x68]\n"
+"    mov [rsp + 0x28], rax\n"
 "    mov rax, [rbp + 0x30]\n"
 "    mov r10, [rbp + 0x38]\n"
-"    sub rsp, 48\n"
-"    mov rdi, [rbp + 0x40]\n"
-"    mov [rsp + 0x00], rdi\n"
-"    mov rdi, [rbp + 0x48]\n"
-"    mov [rsp + 0x08], rdi\n"
-"    mov rdi, [rbp + 0x50]\n"
-"    mov [rsp + 0x10], rdi\n"
-"    mov rdi, [rbp + 0x58]\n"
-"    mov [rsp + 0x18], rdi\n"
-"    mov rdi, [rbp + 0x60]\n"
-"    mov [rsp + 0x20], rdi\n"
-"    mov rdi, [rbp + 0x68]\n"
-"    mov [rsp + 0x28], rdi\n"
 "    mov rdi, rcx\n"
 "    mov rsi, rdx\n"
 "    mov rdx, r8\n"
@@ -3997,6 +4255,24 @@ __asm__(
 "    mov r9, r10\n"
 "    xor eax, eax\n"
 "    call r11\n"
+"    movdqu xmm6, [rsp + 0x40]\n"
+"    movdqu xmm7, [rsp + 0x50]\n"
+"    movdqu xmm8, [rsp + 0x60]\n"
+"    movdqu xmm9, [rsp + 0x70]\n"
+"    movdqu xmm10, [rsp + 0x80]\n"
+"    movdqu xmm11, [rsp + 0x90]\n"
+"    movdqu xmm12, [rsp + 0xA0]\n"
+"    movdqu xmm13, [rsp + 0xB0]\n"
+"    movdqu xmm14, [rsp + 0xC0]\n"
+"    movdqu xmm15, [rsp + 0xD0]\n"
+"    add rsp, 264\n"
+"    pop r15\n"
+"    pop r14\n"
+"    pop r13\n"
+"    pop r12\n"
+"    pop rsi\n"
+"    pop rdi\n"
+"    pop rbx\n"
 "    leave\n"
 "    ret\n"
 ".att_syntax prefix\n"
@@ -4006,6 +4282,8 @@ extern "C" void ms_vulkan_bridge();
 
 static void* get_vulkan_ms_thunk(void* host_fn) {
     if (!host_fn) return nullptr;
+    static std::mutex s_thunk_mtx;
+    std::lock_guard<std::mutex> lock(s_thunk_mtx);
     static std::unordered_map<void*, void*> s_thunks;
     static uint8_t* s_thunk_pool = nullptr;
     static size_t s_thunk_offset = 0;
@@ -4203,14 +4481,14 @@ BOOL Win32ApiHle::hle_get_version_ex_w(void* lpVersionInfo) {
         u32 dwMinorVersion;
         u32 dwBuildNumber;
         u32 dwPlatformId;
-        wchar_t szCSDVersion[128];
+        char16_t szCSDVersion[128];
     };
     auto* vi = static_cast<Win32OsVersionInfoW*>(lpVersionInfo);
     vi->dwMajorVersion = 10;
     vi->dwMinorVersion = 0;
     vi->dwBuildNumber = 19041;
     vi->dwPlatformId = 2;
-    std::wcsncpy(vi->szCSDVersion, L"", 128);
+    vi->szCSDVersion[0] = 0;
     return TRUE_VAL;
 }
 
@@ -4426,8 +4704,7 @@ int Win32ApiHle::hle_get_window_text_a(HWND hWnd, char* lpString, int nMaxCount)
 int Win32ApiHle::hle_get_window_text_w(HWND hWnd, wchar_t* lpString, int nMaxCount) {
     (void)hWnd;
     if (lpString && nMaxCount > 0) {
-        std::wcsncpy(lpString, L"Papaya Game", nMaxCount);
-        return static_cast<int>(std::wcslen(lpString));
+        return static_cast<int>(win_copy_u16(lpString, u"Papaya Game", static_cast<size_t>(nMaxCount)));
     }
     return 0;
 }
@@ -4445,6 +4722,302 @@ BOOL Win32ApiHle::hle_adjust_window_rect_ex(void* lpRect, u32 dwStyle, BOOL bMen
 BOOL Win32ApiHle::hle_set_window_pos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, u32 uFlags) {
     (void)hWnd; (void)hWndInsertAfter; (void)X; (void)Y; (void)cx; (void)cy; (void)uFlags;
     return TRUE_VAL;
+}
+
+// -------------------------------------------------------------
+// SEH & Exception Handling Runtime
+// -------------------------------------------------------------
+static PAPAYA_MS_ABI void* hle_rtl_lookup_function_entry(u64 ControlPc, u64* ImageBase, void* HistoryTable) {
+    (void)HistoryTable;
+    u64 img_base = seh_image_base();
+    if (ImageBase) *ImageBase = img_base;
+    u64 eh_rva = 0, scope_rva = 0;
+    const void* uw = seh_find_unwind_info(ControlPc, img_base, &eh_rva, &scope_rva);
+    return const_cast<void*>(uw);
+}
+
+static PAPAYA_MS_ABI void* hle_rtl_virtual_unwind(
+    u32 HandlerType, u64 ImageBase, u64 ControlPc, void* FunctionEntry,
+    void* ContextRecord, void** HandlerData, u64* EstablisherFrame, void* ContextPointers) {
+    (void)HandlerType; (void)ImageBase; (void)ControlPc; (void)FunctionEntry; (void)ContextPointers;
+    if (EstablisherFrame && ContextRecord) {
+        auto* ctx = static_cast<GuestContext*>(ContextRecord);
+        *EstablisherFrame = ctx->rsp;
+    }
+    if (HandlerData) *HandlerData = nullptr;
+    return nullptr;
+}
+
+static PAPAYA_MS_ABI void hle_rtl_capture_context(void* ContextRecord) {
+    if (!ContextRecord) return;
+    auto* ctx = static_cast<GuestContext*>(ContextRecord);
+    ctx->rip = reinterpret_cast<u64>(__builtin_return_address(0));
+    ctx->rsp = reinterpret_cast<u64>(__builtin_frame_address(0));
+}
+
+static PAPAYA_MS_ABI void hle_rtl_unwind(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue) {
+    (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue;
+}
+
+static PAPAYA_MS_ABI void hle_rtl_unwind_ex(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord, void* HistoryTable) {
+    (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue; (void)ContextRecord; (void)HistoryTable;
+}
+
+static PAPAYA_MS_ABI void* hle_rtl_pc_to_file_header(void* PcValue, void** BaseOfImage) {
+    (void)PcValue;
+    u64 base = seh_image_base();
+    if (BaseOfImage) *BaseOfImage = reinterpret_cast<void*>(base);
+    return reinterpret_cast<void*>(base);
+}
+
+// -------------------------------------------------------------
+// Extended USER32 Functions
+// -------------------------------------------------------------
+struct Win32MonitorInfoW {
+    u32 cbSize;
+    struct { s32 left, top, right, bottom; } rcMonitor;
+    struct { s32 left, top, right, bottom; } rcWork;
+    u32 dwFlags;
+    char16_t szDevice[32];
+};
+
+static PAPAYA_MS_ABI BOOL hle_get_monitor_info_w(void* hMonitor, void* lpmi) {
+    (void)hMonitor;
+    if (!lpmi) return FALSE_VAL;
+    auto* mi = static_cast<Win32MonitorInfoW*>(lpmi);
+    mi->rcMonitor = { 0, 0, 1920, 1080 };
+    mi->rcWork    = { 0, 0, 1920, 1080 };
+    mi->dwFlags   = 1; // MONITORINFOF_PRIMARY
+    win_copy_u16(mi->szDevice, u"\\\\.\\DISPLAY1", 32);
+    return TRUE_VAL;
+}
+
+struct Win32DevModeW {
+    char16_t dmDeviceName[32];
+    u16 dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+    u32 dmFields;
+    s32 dmPositionX, dmPositionY;
+    u32 dmDisplayOrientation, dmDisplayFixedOutput;
+    s16 dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+    char16_t dmFormName[32];
+    u16 dmLogPixels;
+    u32 dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+};
+
+static PAPAYA_MS_ABI BOOL hle_enum_display_settings_w(const void* lpszDeviceName, u32 iModeNum, void* lpDevMode) {
+    (void)lpszDeviceName;
+    if (!lpDevMode || iModeNum > 0) return FALSE_VAL;
+    auto* dm = static_cast<Win32DevModeW*>(lpDevMode);
+    dm->dmPelsWidth = 1920;
+    dm->dmPelsHeight = 1080;
+    dm->dmBitsPerPel = 32;
+    dm->dmDisplayFrequency = 60;
+    dm->dmFields = 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000;
+    win_copy_u16(dm->dmDeviceName, u"\\\\.\\DISPLAY1", 32);
+    win_copy_u16(dm->dmFormName, u"", 32);
+    return TRUE_VAL;
+}
+
+static PAPAYA_MS_ABI BOOL hle_is_window(void* hWnd) { return hWnd ? TRUE_VAL : FALSE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_is_window_visible(void* hWnd) { return hWnd ? TRUE_VAL : FALSE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_is_zoomed(void* hWnd) { (void)hWnd; return FALSE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_is_iconic(void* hWnd) { (void)hWnd; return FALSE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_move_window(void* hWnd, int x, int y, int w, int h, BOOL bRepaint) {
+    (void)bRepaint;
+    return Win32ApiHle::hle_set_window_pos(hWnd, nullptr, x, y, w, h, 0x0040) ? TRUE_VAL : FALSE_VAL;
+}
+static PAPAYA_MS_ABI BOOL hle_flash_window_ex(void* pfwi) { (void)pfwi; return TRUE_VAL; }
+static PAPAYA_MS_ABI void* hle_set_focus(void* hWnd) { return hWnd; }
+static PAPAYA_MS_ABI BOOL hle_allow_set_foreground_window(u32 dwProcessId) { (void)dwProcessId; return TRUE_VAL; }
+static PAPAYA_MS_ABI u64 hle_get_message_extra_info() { return 0; }
+static PAPAYA_MS_ABI BOOL hle_track_mouse_event(void* lpEventTrack) { (void)lpEventTrack; return TRUE_VAL; }
+static PAPAYA_MS_ABI s64 hle_call_window_proc_w(void* lpPrevWndFunc, void* hWnd, u32 Msg, u64 wParam, s64 lParam) {
+    if (!lpPrevWndFunc) return 0;
+    auto proc = reinterpret_cast<s64 (PAPAYA_MS_ABI *)(void*, u32, u64, s64)>(lpPrevWndFunc);
+    return proc(hWnd, Msg, wParam, lParam);
+}
+
+static PAPAYA_MS_ABI u32 hle_get_raw_input_device_list(void* pRawInputDeviceList, u32* puiNumDevices, u32 cbSize) {
+    (void)pRawInputDeviceList; (void)cbSize;
+    if (puiNumDevices) *puiNumDevices = 0;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_get_raw_input_device_info_a(void* hDevice, u32 uiCommand, void* pData, u32* pcbSize) {
+    (void)hDevice; (void)uiCommand; (void)pData;
+    if (pcbSize) *pcbSize = 0;
+    return static_cast<u32>(-1);
+}
+static PAPAYA_MS_ABI BOOL hle_register_raw_input_devices(void* pRawInputDevices, u32 uiNumDevices, u32 cbSize) {
+    (void)pRawInputDevices; (void)uiNumDevices; (void)cbSize;
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI u32 hle_get_raw_input_data(void* hRawInput, u32 uiCommand, void* pData, u32* pcbSize, u32 cbSizeHeader) {
+    (void)hRawInput; (void)uiCommand; (void)pData; (void)cbSizeHeader;
+    if (pcbSize) *pcbSize = 0;
+    return static_cast<u32>(-1);
+}
+static PAPAYA_MS_ABI void* hle_create_icon_indirect(void* piconinfo) { (void)piconinfo; return reinterpret_cast<void*>(0x1C001); }
+static PAPAYA_MS_ABI void* hle_create_icon_from_resource(void* presbits, u32 dwResSize, BOOL fIcon, u32 dwVer) { (void)presbits; (void)dwResSize; (void)fIcon; (void)dwVer; return reinterpret_cast<void*>(0x1C002); }
+static PAPAYA_MS_ABI BOOL hle_destroy_icon(void* hIcon) { (void)hIcon; return TRUE_VAL; }
+static PAPAYA_MS_ABI void* hle_set_windows_hook_ex_a(int idHook, void* lpfn, void* hmod, u32 dwThreadId) { (void)idHook; (void)lpfn; (void)hmod; (void)dwThreadId; return reinterpret_cast<void*>(0x1001); }
+static PAPAYA_MS_ABI BOOL hle_unhook_windows_hook_ex(void* hhk) { (void)hhk; return TRUE_VAL; }
+static PAPAYA_MS_ABI s64 hle_call_next_hook_ex(void* hhk, int nCode, u64 wParam, s64 lParam) { (void)hhk; (void)nCode; (void)wParam; (void)lParam; return 0; }
+static PAPAYA_MS_ABI BOOL hle_clip_cursor(const void* lpRect) { (void)lpRect; return TRUE_VAL; }
+static PAPAYA_MS_ABI void* hle_window_from_point(s32 x, s32 y) { (void)x; (void)y; return nullptr; }
+static PAPAYA_MS_ABI BOOL hle_create_caret(void* hWnd, void* hBitmap, int nWidth, int nHeight) { (void)hWnd; (void)hBitmap; (void)nWidth; (void)nHeight; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_destroy_caret() { return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_set_caret_pos(int X, int Y) { (void)X; (void)Y; return TRUE_VAL; }
+
+static PAPAYA_MS_ABI BOOL hle_open_clipboard(void* hWndNewOwner) { (void)hWndNewOwner; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_close_clipboard() { return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_empty_clipboard() { return TRUE_VAL; }
+static PAPAYA_MS_ABI void* hle_get_clipboard_data(u32 uFormat) { (void)uFormat; return nullptr; }
+static PAPAYA_MS_ABI void* hle_set_clipboard_data(u32 uFormat, void* hMem) { (void)uFormat; return hMem; }
+static PAPAYA_MS_ABI BOOL hle_is_clipboard_format_available(u32 format) { (void)format; return FALSE_VAL; }
+
+static PAPAYA_MS_ABI int hle_to_unicode_ex(u32 wVirtKey, u32 wScanCode, const u8* lpKeyState, wchar_t* pwszBuff, int cchBuff, u32 wFlags, void* dwhkl) {
+    (void)wScanCode; (void)lpKeyState; (void)wFlags; (void)dwhkl;
+    if (!pwszBuff || cchBuff <= 0) return 0;
+    if (wVirtKey >= 32 && wVirtKey < 127) { pwszBuff[0] = static_cast<wchar_t>(wVirtKey); return 1; }
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_map_virtual_key_ex_a(u32 uCode, u32 uMapType, void* dwhkl) { (void)uMapType; (void)dwhkl; return uCode; }
+static PAPAYA_MS_ABI void* hle_get_keyboard_layout(u32 idThread) { (void)idThread; return reinterpret_cast<void*>(0x04090409); }
+static PAPAYA_MS_ABI int hle_get_keyboard_layout_list(int nBuff, void** lpList) {
+    if (nBuff > 0 && lpList) lpList[0] = reinterpret_cast<void*>(0x04090409);
+    return 1;
+}
+static PAPAYA_MS_ABI void* hle_activate_keyboard_layout(void* hkl, u32 Flags) { (void)Flags; return hkl; }
+static PAPAYA_MS_ABI BOOL hle_get_update_rect(void* hWnd, void* lpRect, BOOL bErase) { (void)hWnd; (void)lpRect; (void)bErase; return FALSE_VAL; }
+static PAPAYA_MS_ABI int hle_set_window_rgn(void* hWnd, void* hRgn, BOOL bRedraw) { (void)hWnd; (void)hRgn; (void)bRedraw; return 1; }
+static PAPAYA_MS_ABI BOOL hle_register_touch_window(void* hWnd, u32 ulFlags) { (void)hWnd; (void)ulFlags; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_close_touch_input_handle(void* hTouchInput) { (void)hTouchInput; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_get_touch_input_info(void* hTouchInput, u32 cInputs, void* pInputs, int cbSize) { (void)hTouchInput; (void)cInputs; (void)pInputs; (void)cbSize; return FALSE_VAL; }
+
+// -------------------------------------------------------------
+// Extended GDI32 / KERNEL32 / OLE / WINMM / IPHLPAPI Functions
+// -------------------------------------------------------------
+static PAPAYA_MS_ABI void* hle_create_rect_rgn(int x1, int y1, int x2, int y2) { (void)x1; (void)y1; (void)x2; (void)y2; return reinterpret_cast<void*>(0x2001); }
+static PAPAYA_MS_ABI void* hle_create_polygon_rgn(const void* pptl, int cPoint, int iMode) { (void)pptl; (void)cPoint; (void)iMode; return reinterpret_cast<void*>(0x2002); }
+static PAPAYA_MS_ABI void* hle_create_bitmap(int nWidth, int nHeight, u32 nPlanes, u32 nBitCount, const void* lpBits) {
+    (void)nPlanes; (void)nBitCount; (void)lpBits;
+    return std::malloc(nWidth * nHeight * 4);
+}
+static PAPAYA_MS_ABI void* hle_create_dib_section(void* hdc, const void* pbmi, u32 usage, void** ppvBits, void* hSection, u32 offset) {
+    (void)hdc; (void)pbmi; (void)usage; (void)hSection; (void)offset;
+    if (ppvBits) *ppvBits = std::malloc(1920 * 1080 * 4);
+    return reinterpret_cast<void*>(0x3001);
+}
+static PAPAYA_MS_ABI BOOL hle_path_file_exists_w(const wchar_t* pszPath) {
+    if (!pszPath) return FALSE_VAL;
+    std::string u8 = win_utf16_to_utf8(pszPath);
+    return std::filesystem::exists(u8) ? TRUE_VAL : FALSE_VAL;
+}
+static PAPAYA_MS_ABI int hle_lcid_to_locale_name(u32 Locale, void* lpName, int cchName, u32 dwFlags) {
+    (void)Locale; (void)dwFlags;
+    if (!lpName || cchName <= 0) return 0;
+    win_copy_u16(lpName, u"en-US", static_cast<size_t>(cchName));
+    return 6;
+}
+static PAPAYA_MS_ABI size_t hle_heap_size(void* hHeap, u32 dwFlags, const void* lpMem) {
+    (void)hHeap; (void)dwFlags;
+    if (!lpMem) return 0;
+    const auto* hdr = reinterpret_cast<const Win32HeapHeader*>(lpMem) - 1;
+    if (hdr->magic == 0x50415059) return hdr->size;
+    return 0;
+}
+static PAPAYA_MS_ABI BOOL hle_k32_get_performance_info(void* pPerformanceInformation, u32 cb) {
+    (void)cb;
+    if (!pPerformanceInformation) return FALSE_VAL;
+    std::memset(pPerformanceInformation, 0, cb);
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI BOOL hle_terminate_process(void* hProcess, u32 uExitCode) {
+    (void)hProcess;
+    _exit(static_cast<int>(uExitCode));
+}
+static PAPAYA_MS_ABI size_t hle_get_large_page_minimum() { return 2 * 1024 * 1024; }
+static PAPAYA_MS_ABI BOOL hle_attach_console(u32 dwProcessId) { (void)dwProcessId; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_get_console_mode(void* hConsoleHandle, u32* lpMode) { (void)hConsoleHandle; if (lpMode) *lpMode = 7; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_set_console_mode(void* hConsoleHandle, u32 dwMode) { (void)hConsoleHandle; (void)dwMode; return TRUE_VAL; }
+static PAPAYA_MS_ABI u32 hle_get_console_output_cp() { return 65001; } // UTF-8
+static PAPAYA_MS_ABI BOOL hle_get_console_screen_buffer_info(void* hConsoleOutput, void* lpConsoleScreenBufferInfo) {
+    (void)hConsoleOutput;
+    if (lpConsoleScreenBufferInfo) std::memset(lpConsoleScreenBufferInfo, 0, 22);
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI BOOL hle_set_console_text_attribute(void* hConsoleOutput, u16 wAttributes) { (void)hConsoleOutput; (void)wAttributes; return TRUE_VAL; }
+static PAPAYA_MS_ABI BOOL hle_write_console_w(void* hConsoleOutput, const void* lpBuffer, u32 nNumberOfCharsToWrite, u32* lpNumberOfCharsWritten, void* lpReserved) {
+    (void)hConsoleOutput; (void)lpReserved;
+    if (lpBuffer && nNumberOfCharsToWrite > 0) {
+        std::string u8 = win_utf16_to_utf8(lpBuffer, nNumberOfCharsToWrite);
+        std::fwrite(u8.data(), 1, u8.size(), stdout);
+        std::fflush(stdout);
+    }
+    if (lpNumberOfCharsWritten) *lpNumberOfCharsWritten = nNumberOfCharsToWrite;
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI BOOL hle_read_console_w(void* hConsoleInput, void* lpBuffer, u32 nNumberOfCharsToRead, u32* lpNumberOfCharsRead, void* pInputControl) {
+    (void)hConsoleInput; (void)lpBuffer; (void)nNumberOfCharsToRead; (void)pInputControl;
+    if (lpNumberOfCharsRead) *lpNumberOfCharsRead = 0;
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI void hle_prop_variant_clear(void* pvar) {
+    if (pvar) std::memset(pvar, 0, 24);
+}
+static PAPAYA_MS_ABI void* hle_sys_alloc_string(const void* psz) {
+    if (!psz) return nullptr;
+    const auto* p = static_cast<const char16_t*>(psz);
+    size_t len = 0;
+    while (p[len]) len++;
+    u32 byte_len = static_cast<u32>(len * sizeof(char16_t));
+    u8* mem = static_cast<u8*>(std::malloc(4 + byte_len + sizeof(char16_t)));
+    *reinterpret_cast<u32*>(mem) = byte_len;
+    char16_t* str = reinterpret_cast<char16_t*>(mem + 4);
+    std::memcpy(str, p, byte_len + sizeof(char16_t));
+    return str;
+}
+static PAPAYA_MS_ABI void* hle_sys_alloc_string_len(const void* strIn, u32 ui) {
+    u32 byte_len = ui * sizeof(char16_t);
+    u8* mem = static_cast<u8*>(std::malloc(4 + byte_len + sizeof(char16_t)));
+    *reinterpret_cast<u32*>(mem) = byte_len;
+    char16_t* str = reinterpret_cast<char16_t*>(mem + 4);
+    if (strIn) std::memcpy(str, strIn, byte_len);
+    str[ui] = 0;
+    return str;
+}
+static PAPAYA_MS_ABI void hle_sys_free_string(void* bstr) {
+    if (bstr) std::free(static_cast<u8*>(bstr) - 4);
+}
+static PAPAYA_MS_ABI u32 hle_sys_string_len(void* bstr) {
+    if (!bstr) return 0;
+    return *reinterpret_cast<u32*>(static_cast<u8*>(bstr) - 4) / sizeof(char16_t);
+}
+
+static PAPAYA_MS_ABI u32 hle_midi_in_get_num_devs() { return 0; }
+static PAPAYA_MS_ABI u32 hle_midi_in_get_dev_caps_a(u64 uDeviceID, void* pmcic, u32 cbpmcic) { (void)uDeviceID; (void)pmcic; (void)cbpmcic; return 2; }
+static PAPAYA_MS_ABI u32 hle_midi_in_open(void** lphMidiIn, u32 uDeviceID, u64 dwCallback, u64 dwInstance, u32 fdwOpen) {
+    (void)lphMidiIn; (void)uDeviceID; (void)dwCallback; (void)dwInstance; (void)fdwOpen;
+    return 2;
+}
+static PAPAYA_MS_ABI u32 hle_midi_in_close(void* hMidiIn) { (void)hMidiIn; return 0; }
+static PAPAYA_MS_ABI u32 hle_midi_in_start(void* hMidiIn) { (void)hMidiIn; return 0; }
+static PAPAYA_MS_ABI u32 hle_midi_in_stop(void* hMidiIn) { (void)hMidiIn; return 0; }
+static PAPAYA_MS_ABI u32 hle_midi_in_get_id(void* hMidiIn, u32* puDeviceID) { (void)hMidiIn; if (puDeviceID) *puDeviceID = 0; return 0; }
+static PAPAYA_MS_ABI u32 hle_midi_in_get_error_text_a(u32 mmrError, char* pszText, u32 cchText) {
+    (void)mmrError;
+    if (pszText && cchText > 0) pszText[0] = '\0';
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_get_adapters_addresses(u32 Family, u32 Flags, void* Reserved, void* AdapterAddresses, u32* SizePointer) {
+    (void)Family; (void)Flags; (void)Reserved; (void)AdapterAddresses;
+    if (SizePointer) *SizePointer = 0;
+    return 232;
+}
+static PAPAYA_MS_ABI u32 hle_get_best_interface_ex(void* pDestAddr, u32* pdwBestIfIndex) {
+    (void)pDestAddr;
+    if (pdwBestIfIndex) *pdwBestIfIndex = 1;
+    return 0;
 }
 
 // -------------------------------------------------------------
@@ -4763,18 +5336,23 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "RegisterWindowMessageA", reinterpret_cast<void*>(&hle_register_window_message_a));
     register_function("USER32.DLL", "LoadIconA", reinterpret_cast<void*>(&hle_load_icon_a));
     register_function("USER32.DLL", "LoadCursorA", reinterpret_cast<void*>(&hle_load_cursor_a));
-    register_function("USER32.DLL", "GetClassLongA", reinterpret_cast<void*>(&hle_get_class_long_a));
-    register_function("USER32.DLL", "SetClassLongA", reinterpret_cast<void*>(&hle_set_class_long_a));
     register_function("USER32.DLL", "GetWindowLongA", reinterpret_cast<void*>(&hle_get_window_long_a));
     register_function("USER32.DLL", "SetWindowLongA", reinterpret_cast<void*>(&hle_set_window_long_a));
     register_function("USER32.DLL", "GetWindowLongPtrA", reinterpret_cast<void*>(&hle_get_window_long_a));
     register_function("USER32.DLL", "SetWindowLongPtrA", reinterpret_cast<void*>(&hle_set_window_long_a));
+    register_function("USER32.DLL", "GetWindowLongW", reinterpret_cast<void*>(&hle_get_window_long_a));
+    register_function("USER32.DLL", "SetWindowLongW", reinterpret_cast<void*>(&hle_set_window_long_a));
+    register_function("USER32.DLL", "GetWindowLongPtrW", reinterpret_cast<void*>(&hle_get_window_long_a));
+    register_function("USER32.DLL", "SetWindowLongPtrW", reinterpret_cast<void*>(&hle_set_window_long_a));
     register_function("USER32.DLL", "SystemParametersInfoA", reinterpret_cast<void*>(&hle_system_parameters_info_a));
     register_function("USER32.DLL", "EnumWindows", reinterpret_cast<void*>(&hle_enum_windows));
     register_function("USER32.DLL", "GetDoubleClickTime", reinterpret_cast<void*>(&hle_get_double_click_time));
     register_function("USER32.DLL", "GetKeyboardType", reinterpret_cast<void*>(&hle_get_keyboard_type));
     register_function("USER32.DLL", "SetTimer", reinterpret_cast<void*>(&hle_set_timer));
     register_function("USER32.DLL", "KillTimer", reinterpret_cast<void*>(&hle_kill_timer));
+    register_function("USER32.DLL", "MonitorFromWindow", reinterpret_cast<void*>(&hle_monitor_from_window));
+    register_function("USER32.DLL", "GetMonitorInfoA", reinterpret_cast<void*>(&hle_get_monitor_info_a));
+    register_function("USER32.DLL", "EnumDisplayMonitors", reinterpret_cast<void*>(&hle_enum_display_monitors));
     register_function("USER32.DLL", "GetDesktopWindow", reinterpret_cast<void*>(&hle_get_desktop_window));
     register_function("USER32.DLL", "ClientToScreen", reinterpret_cast<void*>(&hle_client_to_screen));
     register_function("USER32.DLL", "ScreenToClient", reinterpret_cast<void*>(&hle_screen_to_client));
@@ -4870,6 +5448,8 @@ Result<> Win32ApiHle::initialize() {
 
     // STEAM_API64.DLL / STEAM_API.DLL
     register_function("STEAM_API64.DLL", "SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
+    register_function("STEAM_API64.DLL", "SteamAPI_InitEx", reinterpret_cast<void*>(&hle_steam_api_init_ex));
+    register_function("STEAM_API64.DLL", "SteamAPI_InitFlat", reinterpret_cast<void*>(&hle_steam_api_init_flat));
     register_function("STEAM_API64.DLL", "SteamAPI_Shutdown", reinterpret_cast<void*>(&hle_steam_api_shutdown));
     register_function("STEAM_API64.DLL", "SteamAPI_RunCallbacks", reinterpret_cast<void*>(&hle_steam_api_run_callbacks));
     register_function("STEAM_API64.DLL", "SteamAPI_RestartAppIfNecessary", reinterpret_cast<void*>(&hle_steam_api_restart_app_if_necessary));
@@ -4884,12 +5464,35 @@ Result<> Win32ApiHle::initialize() {
     register_function("STEAM_API64.DLL", "SteamAPI_UnregisterCallResult", reinterpret_cast<void*>(&hle_steam_unregister_call_result));
     register_function("STEAM_API64.DLL", "SteamAPI_IsSteamRunning", reinterpret_cast<void*>(&hle_steam_is_running));
     register_function("STEAM_API64.DLL", "SteamAPI_GetHSteamUser", reinterpret_cast<void*>(&hle_steam_get_h_steam_user));
+    register_function("STEAM_API64.DLL", "SteamAPI_GetHSteamPipe", reinterpret_cast<void*>(&hle_steam_get_h_steam_user));
     register_function("STEAM_API64.DLL", "SteamGameServer_GetHSteamUser", reinterpret_cast<void*>(&hle_steam_get_h_steam_user));
+    register_function("STEAM_API64.DLL", "SteamClient", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamUser", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamFriends", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamUtils", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamUserStats", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamApps", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamNetworking", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamNetworkingSockets", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamMatchmaking", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamRemoteStorage", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamClient_v020", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamUser_v021", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamFriends_v017", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamUtils_v010", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamUserStats_v012", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamApps_v008", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API64.DLL", "SteamAPI_SteamRemoteStorage_v016", reinterpret_cast<void*>(&hle_steam_accessor));
 
     register_function("STEAM_API.DLL", "SteamAPI_Init", reinterpret_cast<void*>(&hle_steam_api_init));
+    register_function("STEAM_API.DLL", "SteamAPI_InitEx", reinterpret_cast<void*>(&hle_steam_api_init_ex));
+    register_function("STEAM_API.DLL", "SteamAPI_InitFlat", reinterpret_cast<void*>(&hle_steam_api_init_flat));
     register_function("STEAM_API.DLL", "SteamAPI_Shutdown", reinterpret_cast<void*>(&hle_steam_api_shutdown));
     register_function("STEAM_API.DLL", "SteamAPI_RunCallbacks", reinterpret_cast<void*>(&hle_steam_api_run_callbacks));
     register_function("STEAM_API.DLL", "SteamAPI_RestartAppIfNecessary", reinterpret_cast<void*>(&hle_steam_api_restart_app_if_necessary));
+    register_function("STEAM_API.DLL", "SteamAPI_IsSteamRunning", reinterpret_cast<void*>(&hle_steam_is_running));
+    register_function("STEAM_API.DLL", "SteamUser", reinterpret_cast<void*>(&hle_steam_accessor));
+    register_function("STEAM_API.DLL", "SteamFriends", reinterpret_cast<void*>(&hle_steam_accessor));
 
     // ---- Extended KERNEL32 ----
 
@@ -5134,6 +5737,142 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "GetCapture",         reinterpret_cast<void*>(&hle_get_capture));
     register_function("USER32.DLL", "SetCapture",         reinterpret_cast<void*>(&hle_set_capture));
     register_function("USER32.DLL", "ReleaseCapture",     reinterpret_cast<void*>(&hle_release_capture));
+
+    // SEH & Exception Handling
+    register_function("KERNEL32.DLL", "RtlLookupFunctionEntry", reinterpret_cast<void*>(&hle_rtl_lookup_function_entry));
+    register_function("KERNEL32.DLL", "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
+    register_function("KERNEL32.DLL", "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
+    register_function("KERNEL32.DLL", "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
+    register_function("KERNEL32.DLL", "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex));
+    register_function("KERNEL32.DLL", "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
+    register_function("NTDLL.DLL",    "RtlLookupFunctionEntry", reinterpret_cast<void*>(&hle_rtl_lookup_function_entry));
+    register_function("NTDLL.DLL",    "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
+    register_function("NTDLL.DLL",    "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
+    register_function("NTDLL.DLL",    "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
+    register_function("NTDLL.DLL",    "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex));
+    register_function("NTDLL.DLL",    "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
+
+    // KERNEL32 additions
+    register_function("KERNEL32.DLL", "LCIDToLocaleName",       reinterpret_cast<void*>(&hle_lcid_to_locale_name));
+    register_function("KERNEL32.DLL", "HeapSize",               reinterpret_cast<void*>(&hle_heap_size));
+    register_function("KERNEL32.DLL", "K32GetPerformanceInfo",  reinterpret_cast<void*>(&hle_k32_get_performance_info));
+    register_function("KERNEL32.DLL", "TerminateProcess",       reinterpret_cast<void*>(&hle_terminate_process));
+    register_function("KERNEL32.DLL", "GetLargePageMinimum",    reinterpret_cast<void*>(&hle_get_large_page_minimum));
+    register_function("KERNEL32.DLL", "AttachConsole",          reinterpret_cast<void*>(&hle_attach_console));
+    register_function("KERNEL32.DLL", "GetConsoleMode",         reinterpret_cast<void*>(&hle_get_console_mode));
+    register_function("KERNEL32.DLL", "SetConsoleMode",         reinterpret_cast<void*>(&hle_set_console_mode));
+    register_function("KERNEL32.DLL", "GetConsoleOutputCP",     reinterpret_cast<void*>(&hle_get_console_output_cp));
+    register_function("KERNEL32.DLL", "GetConsoleScreenBufferInfo", reinterpret_cast<void*>(&hle_get_console_screen_buffer_info));
+    register_function("KERNEL32.DLL", "SetConsoleTextAttribute", reinterpret_cast<void*>(&hle_set_console_text_attribute));
+    register_function("KERNEL32.DLL", "WriteConsoleW",          reinterpret_cast<void*>(&hle_write_console_w));
+    register_function("KERNEL32.DLL", "ReadConsoleW",           reinterpret_cast<void*>(&hle_read_console_w));
+
+    // USER32 additions
+    register_function("USER32.DLL", "GetMonitorInfoW",          reinterpret_cast<void*>(&hle_get_monitor_info_w));
+    register_function("USER32.DLL", "EnumDisplaySettingsW",     reinterpret_cast<void*>(&hle_enum_display_settings_w));
+    register_function("USER32.DLL", "IsWindow",                 reinterpret_cast<void*>(&hle_is_window));
+    register_function("USER32.DLL", "IsWindowVisible",          reinterpret_cast<void*>(&hle_is_window_visible));
+    register_function("USER32.DLL", "IsZoomed",                 reinterpret_cast<void*>(&hle_is_zoomed));
+    register_function("USER32.DLL", "IsIconic",                 reinterpret_cast<void*>(&hle_is_iconic));
+    register_function("USER32.DLL", "MoveWindow",               reinterpret_cast<void*>(&hle_move_window));
+    register_function("USER32.DLL", "FlashWindowEx",            reinterpret_cast<void*>(&hle_flash_window_ex));
+    register_function("USER32.DLL", "SetFocus",                 reinterpret_cast<void*>(&hle_set_focus));
+    register_function("USER32.DLL", "AllowSetForegroundWindow", reinterpret_cast<void*>(&hle_allow_set_foreground_window));
+    register_function("USER32.DLL", "OpenClipboard",            reinterpret_cast<void*>(&hle_open_clipboard));
+    register_function("USER32.DLL", "CloseClipboard",           reinterpret_cast<void*>(&hle_close_clipboard));
+    register_function("USER32.DLL", "EmptyClipboard",           reinterpret_cast<void*>(&hle_empty_clipboard));
+    register_function("USER32.DLL", "GetClipboardData",         reinterpret_cast<void*>(&hle_get_clipboard_data));
+    register_function("USER32.DLL", "SetClipboardData",         reinterpret_cast<void*>(&hle_set_clipboard_data));
+    register_function("USER32.DLL", "IsClipboardFormatAvailable", reinterpret_cast<void*>(&hle_is_clipboard_format_available));
+    register_function("USER32.DLL", "TrackMouseEvent",          reinterpret_cast<void*>(&hle_track_mouse_event));
+    register_function("USER32.DLL", "GetMessageExtraInfo",      reinterpret_cast<void*>(&hle_get_message_extra_info));
+    register_function("USER32.DLL", "CallWindowProcW",          reinterpret_cast<void*>(&hle_call_window_proc_w));
+    register_function("USER32.DLL", "GetRawInputDeviceList",    reinterpret_cast<void*>(&hle_get_raw_input_device_list));
+    register_function("USER32.DLL", "GetRawInputDeviceInfoA",   reinterpret_cast<void*>(&hle_get_raw_input_device_info_a));
+    register_function("USER32.DLL", "RegisterRawInputDevices",  reinterpret_cast<void*>(&hle_register_raw_input_devices));
+    register_function("USER32.DLL", "GetRawInputData",          reinterpret_cast<void*>(&hle_get_raw_input_data));
+    register_function("USER32.DLL", "CreateIconIndirect",       reinterpret_cast<void*>(&hle_create_icon_indirect));
+    register_function("USER32.DLL", "CreateIconFromResource",   reinterpret_cast<void*>(&hle_create_icon_from_resource));
+    register_function("USER32.DLL", "DestroyIcon",              reinterpret_cast<void*>(&hle_destroy_icon));
+    register_function("USER32.DLL", "SetWindowsHookExA",        reinterpret_cast<void*>(&hle_set_windows_hook_ex_a));
+    register_function("USER32.DLL", "UnhookWindowsHookEx",      reinterpret_cast<void*>(&hle_unhook_windows_hook_ex));
+    register_function("USER32.DLL", "CallNextHookEx",           reinterpret_cast<void*>(&hle_call_next_hook_ex));
+    register_function("USER32.DLL", "ClipCursor",               reinterpret_cast<void*>(&hle_clip_cursor));
+    register_function("USER32.DLL", "WindowFromPoint",          reinterpret_cast<void*>(&hle_window_from_point));
+    register_function("USER32.DLL", "CreateCaret",              reinterpret_cast<void*>(&hle_create_caret));
+    register_function("USER32.DLL", "DestroyCaret",             reinterpret_cast<void*>(&hle_destroy_caret));
+    register_function("USER32.DLL", "SetCaretPos",              reinterpret_cast<void*>(&hle_set_caret_pos));
+    register_function("USER32.DLL", "ToUnicodeEx",              reinterpret_cast<void*>(&hle_to_unicode_ex));
+    register_function("USER32.DLL", "MapVirtualKeyExA",         reinterpret_cast<void*>(&hle_map_virtual_key_ex_a));
+    register_function("USER32.DLL", "GetKeyboardLayout",        reinterpret_cast<void*>(&hle_get_keyboard_layout));
+    register_function("USER32.DLL", "GetKeyboardLayoutList",    reinterpret_cast<void*>(&hle_get_keyboard_layout_list));
+    register_function("USER32.DLL", "ActivateKeyboardLayout",   reinterpret_cast<void*>(&hle_activate_keyboard_layout));
+    register_function("USER32.DLL", "GetUpdateRect",            reinterpret_cast<void*>(&hle_get_update_rect));
+    register_function("USER32.DLL", "SetWindowRgn",             reinterpret_cast<void*>(&hle_set_window_rgn));
+    register_function("USER32.DLL", "RegisterTouchWindow",      reinterpret_cast<void*>(&hle_register_touch_window));
+    register_function("USER32.DLL", "CloseTouchInputHandle",    reinterpret_cast<void*>(&hle_close_touch_input_handle));
+    register_function("USER32.DLL", "GetTouchInputInfo",        reinterpret_cast<void*>(&hle_get_touch_input_info));
+
+    // GDI32 additions
+    register_function("GDI32.DLL", "CreateRectRgn",             reinterpret_cast<void*>(&hle_create_rect_rgn));
+    register_function("GDI32.DLL", "CreatePolygonRgn",          reinterpret_cast<void*>(&hle_create_polygon_rgn));
+    register_function("GDI32.DLL", "CreateBitmap",              reinterpret_cast<void*>(&hle_create_bitmap));
+    register_function("GDI32.DLL", "CreateDIBSection",          reinterpret_cast<void*>(&hle_create_dib_section));
+
+    // SHLWAPI
+    register_function("SHLWAPI.DLL", "PathFileExistsW",         reinterpret_cast<void*>(&hle_path_file_exists_w));
+    register_function("shlwapi.dll", "PathFileExistsW",         reinterpret_cast<void*>(&hle_path_file_exists_w));
+
+    // OLE & OLEAUT32
+    register_function("ole32.dll", "PropVariantClear",          reinterpret_cast<void*>(&hle_prop_variant_clear));
+    register_function("OLEAUT32.dll", "SysAllocString",         reinterpret_cast<void*>(&hle_sys_alloc_string));
+    register_function("OLEAUT32.dll", "SysAllocStringLen",      reinterpret_cast<void*>(&hle_sys_alloc_string_len));
+    register_function("OLEAUT32.dll", "SysFreeString",          reinterpret_cast<void*>(&hle_sys_free_string));
+    register_function("OLEAUT32.dll", "SysStringLen",           reinterpret_cast<void*>(&hle_sys_string_len));
+    register_function("OLEAUT32.dll", "2",                      reinterpret_cast<void*>(&hle_sys_alloc_string));
+    register_function("OLEAUT32.dll", "6",                      reinterpret_cast<void*>(&hle_sys_free_string));
+    register_function("OLEAUT32.dll", "8",                      reinterpret_cast<void*>(&hle_sys_alloc_string_len));
+
+    // WINMM
+    register_function("WINMM.dll", "midiInGetNumDevs",          reinterpret_cast<void*>(&hle_midi_in_get_num_devs));
+    register_function("WINMM.dll", "midiInOpen",                reinterpret_cast<void*>(&hle_midi_in_open));
+    register_function("WINMM.dll", "midiInClose",               reinterpret_cast<void*>(&hle_midi_in_close));
+    register_function("WINMM.dll", "midiInStart",               reinterpret_cast<void*>(&hle_midi_in_start));
+    register_function("WINMM.dll", "midiInStop",                reinterpret_cast<void*>(&hle_midi_in_stop));
+    register_function("WINMM.dll", "midiInGetID",               reinterpret_cast<void*>(&hle_midi_in_get_id));
+    register_function("WINMM.dll", "midiInGetDevCapsA",         reinterpret_cast<void*>(&hle_midi_in_get_dev_caps_a));
+    register_function("WINMM.dll", "midiInGetErrorTextA",       reinterpret_cast<void*>(&hle_midi_in_get_error_text_a));
+
+    // IPHLPAPI
+    register_function("IPHLPAPI.DLL", "GetAdaptersAddresses",   reinterpret_cast<void*>(&hle_get_adapters_addresses));
+    register_function("IPHLPAPI.DLL", "GetBestInterfaceEx",     reinterpret_cast<void*>(&hle_get_best_interface_ex));
+
+    // WSOCK32 ordinals
+    register_function("WSOCK32.dll", "1",                       reinterpret_cast<void*>(&hle_accept));
+    register_function("WSOCK32.dll", "2",                       reinterpret_cast<void*>(&hle_bind));
+    register_function("WSOCK32.dll", "3",                       reinterpret_cast<void*>(&hle_closesocket));
+    register_function("WSOCK32.dll", "4",                       reinterpret_cast<void*>(&hle_connect));
+    register_function("WSOCK32.dll", "6",                       reinterpret_cast<void*>(&hle_getsockname));
+    register_function("WSOCK32.dll", "8",                       reinterpret_cast<void*>(&hle_htonl));
+    register_function("WSOCK32.dll", "9",                       reinterpret_cast<void*>(&hle_htons));
+    register_function("WSOCK32.dll", "10",                      reinterpret_cast<void*>(&hle_inet_addr));
+    register_function("WSOCK32.dll", "11",                      reinterpret_cast<void*>(&hle_inet_ntoa));
+    register_function("WSOCK32.dll", "12",                      reinterpret_cast<void*>(&hle_listen));
+    register_function("WSOCK32.dll", "13",                      reinterpret_cast<void*>(&hle_ntohl));
+    register_function("WSOCK32.dll", "14",                      reinterpret_cast<void*>(&hle_ntohs));
+    register_function("WSOCK32.dll", "15",                      reinterpret_cast<void*>(&hle_recv));
+    register_function("WSOCK32.dll", "16",                      reinterpret_cast<void*>(&hle_recv));
+    register_function("WSOCK32.dll", "17",                      reinterpret_cast<void*>(&hle_recv));
+    register_function("WSOCK32.dll", "18",                      reinterpret_cast<void*>(&hle_select));
+    register_function("WSOCK32.dll", "19",                      reinterpret_cast<void*>(&hle_send));
+    register_function("WSOCK32.dll", "20",                      reinterpret_cast<void*>(&hle_send));
+    register_function("WSOCK32.dll", "21",                      reinterpret_cast<void*>(&hle_setsockopt));
+    register_function("WSOCK32.dll", "22",                      reinterpret_cast<void*>(&hle_shutdown));
+    register_function("WSOCK32.dll", "23",                      reinterpret_cast<void*>(&hle_socket));
+    register_function("WSOCK32.dll", "111",                     reinterpret_cast<void*>(&hle_wsa_get_last_error));
+    register_function("WSOCK32.dll", "115",                     reinterpret_cast<void*>(&hle_wsa_startup));
+    register_function("WSOCK32.dll", "116",                     reinterpret_cast<void*>(&hle_wsa_cleanup));
+    register_function("WSOCK32.dll", "151",                     reinterpret_cast<void*>(&hle_wsa_startup));
 
     // DXGI.DLL & D3D11.DLL & DINPUT8.DLL
     register_function("DXGI.DLL", "CreateDXGIFactory",    reinterpret_cast<void*>(&hle_create_dxgi_factory));

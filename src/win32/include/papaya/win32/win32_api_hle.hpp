@@ -614,6 +614,9 @@ public:
     static PAPAYA_MS_ABI u32   hle_time_get_dev_caps(void* caps, u32 size);
     static PAPAYA_MS_ABI void* hle_set_timer(HWND hWnd, int nIDEvent, u32 uElapse, void* lpTimerFunc);
     static PAPAYA_MS_ABI BOOL  hle_kill_timer(HWND hWnd, int uIDEvent);
+    static PAPAYA_MS_ABI void* hle_monitor_from_window(HWND hwnd, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL  hle_get_monitor_info_a(void* hMonitor, void* lpmi);
+    static PAPAYA_MS_ABI BOOL  hle_enum_display_monitors(void* hdc, void* lpRect, void* lpProc, void* lParam);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 
