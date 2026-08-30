@@ -251,6 +251,16 @@ Concrete repo audit + cleanup tasks (2026-08-30 status):
 8. **Fuzzing** — libFuzzer/AFL++ harnesses for PE parsing first (highest
    hostile-input risk); then registry, manifests, shader bytecode.
 
+### Verified milestone (2026-08-30, user-verified)
+- **Buckshot Roulette is playable under pure Papaya** (no Wine/Proton/DXVK/
+  Box64, no separate Godot runtime): x64 Godot 4.1.1 static export, OpenGL
+  renderer, in-process PE map (58MB), scene `menu` reached, live frames
+  (6k-pixel diff between captures), X11 window, Steam via clean-room stub
+  (AppID from `steam_appid.txt`), no bundled steam_api64.dll loaded.
+  Launch: `~/launch_buckshot.sh`; evidence: `/tmp/bsr_run/`.
+  Residual gaps for this title: WASAPI audio (silent error loop), DINPUT8
+  `DirectInput8Create` unresolved, `user://` shader-cache unmapped.
+
 ### Known immediate issues found in-session (for Phase 1 queue)
 - Guest-call invocation of __try1-style filter functions resumes at the
   filter entry without a call frame, so custom filter fns print but crash on
