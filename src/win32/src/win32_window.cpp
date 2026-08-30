@@ -70,7 +70,7 @@ void* X11WindowManager::find_class(const char* name) {
 void* X11WindowManager::create_window_ex(const char* class_name, const char* title, u32 style,
                                          int x, int y, int w, int h, void* parent,
                                          void* instance, void* param, bool hide) {
-    (void)parent; (void)instance; (void)param;
+    (void)parent; (void)instance;
     if (!initialized_ && !initialize()) return nullptr;
 
     auto* cls = static_cast<NativeWindowClass*>(find_class(class_name));
@@ -81,7 +81,13 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
 
     auto win = std::make_unique<NativeWindow>();
     win->cls = cls;
-    std::string final_title = (title && std::strlen(title) > 0) ? title : (class_name ? class_name : "Papaya Game");
+    // Use the supplied window title; fall back to "Papaya" not the class name.
+    // Godot passes an empty lpWindowName; we do NOT want "Engine" as the title.
+    std::string final_title;
+    if (title && std::strlen(title) > 0)
+        final_title = title;
+    else
+        final_title = "Papaya";
     win->title = final_title;
     win->display = display_;
     win->style = style;
@@ -135,29 +141,50 @@ void* X11WindowManager::create_window_ex(const char* class_name, const char* tit
     win->gc  = XCreateGC(display_, xw, 0, nullptr);
     win->hwnd = win.get();
 
+    // Fill the persistent createstruct now, before we move the unique_ptr.
+    win->createstruct.lpCreateParams = param;     // ← Godot's DisplayServer 'this'
+    win->createstruct.hInstance      = instance;
+    win->createstruct.hwndParent     = parent;
+    win->createstruct.cy             = win->height;
+    win->createstruct.cx             = win->width;
+    win->createstruct.y              = win->y;
+    win->createstruct.x              = win->x;
+    win->createstruct.style          = static_cast<int32_t>(style);
+    win->createstruct.lpszName       = nullptr;   // pointer into win->title not safe after move
+    win->createstruct.lpszClass      = class_name ? class_name : "PapayaDefaultWindow";
+    win->createstruct.dwExStyle      = 0;
+
     void* hwnd = win.get();
     const char* w_title = win->title.c_str();
     const int   w_w = win->width, w_h = win->height;
     windows_[hwnd] = std::move(win);
 
-    log::info("WINDOW", "Created native window '{}' [{}x{}] hwnd={} xid=0x{:X}",
+    // After move, fix up the lpszName pointer into the now-stable string inside the map entry.
+    auto* nw = window_from_hwnd(hwnd);
+    nw->createstruct.lpszName = nw->title.c_str();
+
+    log::info("WINDOW", "Created native window '{}' [{}x{}] hwnd={} xid=0x{:X} lpParam=0x{:X}",
               w_title, w_w, w_h,
-              reinterpret_cast<u64>(hwnd), static_cast<unsigned long long>(xw));
+              reinterpret_cast<u64>(hwnd), static_cast<unsigned long long>(xw),
+              reinterpret_cast<u64>(param));
 
     // Post Win32 window creation messages to the queue so they are delivered
     // when the guest calls PeekMessage/GetMessage in its own message loop.
     // Do NOT dispatch synchronously — Godot's WndProc accesses display-server
     // state that isn't initialized yet and will deadlock before the main loop runs.
+    // lParam for WM_NCCREATE and WM_CREATE is a CREATESTRUCT* — we pass the
+    // address of the persistent createstruct stored inside the NativeWindow.
     {
         Win32Message m{};
         m.hwnd = hwnd;
+        s64 cs_ptr = reinterpret_cast<s64>(&nw->createstruct);
 
-        // WM_NCCREATE (0x81) — signals window created; lParam = 1 (non-zero) = success
-        m.message = 0x0081; m.w_param = 0; m.l_param = 1;
+        // WM_NCCREATE (0x81) — lParam = CREATESTRUCT* (non-null, contains lpParam)
+        m.message = 0x0081; m.w_param = 0; m.l_param = cs_ptr;
         push_message(m);
 
-        // WM_CREATE (0x01)
-        m.message = WM_CREATE; m.w_param = 0; m.l_param = 0;
+        // WM_CREATE (0x01) — same CREATESTRUCT pointer
+        m.message = WM_CREATE; m.w_param = 0; m.l_param = cs_ptr;
         push_message(m);
 
         // WM_SIZE — report initial client area

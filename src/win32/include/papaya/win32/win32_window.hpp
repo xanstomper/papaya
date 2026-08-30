@@ -76,6 +76,24 @@ struct NativeWindow {
     u32                fb_bpp{4};
     bool               paint_pending{false};   // InvalidateRect set -> WM_PAINT due
     u64                userdata{0};            // GWLP_USERDATA storage
+
+    // Persistent CREATESTRUCT storage for WM_NCCREATE/WM_CREATE delivery.
+    // Lives here (not on any stack) so its address stays valid when the queued
+    // message is processed later.
+    struct Win32CreateStruct {
+        void*       lpCreateParams{nullptr};
+        void*       hInstance{nullptr};
+        void*       hMenu{nullptr};
+        void*       hwndParent{nullptr};
+        int         cy{0};
+        int         cx{0};
+        int         y{0};
+        int         x{0};
+        int32_t     style{0};
+        const char* lpszName{nullptr};
+        const char* lpszClass{nullptr};
+        uint32_t    dwExStyle{0};
+    } createstruct;
 };
 
 // X11-backed Win32 window manager. Owns the display + per-window state + the
