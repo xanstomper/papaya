@@ -3730,6 +3730,38 @@ BOOL Win32ApiHle::hle_ext_text_out_a(void* hdc, int x, int y, u32 options, const
     return hle_text_out_a(hdc, x, y, lpString, static_cast<int>(c));
 }
 
+// ---- Enumeration + input/timer probes -----------------------------------------
+// EnumWindows: call the GUEST's callback (ms_abi) for each top-level window.
+BOOL Win32ApiHle::hle_enum_windows(void* lpEnumFunc, void* lParam) {
+    if (!lpEnumFunc) return FALSE_VAL;
+    using EnumProc = BOOL (__attribute__((ms_abi))*)(void*, void*);   // (HWND, LPARAM)
+    auto fn = reinterpret_cast<EnumProc>(lpEnumFunc);
+    for (auto& [hwnd, w] : window_manager().windows()) {
+        if (!fn(hwnd, lParam)) return FALSE_VAL;   // callback said stop
+    }
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_get_double_click_time() {
+    return 500;   // Windows default double-click time (ms)
+}
+int Win32ApiHle::hle_get_keyboard_type(u32 nTypeFlag) {
+    switch (nTypeFlag) {
+        case 0: return 4;    // keyboard type: enhanced 101/102-key
+        case 1: return 0;    // keyboard subtype
+        case 2: return 12;   // number of function keys
+        default: return 0;
+    }
+}
+u32 Win32ApiHle::hle_time_get_dev_caps(void* caps, u32 size) {
+    // TIMECAPS { wPeriodMin@0 (u32), wPeriodMax@4 (u32) }.
+    if (caps && size >= 8) {
+        auto* t = static_cast<u32*>(caps);
+        t[0] = 1;        // min period 1ms
+        t[1] = 1000000;  // max period
+    }
+    return 0;   // MMSYSERR_NOERROR
+}
+
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
     auto* d = gdi_dc_of(hdc);
     // Common GetDeviceCaps indices (values matter to games for setup).
@@ -4731,6 +4763,9 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "GetWindowLongPtrA", reinterpret_cast<void*>(&hle_get_window_long_a));
     register_function("USER32.DLL", "SetWindowLongPtrA", reinterpret_cast<void*>(&hle_set_window_long_a));
     register_function("USER32.DLL", "SystemParametersInfoA", reinterpret_cast<void*>(&hle_system_parameters_info_a));
+    register_function("USER32.DLL", "EnumWindows", reinterpret_cast<void*>(&hle_enum_windows));
+    register_function("USER32.DLL", "GetDoubleClickTime", reinterpret_cast<void*>(&hle_get_double_click_time));
+    register_function("USER32.DLL", "GetKeyboardType", reinterpret_cast<void*>(&hle_get_keyboard_type));
     register_function("USER32.DLL", "GetDesktopWindow", reinterpret_cast<void*>(&hle_get_desktop_window));
     register_function("USER32.DLL", "ClientToScreen", reinterpret_cast<void*>(&hle_client_to_screen));
     register_function("USER32.DLL", "ScreenToClient", reinterpret_cast<void*>(&hle_screen_to_client));
@@ -4954,7 +4989,8 @@ Result<> Win32ApiHle::initialize() {
 
     // WINMM.DLL
     register_function("WINMM.DLL", "timeGetTime",         reinterpret_cast<void*>(&hle_time_get_time));
-    register_function("WINMM.DLL", "timeBeginPeriod",     reinterpret_cast<void*>(&hle_time_begin_period));
+    register_function("WINMM.DLL", "timeBeginPeriod", reinterpret_cast<void*>(&hle_time_begin_period));
+       register_function("WINMM.DLL", "timeGetDevCaps", reinterpret_cast<void*>(&hle_time_get_dev_caps));
     register_function("WINMM.DLL", "timeEndPeriod",       reinterpret_cast<void*>(&hle_time_end_period));
     register_function("WINMM.DLL", "PlaySoundA",          reinterpret_cast<void*>(&hle_play_sound_a));
     register_function("WINMM.DLL", "PlaySoundW",          reinterpret_cast<void*>(&hle_play_sound_w));

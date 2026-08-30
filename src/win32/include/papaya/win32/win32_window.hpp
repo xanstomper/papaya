@@ -92,6 +92,8 @@ public:
     // previous value; getter returns the stored value (0 if none).
     std::uint64_t get_window_long(void* hwnd, int nIndex);
     void         set_window_long(void* hwnd, int nIndex, std::uint64_t value);
+    // Map of all live windows (HWND -> NativeWindow), for EnumWindows et al.
+    std::unordered_map<void*, std::unique_ptr<NativeWindow>>& windows() { return windows_; }
 
     // Window classes
     void* register_class(const char* name, void* wndproc, void* hinstance);

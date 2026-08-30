@@ -608,6 +608,10 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_get_text_metrics_a(void* hdc, void* lptm);
     static PAPAYA_MS_ABI BOOL  hle_draw_text_a(void* hdc, const char* lpChText, int cchText, void* lprc, u32 format);
     static PAPAYA_MS_ABI BOOL  hle_ext_text_out_a(void* hdc, int x, int y, u32 options, const void* lprc, const char* lpString, u32 c, const void* lpDx);
+    static PAPAYA_MS_ABI BOOL  hle_enum_windows(void* lpEnumFunc, void* lParam);
+    static PAPAYA_MS_ABI u32   hle_get_double_click_time();
+    static PAPAYA_MS_ABI int   hle_get_keyboard_type(u32 nTypeFlag);
+    static PAPAYA_MS_ABI u32   hle_time_get_dev_caps(void* caps, u32 size);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 
