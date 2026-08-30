@@ -602,6 +602,12 @@ public:
     static PAPAYA_MS_ABI void* hle_create_pen(int style, int width, u32 color);
     static PAPAYA_MS_ABI void* hle_create_solid_brush(u32 color);
     static PAPAYA_MS_ABI BOOL  hle_get_class_name_a(HWND hWnd, char* lpClassName, int nMaxCount);
+    static PAPAYA_MS_ABI BOOL  hle_set_bk_mode(void* hdc, int mode);
+    static PAPAYA_MS_ABI u32   hle_set_text_align(void* hdc, u32 align);
+    static PAPAYA_MS_ABI BOOL  hle_get_text_extent_point32_a(void* hdc, const char* lpString, int c, void* lpSize);
+    static PAPAYA_MS_ABI BOOL  hle_get_text_metrics_a(void* hdc, void* lptm);
+    static PAPAYA_MS_ABI BOOL  hle_draw_text_a(void* hdc, const char* lpChText, int cchText, void* lprc, u32 format);
+    static PAPAYA_MS_ABI BOOL  hle_ext_text_out_a(void* hdc, int x, int y, u32 options, const void* lprc, const char* lpString, u32 c, const void* lpDx);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 

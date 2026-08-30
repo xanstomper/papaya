@@ -395,6 +395,8 @@ struct GdiDc {
     u32  pen_color{0xFF000000};    // COLORREF BGR for LineTo/Rectangle outline
     u32  brush_color{0xFFFFFFFF};  // COLORREF BGR for FillRect/Rectangle fill
     int  pos_x{0}, pos_y{0};       // current pen position
+    int  bk_mode{2};               // TRANSPARENT=1, OPAQUE=2
+    u32  text_align{0};            // TA_LEFT|TA_TOP
 };
 struct GdiBitmap {
     u32 tag{0x4744424D};   // "GDBM"
@@ -3673,6 +3675,60 @@ BOOL Win32ApiHle::hle_get_class_name_a(HWND hWnd, char* lpClassName, int nMaxCou
     lpClassName[n] = 0;
     return static_cast<BOOL>(n);
 }
+BOOL Win32ApiHle::hle_set_bk_mode(void* hdc, int mode) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return FALSE_VAL;
+    d->bk_mode = mode;
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_set_text_align(void* hdc, u32 align) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d) return 0xFFFFFFFF;
+    u32 old = d->text_align;
+    d->text_align = align;
+    return old;
+}
+// SIZE { cx@0 (LONG), cy@4 (LONG) }: 6x8 px per char in our block font.
+BOOL Win32ApiHle::hle_get_text_extent_point32_a(void* hdc, const char* lpString, int c, void* lpSize) {
+    (void)hdc;
+    if (!lpSize) return FALSE_VAL;
+    auto* sz = static_cast<s32*>(lpSize);
+    int len = (c > 0) ? c : (lpString ? static_cast<int>(std::strlen(lpString)) : 0);
+    sz[0] = len * 6;
+    sz[1] = 8;
+    return TRUE_VAL;
+}
+// TEXTMETRICA: tmHeight(0), tmAscent(4), tmDescent(8), ... compact fill.
+BOOL Win32ApiHle::hle_get_text_metrics_a(void* hdc, void* lptm) {
+    (void)hdc;
+    if (!lptm) return FALSE_VAL;
+    std::memset(lptm, 0, 56);
+    auto* tm = static_cast<s32*>(lptm);
+    tm[0] = 8; tm[1] = 6; tm[2] = 2;   // height, ascent, descent
+    return TRUE_VAL;
+}
+// DrawTextA: draw within a rect honoring DT_* flags (single-line supported).
+BOOL Win32ApiHle::hle_draw_text_a(void* hdc, const char* lpChText, int cchText, void* lprc, u32 format) {
+    auto* d = gdi_dc_of(hdc);
+    if (!d || !lpChText) return FALSE_VAL;
+    int len = (cchText > 0) ? cchText : static_cast<int>(std::strlen(lpChText));
+    auto* r = static_cast<const s32*>(lprc);
+    int x = r ? r[0] : 0, y = r ? r[1] : 0;
+    if (r && (format & 0x1)) {   // DT_CENTER
+        int wpx = len * 6;
+        x = r[0] + ((r[2] - r[0]) - wpx) / 2;
+    }
+    if (r && (format & 0x4)) {   // DT_VCENTER
+        y = r[1] + ((r[3] - r[1]) - 8) / 2;
+    }
+    return hle_text_out_a(hdc, x, y, lpChText, len);
+}
+// ExtTextOutA: same rendering as TextOutA (options/rect ignored beyond basic).
+BOOL Win32ApiHle::hle_ext_text_out_a(void* hdc, int x, int y, u32 options, const void* lprc,
+                                     const char* lpString, u32 c, const void* lpDx) {
+    (void)options; (void)lprc; (void)lpDx;
+    return hle_text_out_a(hdc, x, y, lpString, static_cast<int>(c));
+}
 
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
     auto* d = gdi_dc_of(hdc);
@@ -4963,6 +5019,12 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "LineTo",               reinterpret_cast<void*>(&hle_line_to));
     register_function("GDI32.DLL", "CreatePen",            reinterpret_cast<void*>(&hle_create_pen));
     register_function("GDI32.DLL", "CreateSolidBrush",     reinterpret_cast<void*>(&hle_create_solid_brush));
+    register_function("GDI32.DLL", "SetBkMode",            reinterpret_cast<void*>(&hle_set_bk_mode));
+    register_function("GDI32.DLL", "SetTextAlign",         reinterpret_cast<void*>(&hle_set_text_align));
+    register_function("GDI32.DLL", "GetTextExtentPoint32A", reinterpret_cast<void*>(&hle_get_text_extent_point32_a));
+    register_function("GDI32.DLL", "GetTextMetricsA",      reinterpret_cast<void*>(&hle_get_text_metrics_a));
+    register_function("GDI32.DLL", "DrawTextA",            reinterpret_cast<void*>(&hle_draw_text_a));
+    register_function("GDI32.DLL", "ExtTextOutA",          reinterpret_cast<void*>(&hle_ext_text_out_a));
 
     // OPENGL32.DLL & VULKAN-1.DLL
     register_function("OPENGL32.dll", "wglGetProcAddress", reinterpret_cast<void*>(&hle_wgl_get_proc_address));
