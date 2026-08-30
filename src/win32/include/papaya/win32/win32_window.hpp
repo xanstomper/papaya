@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 // Forward-declare Xlib opaque types to avoid leaking X headers into the HLE.
 struct _XDisplay;        // Display
@@ -38,6 +39,7 @@ enum : u32 {
     WM_KILLFOCUS   = 0x0008,
     WM_PAINT       = 0x000F,
     WM_CLOSE       = 0x0010,
+    WM_TIMER       = 0x0113,
     WM_QUIT        = 0x0012,
     WM_KEYDOWN     = 0x0100,
     WM_KEYUP       = 0x0101,
@@ -94,6 +96,11 @@ public:
     void         set_window_long(void* hwnd, int nIndex, std::uint64_t value);
     // Map of all live windows (HWND -> NativeWindow), for EnumWindows et al.
     std::unordered_map<void*, std::unique_ptr<NativeWindow>>& windows() { return windows_; }
+    // Win32 timers: SetTimer/KillTimer -> synthesized WM_TIMER messages.
+    void* set_timer(void* hwnd, int id, u32 interval_ms);
+    bool  kill_timer(void* hwnd, int id);
+    // Delivers a WM_TIMER for any elapsed timer (called from the message pump).
+    bool  poll_timer(Win32Message& out);
 
     // Window classes
     void* register_class(const char* name, void* wndproc, void* hinstance);
@@ -161,6 +168,9 @@ private:
 
     std::unordered_map<std::string, NativeWindowClass> classes_;
     std::unordered_map<void*, std::unique_ptr<NativeWindow>> windows_;
+    struct Timer { void* hwnd; int id; u32 interval_ms; u64 next_fire_ms; };
+    std::vector<Timer> timers_;
+    std::mutex timers_mutex_;
     std::deque<Win32Message> queue_;
     std::mutex               q_mutex_;
 };

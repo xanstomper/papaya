@@ -257,6 +257,50 @@ void X11WindowManager::set_window_long(void* hwnd, int nIndex, std::uint64_t val
     else if (nIndex == -16) w->style = static_cast<u32>(value);
 }
 
+// ---- Win32 timers --------------------------------------------------------------
+static u64 timer_now_ms() {
+    struct timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<u64>(ts.tv_sec) * 1000ULL + static_cast<u64>(ts.tv_nsec) / 1000000ULL;
+}
+void* X11WindowManager::set_timer(void* hwnd, int id, u32 interval_ms) {
+    if (interval_ms == 0) interval_ms = 1;
+    std::lock_guard<std::mutex> lk(timers_mutex_);
+    // Re-setting an existing (hwnd,id) timer just updates it.
+    for (auto& t : timers_) {
+        if (t.hwnd == hwnd && t.id == id) {
+            t.interval_ms = interval_ms;
+            t.next_fire_ms = timer_now_ms() + interval_ms;
+            return reinterpret_cast<void*>(static_cast<uintptr_t>(id));
+        }
+    }
+    timers_.push_back({hwnd, id, interval_ms, timer_now_ms() + interval_ms});
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(id));
+}
+bool X11WindowManager::kill_timer(void* hwnd, int id) {
+    std::lock_guard<std::mutex> lk(timers_mutex_);
+    for (size_t i = 0; i < timers_.size(); ++i) {
+        if (timers_[i].hwnd == hwnd && timers_[i].id == id) {
+            timers_.erase(timers_.begin() + i);
+            return true;
+        }
+    }
+    return false;
+}
+bool X11WindowManager::poll_timer(Win32Message& out) {
+    u64 now = timer_now_ms();
+    std::lock_guard<std::mutex> lk(timers_mutex_);
+    for (auto& t : timers_) {
+        if (now >= t.next_fire_ms) {
+            t.next_fire_ms = now + t.interval_ms;   // periodic re-arm
+            out.hwnd = t.hwnd; out.message = WM_TIMER;
+            out.w_param = static_cast<u64>(t.id); out.l_param = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
 void X11WindowManager::get_window_rect(void* hwnd, void* lpRect) {
     auto* w = window_from_hwnd(hwnd);
     if (!w || !lpRect) return;
@@ -430,6 +474,11 @@ int X11WindowManager::get_message(void* lpMsg, void* hwnd, u32 min, u32 max) {
             if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
             return 1;
         }
+        // Elapsed Win32 timers fire a WM_TIMER when the queue is drained.
+        if (poll_timer(m)) {
+            if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+            return 1;
+        }
         // No message yet: flush X and yield briefly.
         XFlush(display_);
         struct timespec ts{0, 2'000'000};
@@ -445,6 +494,10 @@ int X11WindowManager::peek_message(void* lpMsg, void* hwnd, u32 min, u32 max, u3
             // Queue empty: if a paint is pending, report it (Windows removes the
             // update when WM_PAINT is retrieved; honor PM_REMOVE semantics).
             if (synthesize_paint(hwnd, m)) {
+                if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
+                return 1;
+            }
+            if (poll_timer(m)) {
                 if (lpMsg) *static_cast<Win32Message*>(lpMsg) = m;
                 return 1;
             }

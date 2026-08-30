@@ -3761,6 +3761,13 @@ u32 Win32ApiHle::hle_time_get_dev_caps(void* caps, u32 size) {
     }
     return 0;   // MMSYSERR_NOERROR
 }
+void* Win32ApiHle::hle_set_timer(HWND hWnd, int nIDEvent, u32 uElapse, void* lpTimerFunc) {
+    (void)lpTimerFunc;   // TIMERPROC callbacks route via WM_TIMER with wParam=id
+    return window_manager().set_timer(hWnd, nIDEvent, uElapse);
+}
+BOOL Win32ApiHle::hle_kill_timer(HWND hWnd, int uIDEvent) {
+    return window_manager().kill_timer(hWnd, uIDEvent) ? TRUE_VAL : FALSE_VAL;
+}
 
 int Win32ApiHle::hle_get_device_caps(void* hdc, int nIndex) {
     auto* d = gdi_dc_of(hdc);
@@ -4766,6 +4773,8 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "EnumWindows", reinterpret_cast<void*>(&hle_enum_windows));
     register_function("USER32.DLL", "GetDoubleClickTime", reinterpret_cast<void*>(&hle_get_double_click_time));
     register_function("USER32.DLL", "GetKeyboardType", reinterpret_cast<void*>(&hle_get_keyboard_type));
+    register_function("USER32.DLL", "SetTimer", reinterpret_cast<void*>(&hle_set_timer));
+    register_function("USER32.DLL", "KillTimer", reinterpret_cast<void*>(&hle_kill_timer));
     register_function("USER32.DLL", "GetDesktopWindow", reinterpret_cast<void*>(&hle_get_desktop_window));
     register_function("USER32.DLL", "ClientToScreen", reinterpret_cast<void*>(&hle_client_to_screen));
     register_function("USER32.DLL", "ScreenToClient", reinterpret_cast<void*>(&hle_screen_to_client));

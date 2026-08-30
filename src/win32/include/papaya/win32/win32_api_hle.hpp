@@ -612,6 +612,8 @@ public:
     static PAPAYA_MS_ABI u32   hle_get_double_click_time();
     static PAPAYA_MS_ABI int   hle_get_keyboard_type(u32 nTypeFlag);
     static PAPAYA_MS_ABI u32   hle_time_get_dev_caps(void* caps, u32 size);
+    static PAPAYA_MS_ABI void* hle_set_timer(HWND hWnd, int nIDEvent, u32 uElapse, void* lpTimerFunc);
+    static PAPAYA_MS_ABI BOOL  hle_kill_timer(HWND hWnd, int uIDEvent);
     static PAPAYA_MS_ABI int   hle_get_dibits(void* hdc, void* hbm, u32 start, u32 clines, void* bits,
                                               const void* lpbmi, u32 usage);
 
