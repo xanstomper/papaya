@@ -30,6 +30,7 @@
 #include <condition_variable>
 #include <vector>
 #include <algorithm>
+#include <unordered_set>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/random.h>
@@ -147,17 +148,42 @@ static unsigned char g_iob_slots[kGuestIOBSlots * kGuestFileStride] alignas(8);
 
 static void* iob_at(int idx) { return g_iob_slots + static_cast<size_t>(idx) * kGuestFileStride; }
 
-// Map a guest FILE* (lodged in a guest _iob slot) back to the host FILE*.
+// Map a guest FILE* back to the host FILE*.
+// Two honest sources exist:
+//   1. The emulated _iob slot array (stdin/stdout/stderr via __iob_func),
+//      where each 48-byte slot carries the host FILE* in its first 8 bytes.
+//   2. Streams the msvcrt fopen family handed to the guest: those are host
+//      FILE* values recorded in g_open_files at open time.
+// Anything else (arbitrary guest pointers) resolves to nullptr so callers
+// fail gracefully instead of dereferencing guest memory as a FILE*.
+static std::mutex g_files_mutex;
+static std::unordered_set<FILE*>& open_host_files() {
+    static std::unordered_set<FILE*> set;
+    return set;
+}
+static void register_host_file(FILE* f) {
+    if (!f) return;
+    std::lock_guard<std::mutex> lk(g_files_mutex);
+    open_host_files().insert(f);
+}
+static void unregister_host_file(FILE* f) {
+    if (!f) return;
+    std::lock_guard<std::mutex> lk(g_files_mutex);
+    open_host_files().erase(f);
+}
 static FILE* host_file_for(void* guest_file) {
+    if (!guest_file) return nullptr;
     unsigned char* slot = static_cast<unsigned char*>(guest_file);
-    // Clamp to the containing 48-byte slot base.
     if (slot >= g_iob_slots && slot < g_iob_slots + sizeof(g_iob_slots)) {
         size_t off = static_cast<size_t>(slot - g_iob_slots);
         slot = g_iob_slots + (off / kGuestFileStride) * kGuestFileStride;
+        FILE* hf = nullptr;
+        std::memcpy(&hf, slot, sizeof(hf));
+        return hf;
     }
-    FILE* hf = nullptr;
-    std::memcpy(&hf, slot, sizeof(hf));
-    return hf;
+    std::lock_guard<std::mutex> lk(g_files_mutex);
+    FILE* key = static_cast<FILE*>(guest_file);
+    return open_host_files().count(key) ? key : nullptr;
 }
 static FILE* host_stream(int idx) {
     FILE* hf = nullptr;
@@ -3875,6 +3901,9 @@ static uint16_t s_appdata_roaming_u16[] = {
 static uint16_t s_appdata_local_u16[] = {
     'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'A', 'p', 'p', 'D', 'a', 't', 'a', '\\', 'L', 'o', 'c', 'a', 'l', 0
 };
+static uint16_t s_appdata_locallow_u16[] = {
+    'C', ':', '\\', 'u', 's', 'e', 'r', 's', '\\', 's', 't', 'e', 'a', 'm', 'u', 's', 'e', 'r', '\\', 'A', 'p', 'p', 'D', 'a', 't', 'a', '\\', 'L', 'o', 'c', 'a', 'l', 'L', 'o', 'w', 0
+};
 
 s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u32 dwFlags, char* pszPath) {
     (void)hwnd; (void)hToken; (void)dwFlags;
@@ -3882,6 +3911,7 @@ s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u
     int base_csidl = csidl & 0xFF;
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/LocalLow");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
 
@@ -3889,6 +3919,8 @@ s32 Win32ApiHle::hle_sh_get_folder_path_a(HWND hwnd, int csidl, HANDLE hToken, u
         std::strncpy(pszPath, "C:\\users\\steamuser\\AppData\\Roaming", 260);
     } else if (base_csidl == 0x001C) { // CSIDL_LOCAL_APPDATA
         std::strncpy(pszPath, "C:\\users\\steamuser\\AppData\\Local", 260);
+    } else if (base_csidl == 0x001E) { // CSIDL_LOCAL_APPDATA_LOW
+        std::strncpy(pszPath, "C:\\users\\steamuser\\AppData\\LocalLow", 260);
     } else if (base_csidl == 0x002B) { // CSIDL_COMMON_APPDATA
         std::strncpy(pszPath, "C:\\ProgramData", 260);
     } else if (base_csidl == 0x0028) { // CSIDL_PROFILE
@@ -3905,6 +3937,7 @@ s32 Win32ApiHle::hle_sh_get_folder_path_w(HWND hwnd, int csidl, HANDLE hToken, u
     int base_csidl = csidl & 0xFF;
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/LocalLow");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
 
@@ -3912,6 +3945,8 @@ s32 Win32ApiHle::hle_sh_get_folder_path_w(HWND hwnd, int csidl, HANDLE hToken, u
         std::memcpy(pszPath, s_appdata_roaming_u16, sizeof(s_appdata_roaming_u16));
     } else if (base_csidl == 0x001C) { // CSIDL_LOCAL_APPDATA
         std::memcpy(pszPath, s_appdata_local_u16, sizeof(s_appdata_local_u16));
+    } else if (base_csidl == 0x001E) { // CSIDL_LOCAL_APPDATA_LOW
+        std::memcpy(pszPath, s_appdata_locallow_u16, sizeof(s_appdata_locallow_u16));
     } else if (base_csidl == 0x0028) { // CSIDL_PROFILE
         std::memcpy(pszPath, s_saved_path_u16, sizeof(s_saved_path_u16));
     } else {
@@ -3925,6 +3960,7 @@ s32 Win32ApiHle::hle_sh_get_known_folder_path(const void* rfid, u32 dwFlags, HAN
     if (!ppszPath) return -1;
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Roaming");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/Local");
+    std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/AppData/LocalLow");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Saved Games");
     std::filesystem::create_directories("./papaya_prefix/drive_c/users/steamuser/Documents");
 
@@ -3936,6 +3972,9 @@ s32 Win32ApiHle::hle_sh_get_known_folder_path(const void* rfid, u32 dwFlags, HAN
         if (guid[0] == 0xF1B32785) { // FOLDERID_LocalAppData
             src_path = s_appdata_local_u16;
             src_size = sizeof(s_appdata_local_u16);
+        } else if (guid[0] == 0xA520A1A4) { // FOLDERID_LocalAppDataLow
+            src_path = s_appdata_locallow_u16;
+            src_size = sizeof(s_appdata_locallow_u16);
         } else if (guid[0] == 0x4C5C32FF) { // FOLDERID_SavedGames
             src_path = s_saved_path_u16;
             src_size = sizeof(s_saved_path_u16);
@@ -5692,14 +5731,18 @@ static PAPAYA_MS_ABI uintptr_t hle_beginthreadex(void* sec, unsigned stack_size,
 
 // stdio functions
 static PAPAYA_MS_ABI void* hle_fopen(const char* filename, const char* mode) {
-    return filename && mode ? fopen(filename, mode) : nullptr;
+    if (!filename || !mode) return nullptr;
+    std::string path = normalize_win_path(filename);
+    FILE* f = fopen(path.c_str(), mode);
+    register_host_file(f);
+    return f;
 }
 static PAPAYA_MS_ABI void* hle_wfopen(const wchar_t* filename, const wchar_t* mode) {
     if (!filename || !mode) return nullptr;
     char mb_file[1024], mb_mode[32];
     wcstombs(mb_file, filename, sizeof(mb_file));
     wcstombs(mb_mode, mode, sizeof(mb_mode));
-    return fopen(mb_file, mb_mode);
+    return hle_fopen(mb_file, mb_mode);
 }
 static PAPAYA_MS_ABI int hle_wfopen_s(void** pFile, const wchar_t* filename, const wchar_t* mode) {
     if (!pFile) return -1;
@@ -5711,63 +5754,93 @@ static PAPAYA_MS_ABI void* hle_wfsopen(const wchar_t* filename, const wchar_t* m
     return hle_wfopen(filename, mode);
 }
 static PAPAYA_MS_ABI int hle_fclose(void* stream) {
-    return stream ? fclose(static_cast<FILE*>(stream)) : -1;
+    FILE* f = host_file_for(stream);
+    if (!f) return -1;
+    unregister_host_file(f);
+    return fclose(f);
 }
 static PAPAYA_MS_ABI size_t hle_fread(void* ptr, size_t size, size_t count, void* stream) {
-    return (ptr && stream) ? fread(ptr, size, count, static_cast<FILE*>(stream)) : 0;
+    FILE* f = host_file_for(stream);
+    return (ptr && f) ? fread(ptr, size, count, f) : 0;
 }
 static PAPAYA_MS_ABI int hle_fseek(void* stream, long offset, int origin) {
-    return stream ? fseek(static_cast<FILE*>(stream), offset, origin) : -1;
+    FILE* f = host_file_for(stream);
+    return f ? fseek(f, offset, origin) : -1;
 }
 static PAPAYA_MS_ABI long hle_ftell(void* stream) {
-    return stream ? ftell(static_cast<FILE*>(stream)) : -1;
+    FILE* f = host_file_for(stream);
+    return f ? ftell(f) : -1;
 }
 static PAPAYA_MS_ABI int hle_fsetpos(void* stream, const fpos_t* pos) {
-    return (stream && pos) ? fsetpos(static_cast<FILE*>(stream), pos) : -1;
+    FILE* f = host_file_for(stream);
+    return (f && pos) ? fsetpos(f, pos) : -1;
 }
 static PAPAYA_MS_ABI int hle_fgetpos(void* stream, fpos_t* pos) {
-    return (stream && pos) ? fgetpos(static_cast<FILE*>(stream), pos) : -1;
+    FILE* f = host_file_for(stream);
+    return (f && pos) ? fgetpos(f, pos) : -1;
 }
 static PAPAYA_MS_ABI int hle_feof(void* stream) {
-    return stream ? feof(static_cast<FILE*>(stream)) : 1;
+    FILE* f = host_file_for(stream);
+    return f ? feof(f) : 1;
 }
 static PAPAYA_MS_ABI int hle_ferror(void* stream) {
-    return stream ? ferror(static_cast<FILE*>(stream)) : 1;
+    FILE* f = host_file_for(stream);
+    return f ? ferror(f) : 1;
 }
 static PAPAYA_MS_ABI char* hle_fgets(char* str, int num, void* stream) {
-    return (str && stream) ? fgets(str, num, static_cast<FILE*>(stream)) : nullptr;
+    FILE* f = host_file_for(stream);
+    return (str && f) ? fgets(str, num, f) : nullptr;
 }
 static PAPAYA_MS_ABI wint_t hle_fgetwc(void* stream) {
-    return stream ? fgetwc(static_cast<FILE*>(stream)) : WEOF;
+    FILE* f = host_file_for(stream);
+    return f ? fgetwc(f) : WEOF;
 }
 static PAPAYA_MS_ABI wint_t hle_fputwc(wchar_t c, void* stream) {
-    return stream ? fputwc(c, static_cast<FILE*>(stream)) : WEOF;
+    FILE* f = host_file_for(stream);
+    return f ? fputwc(c, f) : WEOF;
 }
 static PAPAYA_MS_ABI int hle_getc(void* stream) {
-    return stream ? getc(static_cast<FILE*>(stream)) : EOF;
+    FILE* f = host_file_for(stream);
+    return f ? getc(f) : EOF;
 }
 static PAPAYA_MS_ABI int hle_putchar(int c) {
     return putchar(c);
 }
 static PAPAYA_MS_ABI void hle_rewind(void* stream) {
-    if (stream) rewind(static_cast<FILE*>(stream));
+    FILE* f = host_file_for(stream);
+    if (f) rewind(f);
 }
 static PAPAYA_MS_ABI void hle_setbuf(void* stream, char* buffer) {
-    if (stream) setbuf(static_cast<FILE*>(stream), buffer);
+    FILE* f = host_file_for(stream);
+    if (f) setbuf(f, buffer);
 }
 static PAPAYA_MS_ABI int hle_setvbuf(void* stream, char* buffer, int mode, size_t size) {
-    return stream ? setvbuf(static_cast<FILE*>(stream), buffer, mode, size) : -1;
+    FILE* f = host_file_for(stream);
+    return f ? setvbuf(f, buffer, mode, size) : -1;
 }
 static PAPAYA_MS_ABI int hle_ungetc(int c, void* stream) {
-    return stream ? ungetc(c, static_cast<FILE*>(stream)) : EOF;
+    FILE* f = host_file_for(stream);
+    return f ? ungetc(c, f) : EOF;
 }
 static PAPAYA_MS_ABI wint_t hle_ungetwc(wint_t c, void* stream) {
-    return stream ? ungetwc(c, static_cast<FILE*>(stream)) : WEOF;
+    FILE* f = host_file_for(stream);
+    return f ? ungetwc(c, f) : WEOF;
 }
 static PAPAYA_MS_ABI int hle_freopen_s(void** pFile, const char* filename, const char* mode, void* oldStream) {
     if (!pFile) return -1;
-    *pFile = freopen(filename, mode, static_cast<FILE*>(oldStream));
-    return *pFile ? 0 : -1;
+    *pFile = nullptr;
+    FILE* old = host_file_for(oldStream);
+    if (!old || !mode) return -1;
+    std::string path = filename ? normalize_win_path(filename) : "";
+    FILE* nf = freopen(path.c_str(), mode, old);
+    if (nf) {
+        if (nf != old) unregister_host_file(old);
+        register_host_file(nf);
+    } else {
+        unregister_host_file(old);
+    }
+    *pFile = nf;
+    return nf ? 0 : -1;
 }
 
 static PAPAYA_MS_ABI int hle_stdio_common_vfprintf(uint64_t options, void* stream, const char* format, void* locale, va_list valist) {
@@ -5814,12 +5887,17 @@ static PAPAYA_MS_ABI void* hle_acrt_iob_func(unsigned idx) {
 }
 static PAPAYA_MS_ABI int* hle_p__commode() { static int c = 0; return &c; }
 static PAPAYA_MS_ABI int* hle_p__fmode() { static int f = 0; return &f; }
-static PAPAYA_MS_ABI int hle_fileno(void* stream) { return stream ? fileno(static_cast<FILE*>(stream)) : -1; }
+static PAPAYA_MS_ABI int hle_fileno(void* stream) {
+    FILE* f = host_file_for(stream);
+    return f ? fileno(f) : -1;
+}
 static PAPAYA_MS_ABI int64_t hle_fseeki64(void* stream, int64_t offset, int origin) {
-    return stream ? fseeko(static_cast<FILE*>(stream), offset, origin) : -1;
+    FILE* f = host_file_for(stream);
+    return f ? fseeko(f, offset, origin) : -1;
 }
 static PAPAYA_MS_ABI int64_t hle_ftelli64(void* stream) {
-    return stream ? ftello(static_cast<FILE*>(stream)) : -1;
+    FILE* f = host_file_for(stream);
+    return f ? ftello(f) : -1;
 }
 static PAPAYA_MS_ABI intptr_t hle_get_osfhandle(int fd) { return fd; }
 static PAPAYA_MS_ABI int hle_getmaxstdio() { return 512; }

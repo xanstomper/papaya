@@ -18,8 +18,8 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | d3d9.dll | 28 | 0 | 0% | NONE |
 | dcomp.dll | 24 | 0 | 0% | NONE |
 | ddraw.dll | 32 | 0 | 0% | NONE |
-| dinput.dll | 36 | 0 | 0% | NONE |
-| dinput8.dll | 34 | 0 | 0% | NONE |
+| dinput.dll | 36 | 3 | 8% | LOW |
+| dinput8.dll | 34 | 1 | 3% | LOW |
 | dsound.dll | 24 | 3 | 12% | LOW |
 | dwmapi.dll | 53 | 2 | 4% | LOW |
 | dwrite.dll | 13 | 1 | 8% | LOW |
@@ -45,10 +45,10 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | xinput1_3.dll | 20 | 7 | 35% | PARTIAL |
 | xinput1_4.dll | 19 | 7 | 37% | PARTIAL |
 | xinput9_1_0.dll | 16 | 3 | 19% | LOW |
-| **TOTAL** | **13397** | **785** | **6%** | |
+| **TOTAL** | **13397** | **789** | **6%** | |
 
 ## Notes
 
 - Status: NONE (0 impl), LOW (<20%), PARTIAL (20-79%), COVERED (>=80%).
 - `register_function` registration is later-wins; generic_stub registrations are excluded from the implemented set where they override nothing (audit with stub-vs-real counts).
-- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 38 DLL families.
+- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 40 DLL families.
