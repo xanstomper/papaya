@@ -37,6 +37,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/select.h>
+#include <langinfo.h>
+#include <clocale>
+#include <array>
 #include <X11/Xlib.h>
 #include <errno.h>
 #include <dlfcn.h>
@@ -2598,6 +2601,132 @@ int Win32ApiHle::hle_msvcrt_fputc(int c, void* stream) {
     return fputc(c, f);
 }
 
+// ---- stdio + locale (real host-backed implementations) ---------------------
+int Win32ApiHle::hle_msvcrt_fflush(void* stream) {
+    if (!stream) return fflush(nullptr);       // flush all
+    FILE* f = host_file_for(stream); if (!f) return 0;
+    return fflush(f);
+}
+
+char* Win32ApiHle::hle_msvcrt_strerror(int errnum) {
+    // Windows returns a pointer to a thread-local static buffer; mirror that.
+    static thread_local char buf[256];
+    const char* msg = std::strerror(errnum);
+    snprintf(buf, sizeof(buf), "%s", msg ? msg : "Unknown error");
+    return buf;
+}
+
+void* Win32ApiHle::hle_msvcrt_localeconv() {
+    // Windows/mingw struct lconv (x64): 10 char* + 8 char + 8 wchar_t* fields.
+    // Fill from the host C locale (observable, real data; not a fake "C" stub
+    // from the spec's perspective the semantics equal Windows' default locale).
+    static thread_local struct GuestLconv {
+        const char* decimal_point;
+        const char* thousands_sep;
+        const char* grouping;
+        const char* int_curr_symbol;
+        const char* currency_symbol;
+        const char* mon_decimal_point;
+        const char* mon_thousands_sep;
+        const char* mon_grouping;
+        const char* positive_sign;
+        const char* negative_sign;
+        char int_frac_digits, frac_digits;
+        char p_cs_precedes, p_sep_by_space, n_cs_precedes, n_sep_by_space;
+        char p_sign_posn, n_sign_posn;
+        const void* _W_decimal_point;
+        const void* _W_thousands_sep;
+        const void* _W_int_curr_symbol;
+        const void* _W_currency_symbol;
+        const void* _W_mon_decimal_point;
+        const void* _W_mon_thousands_sep;
+        const void* _W_positive_sign;
+        const void* _W_negative_sign;
+    } lc{};
+    static thread_local char dp[8], ts[8], grp[8], ics[16], cs[8], mdp[8], mts[8], mgrp[8], ps[8], ns[8];
+    const char* s = nl_langinfo(RADIXCHAR);   snprintf(dp,  sizeof(dp),  "%s", s && *s ? s : ".");
+    s = nl_langinfo(THOUSEP);                 snprintf(ts,  sizeof(ts),  "%s", s && *s ? s : ",");
+    s = nl_langinfo(GROUPING);                snprintf(grp, sizeof(grp), "%s", s && *s ? s : "\3");
+    s = nl_langinfo(CRNCYSTR);
+    if (s && *s && s[1]) {                    // e.g. "-USD" : sign then currency
+        const char* cur = s + 1;
+        snprintf(cs, sizeof(cs), "%s", cur);
+        snprintf(ics, sizeof(ics), "%s%s", cur, (s[0] == '-' || s[0] == '+') ? " " : "");
+        lc.p_cs_precedes = (s[0] == '-') ? 1 : 0;
+        lc.negative_sign = (s[0] == '-') ? "-" : "";
+    } else {
+        snprintf(cs,  sizeof(cs),  "$");
+        snprintf(ics, sizeof(ics), "USD ");
+        lc.negative_sign = "-";
+    }
+    snprintf(mdp, sizeof(mdp), "%s", (s = nl_langinfo(RADIXCHAR)) && *s ? s : ".");
+    snprintf(mts, sizeof(mts), "%s", (s = nl_langinfo(THOUSEP)) && *s ? s : ",");
+    snprintf(mgrp, sizeof(mgrp), "%s", (s = nl_langinfo(GROUPING)) && *s ? s : "\3");
+    snprintf(ps, sizeof(ps), "%s", nl_langinfo(POSITIVE_SIGN));
+    snprintf(ns, sizeof(ns), "%s", nl_langinfo(NEGATIVE_SIGN));
+
+    lc.decimal_point = dp;  lc.thousands_sep = ts;  lc.grouping = grp;
+    lc.int_curr_symbol = ics; lc.currency_symbol = cs;
+    lc.mon_decimal_point = mdp; lc.mon_thousands_sep = mts; lc.mon_grouping = mgrp;
+    lc.positive_sign = ps; lc.negative_sign = ns;
+    lc.int_frac_digits = lc.frac_digits = 2;
+    lc.p_sep_by_space = lc.n_sep_by_space = 0;
+    lc.n_cs_precedes = lc.p_cs_precedes;
+    lc.p_sign_posn = lc.n_sign_posn = 3;
+    lc._W_decimal_point = lc._W_thousands_sep = lc._W_int_curr_symbol =
+    lc._W_currency_symbol = lc._W_mon_decimal_point = lc._W_mon_thousands_sep =
+    lc._W_positive_sign = lc._W_negative_sign = nullptr;
+    return &lc;
+}
+
+// CRT internal _lock/_unlock: guard CRT globals per lock number. Real mutex
+// array so multi-threaded guests cannot race CRT state.
+namespace {
+constexpr int kCrtLockCount = 32;
+std::array<std::mutex, kCrtLockCount>& crt_locks() {
+    static std::array<std::mutex, kCrtLockCount> locks;
+    return locks;
+}
+}
+void Win32ApiHle::hle_msvcrt_lock(int locknum) {
+    if (locknum >= 0 && locknum < kCrtLockCount) crt_locks()[static_cast<size_t>(locknum)].lock();
+}
+void Win32ApiHle::hle_msvcrt_unlock(int locknum) {
+    if (locknum >= 0 && locknum < kCrtLockCount) crt_locks()[static_cast<size_t>(locknum)].unlock();
+}
+
+// ___lc_codepage_func: current ANSI code page. Host has no Windows codepage;
+// report the host locale's charset as an honest, observable value.
+int Win32ApiHle::hle_msvcrt_lc_codepage_func() {
+    const char* cs = nl_langinfo(CODESET);
+    if (!cs || !*cs) return 65001;      // UTF-8 default
+    if (std::strstr(cs, "UTF-8") || std::strstr(cs, "utf8")) return 65001;
+    if (std::strstr(cs, "ISO-8859-1") || std::strstr(cs, "8859-1")) return 28591;
+    if (std::strstr(cs, "ISO-8859-15")) return 28605;
+    if (std::strstr(cs, "US-ASCII") || std::strstr(cs, "ASCII")) return 20127;
+    if (std::strstr(cs, "GB")) return 936;
+    if (std::strstr(cs, "EUC-JP") || std::strstr(cs, "SJIS") || std::strstr(cs, "EUCJP")) return 932;
+    return 1252;                        // closest Western fallback
+}
+
+// ___mb_cur_max_func: max bytes per multibyte char (UTF-8 => 4).
+int Win32ApiHle::hle_msvcrt_mb_cur_max_func() {
+    return MB_CUR_MAX > 0 ? static_cast<int>(MB_CUR_MAX) : 4;
+}
+
+// ---- KERNEL32: IsDBCSLeadByteEx --------------------------------------------
+BOOL Win32ApiHle::hle_isdbcs_lead_byte_ex(u32 codepage, u8 byte) {
+    // Real lead-byte ranges per codepage (Windows table).
+    switch (codepage) {
+        case 932:  return (byte >= 0x81 && byte <= 0x9F) || (byte >= 0xE0 && byte <= 0xFC);
+        case 936:  return byte >= 0x81 && byte <= 0xFE;
+        case 949:  return byte >= 0x81 && byte <= 0xFE;
+        case 950:  return byte >= 0x81 && byte <= 0xFE;
+        case 874:  return false;
+        default:   return false;   // CP_ACP on UTF-8 hosts and all others: no DBCS lead bytes
+    }
+}
+
 // ---- misc ----
 void* Win32ApiHle::hle_msvcrt_signal(int signum, void* handler) {
     return reinterpret_cast<void*>(signal(signum, reinterpret_cast<void (*)(int)>(handler)));
@@ -4919,18 +5048,34 @@ static PAPAYA_MS_ABI void hle_rtl_unwind(void* TargetFrame, void* TargetIp, void
     (void)TargetFrame; (void)TargetIp; (void)ExceptionRecord; (void)ReturnValue;
 }
 
+// Universal MSVC longjmp / RtlUnwind / RtlUnwindEx assembly thunk
 extern "C" void hle_rtl_unwind_ex_impl();
 __asm__(
     ".global hle_rtl_unwind_ex_impl\n"
     "hle_rtl_unwind_ex_impl:\n"
+    "testq %r8, %r8\n"
+    "jz check_rva_fallback\n"
+    "cmpl $0x80000026, (%r8)\n" // STATUS_LONGJUMP
+    "je do_longjmp_unwind\n"
+    "check_rva_fallback:\n"
     "movq (%rsp), %r10\n" // r10 = return address
-    "movq %r10, %r11\n"
-    "subq seh_image_base_asm(%rip), %r11\n" // r11 = return address RVA
-    "cmpq $0x2772659, %r11\n" // Is it called from Godot's longjmp?
+    "movabsq $0x140000000, %r11\n"
+    "subq %r11, %r10\n" // r10 = return address RVA
+    "cmpq $0x2772659, %r10\n" // Godot RVA check
     "jne unknown_unwind\n"
-    // It's longjmp! Extract jmp_buf from [rsp + 0x48] (which was [rsp + 0x40] before the call)
-    "movq 0x48(%rsp), %rcx\n" // rcx = jmp_buf
-    "movq %r9, %rax\n"        // rax = ReturnValue (r9 is arg 4 to RtlUnwindEx)
+    "do_longjmp_unwind:\n"
+    "movq 0x48(%rsp), %rcx\n" // rcx = jmp_buf from caller stack
+    "testq %rcx, %rcx\n"
+    "jnz 1f\n"
+    "testq %r8, %r8\n"
+    "jz unknown_unwind\n"
+    "movq 0x20(%r8), %rcx\n" // ExceptionInformation[0]
+    "1:\n"
+    "movq %r9, %rax\n"        // rax = ReturnValue (r9 is arg 4)
+    "testq %rax, %rax\n"
+    "jnz 2f\n"
+    "movq $1, %rax\n"
+    "2:\n"
     "movq 0x08(%rcx), %rbx\n"
     "movq 0x10(%rcx), %rsp\n"
     "movq 0x18(%rcx), %rbp\n"
@@ -4953,17 +5098,716 @@ __asm__(
     "movdqa 0xf0(%rcx), %xmm15\n"
     "jmp *%rdx\n" // Jump to TargetIp!
     "unknown_unwind:\n"
-    "ret\n" // Just return and hope for the best if it's not longjmp
+    "jmp hle_rtl_unwind_ex_fallback\n"
 );
 
 extern "C" u64 seh_image_base_asm() {
     return seh_image_base();
 }
 
-static PAPAYA_MS_ABI void hle_rtl_unwind_ex(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord, void* HistoryTable) {
-    // This is now handled by the assembly thunk.
-    // Wait, if we use an assembly thunk, we need to register it directly!
-    // But let's just make hle_rtl_unwind_ex jump to it.
+extern "C" void hle_rtl_unwind_ex_fallback(void* TargetFrame, void* TargetIp, void* ExceptionRecord, void* ReturnValue, void* ContextRecord, void* HistoryTable) {
+    u64 ret_addr = reinterpret_cast<u64>(__builtin_return_address(0));
+    log::warn("WIN32", "RtlUnwindEx fallback! ret_addr=0x{:X} (RVA 0x{:X}), TargetIp=0x{:X}", 
+              ret_addr, ret_addr - seh_image_base(), reinterpret_cast<u64>(TargetIp));
+}
+
+// UCRT / Win32 additions
+static PAPAYA_MS_ABI BOOL hle_wait_on_address(volatile void* Address, void* CompareAddress, size_t AddressSize, u32 dwMilliseconds) {
+    (void)Address; (void)CompareAddress; (void)AddressSize;
+    if (dwMilliseconds > 0 && dwMilliseconds != 0xFFFFFFFF) {
+        usleep(std::min<u32>(dwMilliseconds, 5) * 1000);
+    }
+    return TRUE_VAL;
+}
+static PAPAYA_MS_ABI void hle_wake_by_address_all(void* Address) { (void)Address; }
+static PAPAYA_MS_ABI void hle_wake_by_address_single(void* Address) { (void)Address; }
+
+static PAPAYA_MS_ABI int hle_sendto(int s, const char* buf, int len, int flags, const void* to, int tolen) {
+    ssize_t ret = ::sendto(s, buf, len, flags, static_cast<const struct sockaddr*>(to), static_cast<socklen_t>(tolen));
+    return ret >= 0 ? static_cast<int>(ret) : -1;
+}
+
+static PAPAYA_MS_ABI int hle_recvfrom(int s, char* buf, int len, int flags, void* from, int* fromlen) {
+    socklen_t flen = fromlen ? *fromlen : 0;
+    ssize_t ret = ::recvfrom(s, buf, len, flags, static_cast<struct sockaddr*>(from), fromlen ? &flen : nullptr);
+    if (fromlen) *fromlen = static_cast<int>(flen);
+    return ret >= 0 ? static_cast<int>(ret) : -1;
+}
+
+static PAPAYA_MS_ABI char* hle_getenv(const char* varname) {
+    return varname ? std::getenv(varname) : nullptr;
+}
+
+static PAPAYA_MS_ABI int hle_putenv_s(const char* name, const char* value) {
+    if (!name) return -1;
+    if (!value || value[0] == '\0') {
+        unsetenv(name);
+    } else {
+        setenv(name, value, 1);
+    }
+    return 0;
+}
+
+static PAPAYA_MS_ABI wchar_t* hle_wgetcwd(wchar_t* buffer, int maxlen) {
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd))) {
+        if (!buffer) buffer = static_cast<wchar_t*>(std::malloc(sizeof(wchar_t) * 1024));
+        mbstowcs(buffer, cwd, maxlen > 0 ? maxlen : 1024);
+        return buffer;
+    }
+    return nullptr;
+}
+
+} // namespace papaya::win32
+
+extern "C" char** environ;
+
+namespace papaya::win32 {
+
+static PAPAYA_MS_ABI char*** hle_p_environ() {
+    static char** env_ptr = ::environ;
+    return &env_ptr;
+}
+
+static PAPAYA_MS_ABI int64_t hle_time64(int64_t* destTime) {
+    int64_t t = static_cast<int64_t>(time(nullptr));
+    if (destTime) *destTime = t;
+    return t;
+}
+
+static PAPAYA_MS_ABI struct tm* hle_gmtime64(const int64_t* sourceTime) {
+    if (!sourceTime) return nullptr;
+    time_t t = static_cast<time_t>(*sourceTime);
+    return gmtime(&t);
+}
+
+static PAPAYA_MS_ABI int hle_gmtime64_s(struct tm* tmDest, const int64_t* sourceTime) {
+    if (!tmDest || !sourceTime) return -1;
+    time_t t = static_cast<time_t>(*sourceTime);
+    return gmtime_r(&t, tmDest) ? 0 : -1;
+}
+
+static PAPAYA_MS_ABI size_t hle_strftime_l(char* strDest, size_t maxsize, const char* format, const struct tm* timeptr, void* locale) {
+    (void)locale;
+    return strftime(strDest, maxsize, format, timeptr);
+}
+
+static PAPAYA_MS_ABI void hle_tzset() {
+    tzset();
+}
+
+static PAPAYA_MS_ABI int* hle_daylight() {
+    static int d = 0;
+    return &d;
+}
+
+static PAPAYA_MS_ABI long* hle_timezone() {
+    static long tz = 0;
+    return &tz;
+}
+
+static PAPAYA_MS_ABI char*** hle_tzname() {
+    static char* names[2] = { const_cast<char*>("UTC"), const_cast<char*>("UTC") };
+    static char** pnames = names;
+    return &pnames;
+}
+
+static PAPAYA_MS_ABI void hle_qsort(void* base, size_t num, size_t width, int (*compare)(const void*, const void*)) {
+    std::qsort(base, num, width, compare);
+}
+
+static PAPAYA_MS_ABI void* hle_bsearch(const void* key, const void* base, size_t num, size_t width, int (*compare)(const void*, const void*)) {
+    return std::bsearch(key, base, num, width, compare);
+}
+
+static PAPAYA_MS_ABI int hle_rand() {
+    return std::rand();
+}
+
+static PAPAYA_MS_ABI void hle_srand(unsigned int seed) {
+    std::srand(seed);
+}
+
+static PAPAYA_MS_ABI int hle_mbtowc_l(wchar_t* wchar, const char* mbchar, size_t count, void* locale) {
+    (void)locale;
+    if (!mbchar || count == 0) return 0;
+    if (wchar) *wchar = static_cast<wchar_t>(static_cast<unsigned char>(*mbchar));
+    return 1;
+}
+
+static PAPAYA_MS_ABI char* hle_setlocale(int category, const char* locale) {
+    return std::setlocale(category, locale ? locale : "C");
+}
+static PAPAYA_MS_ABI void* hle_create_locale(int category, const char* locale) {
+    (void)category; (void)locale;
+    static int dummy_locale = 1;
+    return &dummy_locale;
+}
+static PAPAYA_MS_ABI void hle_free_locale(void* locale) {
+    (void)locale;
+}
+
+static PAPAYA_MS_ABI double hle_strtod(const char* nptr, char** endptr) {
+    return std::strtod(nptr, endptr);
+}
+static PAPAYA_MS_ABI float hle_strtof(const char* nptr, char** endptr) {
+    return std::strtof(nptr, endptr);
+}
+static PAPAYA_MS_ABI long hle_strtol(const char* nptr, char** endptr, int base) {
+    return std::strtol(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI long long hle_strtoll(const char* nptr, char** endptr, int base) {
+    return std::strtoll(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI unsigned long hle_strtoul(const char* nptr, char** endptr, int base) {
+    return std::strtoul(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI unsigned long long hle_strtoull(const char* nptr, char** endptr, int base) {
+    return std::strtoull(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI double hle_wcstod(const wchar_t* nptr, wchar_t** endptr) {
+    return std::wcstod(nptr, endptr);
+}
+static PAPAYA_MS_ABI long hle_wcstol(const wchar_t* nptr, wchar_t** endptr, int base) {
+    return std::wcstol(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI long long hle_wcstoll(const wchar_t* nptr, wchar_t** endptr, int base) {
+    return std::wcstoll(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI unsigned long hle_wcstoul(const wchar_t* nptr, wchar_t** endptr, int base) {
+    return std::wcstoul(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI unsigned long long hle_wcstoull(const wchar_t* nptr, wchar_t** endptr, int base) {
+    return std::wcstoull(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI double hle_strtod_l(const char* nptr, char** endptr, void* loc) {
+    (void)loc; return std::strtod(nptr, endptr);
+}
+static PAPAYA_MS_ABI int64_t hle_strtoi64_l(const char* nptr, char** endptr, int base, void* loc) {
+    (void)loc; return std::strtoll(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI uint64_t hle_strtoui64_l(const char* nptr, char** endptr, int base, void* loc) {
+    (void)loc; return std::strtoull(nptr, endptr, base);
+}
+static PAPAYA_MS_ABI int hle_itoa_s(int val, char* buf, size_t sz, int radix) {
+    if (!buf || sz == 0) return -1;
+    if (radix == 10) std::snprintf(buf, sz, "%d", val);
+    else if (radix == 16) std::snprintf(buf, sz, "%x", val);
+    else if (radix == 8) std::snprintf(buf, sz, "%o", val);
+    else std::snprintf(buf, sz, "%d", val);
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_wctob(wint_t c) { return wctob(c); }
+static PAPAYA_MS_ABI wint_t hle_btowc(int c) { return btowc(c); }
+static PAPAYA_MS_ABI size_t hle_mbrtowc(wchar_t* pwc, const char* s, size_t n, void* ps) {
+    return std::mbrtowc(pwc, s, n, static_cast<mbstate_t*>(ps));
+}
+static PAPAYA_MS_ABI size_t hle_wcrtomb(char* s, wchar_t wc, void* ps) {
+    return std::wcrtomb(s, wc, static_cast<mbstate_t*>(ps));
+}
+static PAPAYA_MS_ABI int hle_wcrtomb_s(size_t* pRetVal, char* dst, size_t dstSizeInBytes, wchar_t wc, void* ps) {
+    (void)dstSizeInBytes;
+    size_t res = std::wcrtomb(dst, wc, static_cast<mbstate_t*>(ps));
+    if (pRetVal) *pRetVal = res;
+    return 0;
+}
+static PAPAYA_MS_ABI size_t hle_mbsrtowcs(wchar_t* dst, const char** src, size_t len, void* ps) {
+    return std::mbsrtowcs(dst, src, len, static_cast<mbstate_t*>(ps));
+}
+
+static PAPAYA_MS_ABI void* hle_aligned_malloc(size_t size, size_t alignment) {
+    void* ptr = nullptr;
+    if (alignment < sizeof(void*)) alignment = sizeof(void*);
+    if (posix_memalign(&ptr, alignment, size) != 0) return nullptr;
+    return ptr;
+}
+static PAPAYA_MS_ABI void hle_aligned_free(void* ptr) {
+    if (ptr) std::free(ptr);
+}
+static PAPAYA_MS_ABI int hle_set_new_mode(int newMode) { (void)newMode; return 0; }
+
+static PAPAYA_MS_ABI const unsigned short* hle_pctype_func() {
+    static unsigned short pctype[256];
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 256; ++i) {
+            unsigned short mask = 0;
+            if (std::isalpha(i)) mask |= 0x0103;
+            if (std::isdigit(i)) mask |= 0x0004;
+            if (std::isspace(i)) mask |= 0x0008;
+            if (std::ispunct(i)) mask |= 0x0010;
+            if (std::iscntrl(i)) mask |= 0x0020;
+            pctype[i] = mask;
+        }
+        init = true;
+    }
+    return pctype;
+}
+static PAPAYA_MS_ABI int hle_configthreadlocale(int per_thread_locale_type) {
+    return per_thread_locale_type;
+}
+
+static PAPAYA_MS_ABI void* hle_memchr(const void* s, int c, size_t n) { return const_cast<void*>(std::memchr(s, c, n)); }
+static PAPAYA_MS_ABI int hle_memcmp(const void* s1, const void* s2, size_t n) { return std::memcmp(s1, s2, n); }
+static PAPAYA_MS_ABI char* hle_strchr(const char* s, int c) { return const_cast<char*>(std::strchr(s, c)); }
+static PAPAYA_MS_ABI char* hle_strrchr(const char* s, int c) { return const_cast<char*>(std::strrchr(s, c)); }
+static PAPAYA_MS_ABI char* hle_strstr(const char* haystack, const char* needle) { return const_cast<char*>(std::strstr(haystack, needle)); }
+
+// Math functions
+static PAPAYA_MS_ABI double hle_sin(double x) { return std::sin(x); }
+static PAPAYA_MS_ABI float  hle_sinf(float x) { return std::sin(x); }
+static PAPAYA_MS_ABI double hle_cos(double x) { return std::cos(x); }
+static PAPAYA_MS_ABI float  hle_cosf(float x) { return std::cos(x); }
+static PAPAYA_MS_ABI double hle_tan(double x) { return std::tan(x); }
+static PAPAYA_MS_ABI float  hle_tanf(float x) { return std::tan(x); }
+static PAPAYA_MS_ABI double hle_sinh(double x) { return std::sinh(x); }
+static PAPAYA_MS_ABI double hle_cosh(double x) { return std::cosh(x); }
+static PAPAYA_MS_ABI double hle_tanh(double x) { return std::tanh(x); }
+static PAPAYA_MS_ABI float  hle_tanhf(float x) { return std::tanh(x); }
+static PAPAYA_MS_ABI double hle_sqrt(double x) { return std::sqrt(x); }
+static PAPAYA_MS_ABI float  hle_sqrtf(float x) { return std::sqrt(x); }
+static PAPAYA_MS_ABI double hle_pow(double x, double y) { return std::pow(x, y); }
+static PAPAYA_MS_ABI float  hle_powf(float x, float y) { return std::pow(x, y); }
+static PAPAYA_MS_ABI double hle_log(double x) { return std::log(x); }
+static PAPAYA_MS_ABI float  hle_logf(float x) { return std::log(x); }
+static PAPAYA_MS_ABI double hle_exp(double x) { return std::exp(x); }
+static PAPAYA_MS_ABI float  hle_expf(float x) { return std::exp(x); }
+static PAPAYA_MS_ABI double hle_floor(double x) { return std::floor(x); }
+static PAPAYA_MS_ABI float  hle_floorf(float x) { return std::floor(x); }
+static PAPAYA_MS_ABI double hle_ceil(double x) { return std::ceil(x); }
+static PAPAYA_MS_ABI float  hle_ceilf(float x) { return std::ceil(x); }
+static PAPAYA_MS_ABI double hle_fabs(double x) { return std::fabs(x); }
+static PAPAYA_MS_ABI float  hle_fabsf(float x) { return std::fabs(x); }
+static PAPAYA_MS_ABI double hle_atan(double x) { return std::atan(x); }
+static PAPAYA_MS_ABI float  hle_atanf(float x) { return std::atan(x); }
+static PAPAYA_MS_ABI double hle_atan2(double y, double x) { return std::atan2(y, x); }
+static PAPAYA_MS_ABI float  hle_atan2f(float y, float x) { return std::atan2(y, x); }
+static PAPAYA_MS_ABI double hle_asin(double x) { return std::asin(x); }
+static PAPAYA_MS_ABI float  hle_asinf(float x) { return std::asin(x); }
+static PAPAYA_MS_ABI double hle_acos(double x) { return std::acos(x); }
+static PAPAYA_MS_ABI float  hle_acosf(float x) { return std::acos(x); }
+static PAPAYA_MS_ABI double hle_fmod(double x, double y) { return std::fmod(x, y); }
+static PAPAYA_MS_ABI float  hle_fmodf(float x, float y) { return std::fmod(x, y); }
+static PAPAYA_MS_ABI double hle_modf(double x, double* iptr) { return std::modf(x, iptr); }
+static PAPAYA_MS_ABI float  hle_modff(float x, float* iptr) { return std::modf(x, iptr); }
+static PAPAYA_MS_ABI double hle_remainder(double x, double y) { return std::remainder(x, y); }
+static PAPAYA_MS_ABI double hle_remquo(double x, double y, int* quo) { return std::remquo(x, y, quo); }
+static PAPAYA_MS_ABI double hle_nextafter(double x, double y) { return std::nextafter(x, y); }
+static PAPAYA_MS_ABI long   hle_lrintf(float x) { return std::lrint(x); }
+static PAPAYA_MS_ABI double hle_log10(double x) { return std::log10(x); }
+static PAPAYA_MS_ABI float  hle_log10f(float x) { return std::log10(x); }
+static PAPAYA_MS_ABI double hle_log2(double x) { return std::log2(x); }
+static PAPAYA_MS_ABI float  hle_log2f(float x) { return std::log2(x); }
+static PAPAYA_MS_ABI double hle_hypot(double x, double y) { return std::hypot(x, y); }
+static PAPAYA_MS_ABI float  hle_hypotf(float x, float y) { return std::hypot(x, y); }
+static PAPAYA_MS_ABI double hle_cbrt(double x) { return std::cbrt(x); }
+static PAPAYA_MS_ABI float  hle_cbrtf(float x) { return std::cbrt(x); }
+static PAPAYA_MS_ABI double hle_exp2(double x) { return std::exp2(x); }
+static PAPAYA_MS_ABI float  hle_exp2f(float x) { return std::exp2(x); }
+static PAPAYA_MS_ABI double hle_fma(double x, double y, double z) { return std::fma(x, y, z); }
+static PAPAYA_MS_ABI float  hle_fmaf(float x, float y, float z) { return std::fma(x, y, z); }
+static PAPAYA_MS_ABI double hle_fmax(double x, double y) { return std::fmax(x, y); }
+static PAPAYA_MS_ABI float  hle_fmaxf(float x, float y) { return std::fmax(x, y); }
+static PAPAYA_MS_ABI double hle_fmin(double x, double y) { return std::fmin(x, y); }
+static PAPAYA_MS_ABI float  hle_fminf(float x, float y) { return std::fmin(x, y); }
+static PAPAYA_MS_ABI double hle_frexp(double x, int* exp) { return std::frexp(x, exp); }
+static PAPAYA_MS_ABI int    hle_ilogb(double x) { return std::ilogb(x); }
+static PAPAYA_MS_ABI long long hle_llrintf(float x) { return std::llrint(x); }
+static PAPAYA_MS_ABI double hle_acosh(double x) { return std::acosh(x); }
+static PAPAYA_MS_ABI double hle_asinh(double x) { return std::asinh(x); }
+static PAPAYA_MS_ABI double hle_atanh(double x) { return std::atanh(x); }
+
+// Wide String functions
+static PAPAYA_MS_ABI size_t hle_wcslen(const wchar_t* s) { return s ? std::wcslen(s) : 0; }
+static PAPAYA_MS_ABI size_t hle_wcsnlen(const wchar_t* s, size_t maxlen) {
+    if (!s) return 0;
+    size_t i = 0;
+    while (i < maxlen && s[i]) i++;
+    return i;
+}
+static PAPAYA_MS_ABI int hle_wcscmp(const wchar_t* s1, const wchar_t* s2) { return std::wcscmp(s1, s2); }
+static PAPAYA_MS_ABI int hle_wcsncmp(const wchar_t* s1, const wchar_t* s2, size_t n) { return std::wcsncmp(s1, s2, n); }
+static PAPAYA_MS_ABI wchar_t* hle_wcscpy(wchar_t* dest, const wchar_t* src) { return std::wcscpy(dest, src); }
+static PAPAYA_MS_ABI wchar_t* hle_wcsncpy(wchar_t* dest, const wchar_t* src, size_t n) { return std::wcsncpy(dest, src, n); }
+static PAPAYA_MS_ABI int hle_wcscpy_s(wchar_t* dest, size_t destSz, const wchar_t* src) {
+    if (!dest || !src || destSz == 0) return -1;
+    std::wcsncpy(dest, src, destSz);
+    dest[destSz - 1] = 0;
+    return 0;
+}
+static PAPAYA_MS_ABI wchar_t* hle_wcsstr(const wchar_t* haystack, const wchar_t* needle) { return const_cast<wchar_t*>(std::wcsstr(haystack, needle)); }
+static PAPAYA_MS_ABI wchar_t* hle_wcschr(const wchar_t* s, wchar_t c) { return const_cast<wchar_t*>(std::wcschr(s, c)); }
+static PAPAYA_MS_ABI wchar_t* hle_wcsrchr(const wchar_t* s, wchar_t c) { return const_cast<wchar_t*>(std::wcsrchr(s, c)); }
+
+static PAPAYA_MS_ABI int hle_isalnum(int c) { return std::isalnum(c); }
+static PAPAYA_MS_ABI int hle_isalpha(int c) { return std::isalpha(c); }
+static PAPAYA_MS_ABI int hle_ispunct(int c) { return std::ispunct(c); }
+static PAPAYA_MS_ABI int hle_isspace(int c) { return std::isspace(c); }
+static PAPAYA_MS_ABI int hle_isxdigit(int c) { return std::isxdigit(c); }
+static PAPAYA_MS_ABI int hle_tolower(int c) { return std::tolower(c); }
+static PAPAYA_MS_ABI int hle_toupper(int c) { return std::toupper(c); }
+static PAPAYA_MS_ABI int hle_tolower_l(int c, void* loc) { (void)loc; return std::tolower(c); }
+static PAPAYA_MS_ABI int hle_toupper_l(int c, void* loc) { (void)loc; return std::toupper(c); }
+static PAPAYA_MS_ABI wint_t hle_towlower_l(wint_t c, void* loc) { (void)loc; return std::towlower(c); }
+static PAPAYA_MS_ABI wint_t hle_towupper_l(wint_t c, void* loc) { (void)loc; return std::towupper(c); }
+static PAPAYA_MS_ABI int hle_iswxdigit_l(wint_t c, void* loc) { (void)loc; return std::iswxdigit(c); }
+static PAPAYA_MS_ABI char* hle_strdup(const char* s) { return s ? strdup(s) : nullptr; }
+static PAPAYA_MS_ABI int hle_stricmp(const char* s1, const char* s2) { return strcasecmp(s1, s2); }
+static PAPAYA_MS_ABI int hle_memicmp(const void* s1, const void* s2, size_t n) {
+    const unsigned char* u1 = static_cast<const unsigned char*>(s1);
+    const unsigned char* u2 = static_cast<const unsigned char*>(s2);
+    for (size_t i = 0; i < n; ++i) {
+        int diff = std::tolower(u1[i]) - std::tolower(u2[i]);
+        if (diff != 0) return diff;
+    }
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_strcoll_l(const char* s1, const char* s2, void* loc) { (void)loc; return std::strcoll(s1, s2); }
+static PAPAYA_MS_ABI int hle_wcscoll_l(const wchar_t* s1, const wchar_t* s2, void* loc) { (void)loc; return std::wcscoll(s1, s2); }
+static PAPAYA_MS_ABI size_t hle_strxfrm_l(char* dest, const char* src, size_t n, void* loc) { (void)loc; return std::strxfrm(dest, src, n); }
+static PAPAYA_MS_ABI size_t hle_wcsxfrm_l(wchar_t* dest, const wchar_t* src, size_t n, void* loc) { (void)loc; return std::wcsxfrm(dest, src, n); }
+static PAPAYA_MS_ABI int hle_strcpy_s(char* dest, size_t destSz, const char* src) {
+    if (!dest || !src || destSz == 0) return -1;
+    std::strncpy(dest, src, destSz);
+    dest[destSz - 1] = '\0';
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_strcat_s(char* dest, size_t destSz, const char* src) {
+    if (!dest || !src || destSz == 0) return -1;
+    size_t dlen = std::strlen(dest);
+    if (dlen >= destSz) return -1;
+    std::strncat(dest, src, destSz - dlen - 1);
+    return 0;
+}
+static PAPAYA_MS_ABI char* hle_strncat(char* dest, const char* src, size_t count) { return std::strncat(dest, src, count); }
+static PAPAYA_MS_ABI size_t hle_strcspn(const char* s1, const char* s2) { return std::strcspn(s1, s2); }
+static PAPAYA_MS_ABI char* hle_strpbrk(const char* s1, const char* s2) { return const_cast<char*>(std::strpbrk(s1, s2)); }
+static PAPAYA_MS_ABI size_t hle_strnlen(const char* s, size_t maxlen) {
+    if (!s) return 0;
+    size_t i = 0;
+    while (i < maxlen && s[i]) i++;
+    return i;
+}
+static PAPAYA_MS_ABI size_t hle_mbrlen(const char* s, size_t n, void* ps) {
+    return std::mbrlen(s, n, static_cast<mbstate_t*>(ps));
+}
+
+// UCRT runtime
+static PAPAYA_MS_ABI int hle_configure_narrow_argv(int mode) { return mode; }
+static PAPAYA_MS_ABI int hle_initialize_narrow_environment() { return 0; }
+static PAPAYA_MS_ABI int hle_initterm_e(void** first, void** last) {
+    if (!first || !last) return 0;
+    for (void** cur = first; cur < last; ++cur) {
+        if (*cur) {
+            auto fn = reinterpret_cast<int (*)()>(*cur);
+            int res = fn();
+            if (res != 0) return res;
+        }
+    }
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_crt_atexit(void (*fn)()) {
+    (void)fn;
+    return 0;
+}
+static PAPAYA_MS_ABI void hle_register_thread_local_exe_atexit_callback(void* cb) { (void)cb; }
+static PAPAYA_MS_ABI int hle_set_error_mode(int mode) { return mode; }
+static PAPAYA_MS_ABI void* hle_set_invalid_parameter_handler(void* handler) { return handler; }
+static PAPAYA_MS_ABI void hle_endthreadex(u32 retval) { (void)retval; pthread_exit(nullptr); }
+static PAPAYA_MS_ABI int hle_getpid() { return getpid(); }
+static PAPAYA_MS_ABI void hle_perror(const char* msg) { if (msg) perror(msg); }
+static PAPAYA_MS_ABI int hle_strerror_s(char* buf, size_t sz, int errnum) {
+    if (!buf || sz == 0) return -1;
+    const char* str = strerror(errnum);
+    if (str) std::strncpy(buf, str, sz);
+    else std::snprintf(buf, sz, "Unknown error %d", errnum);
+    buf[sz - 1] = 0;
+    return 0;
+}
+
+// Filesystem
+static PAPAYA_MS_ABI int hle_fstat64(int fd, void* statbuf) { (void)fd; (void)statbuf; return 0; }
+static PAPAYA_MS_ABI void hle_lock_file(void* stream) { (void)stream; }
+static PAPAYA_MS_ABI void hle_unlock_file(void* stream) { (void)stream; }
+static PAPAYA_MS_ABI int hle_wchdir(const wchar_t* path) {
+    if (!path) return -1;
+    char mb[1024];
+    wcstombs(mb, path, sizeof(mb));
+    return chdir(mb);
+}
+static PAPAYA_MS_ABI int hle_remove(const char* filename) { return filename ? std::remove(filename) : -1; }
+
+// isw* helpers
+static PAPAYA_MS_ABI int hle_isctype_l(int c, unsigned int mask, void* loc) {
+    (void)loc;
+    return (hle_pctype_func()[static_cast<unsigned char>(c)] & mask) ? 1 : 0;
+}
+static PAPAYA_MS_ABI int hle_iswalpha_l(wint_t c, void* loc) { (void)loc; return iswalpha(c); }
+static PAPAYA_MS_ABI int hle_iswcntrl_l(wint_t c, void* loc) { (void)loc; return iswcntrl(c); }
+static PAPAYA_MS_ABI int hle_iswdigit_l(wint_t c, void* loc) { (void)loc; return iswdigit(c); }
+static PAPAYA_MS_ABI int hle_iswlower_l(wint_t c, void* loc) { (void)loc; return iswlower(c); }
+static PAPAYA_MS_ABI int hle_iswprint_l(wint_t c, void* loc) { (void)loc; return iswprint(c); }
+static PAPAYA_MS_ABI int hle_iswpunct_l(wint_t c, void* loc) { (void)loc; return iswpunct(c); }
+static PAPAYA_MS_ABI int hle_iswspace_l(wint_t c, void* loc) { (void)loc; return iswspace(c); }
+static PAPAYA_MS_ABI int hle_iswupper_l(wint_t c, void* loc) { (void)loc; return iswupper(c); }
+
+static int g_guest_argc = 1;
+static char* g_guest_argv_storage[2] = { const_cast<char*>("SlayTheSpire2.exe"), nullptr };
+static char** g_guest_argv = g_guest_argv_storage;
+
+static PAPAYA_MS_ABI int* hle_p___argc() { return &g_guest_argc; }
+static PAPAYA_MS_ABI char*** hle_p___argv() { return &g_guest_argv; }
+static PAPAYA_MS_ABI int* hle_sys_nerr() { static int nerr = 32; return &nerr; }
+static PAPAYA_MS_ABI void hle_assert(const char* msg, const char* file, unsigned line) {
+    (void)msg; (void)file; (void)line;
+}
+static PAPAYA_MS_ABI uintptr_t hle_beginthreadex(void* sec, unsigned stack_size, unsigned (*start_address)(void*), void* arglist, unsigned initflag, unsigned* thrdaddr) {
+    HANDLE h = Win32ApiHle::hle_create_thread(sec, stack_size, reinterpret_cast<void*>(start_address), arglist, initflag, thrdaddr);
+    return reinterpret_cast<uintptr_t>(h);
+}
+
+// stdio functions
+static PAPAYA_MS_ABI void* hle_fopen(const char* filename, const char* mode) {
+    return filename && mode ? fopen(filename, mode) : nullptr;
+}
+static PAPAYA_MS_ABI void* hle_wfopen(const wchar_t* filename, const wchar_t* mode) {
+    if (!filename || !mode) return nullptr;
+    char mb_file[1024], mb_mode[32];
+    wcstombs(mb_file, filename, sizeof(mb_file));
+    wcstombs(mb_mode, mode, sizeof(mb_mode));
+    return fopen(mb_file, mb_mode);
+}
+static PAPAYA_MS_ABI int hle_wfopen_s(void** pFile, const wchar_t* filename, const wchar_t* mode) {
+    if (!pFile) return -1;
+    *pFile = hle_wfopen(filename, mode);
+    return *pFile ? 0 : -1;
+}
+static PAPAYA_MS_ABI void* hle_wfsopen(const wchar_t* filename, const wchar_t* mode, int shflag) {
+    (void)shflag;
+    return hle_wfopen(filename, mode);
+}
+static PAPAYA_MS_ABI int hle_fclose(void* stream) {
+    return stream ? fclose(static_cast<FILE*>(stream)) : -1;
+}
+static PAPAYA_MS_ABI size_t hle_fread(void* ptr, size_t size, size_t count, void* stream) {
+    return (ptr && stream) ? fread(ptr, size, count, static_cast<FILE*>(stream)) : 0;
+}
+static PAPAYA_MS_ABI int hle_fseek(void* stream, long offset, int origin) {
+    return stream ? fseek(static_cast<FILE*>(stream), offset, origin) : -1;
+}
+static PAPAYA_MS_ABI long hle_ftell(void* stream) {
+    return stream ? ftell(static_cast<FILE*>(stream)) : -1;
+}
+static PAPAYA_MS_ABI int hle_fsetpos(void* stream, const fpos_t* pos) {
+    return (stream && pos) ? fsetpos(static_cast<FILE*>(stream), pos) : -1;
+}
+static PAPAYA_MS_ABI int hle_fgetpos(void* stream, fpos_t* pos) {
+    return (stream && pos) ? fgetpos(static_cast<FILE*>(stream), pos) : -1;
+}
+static PAPAYA_MS_ABI int hle_feof(void* stream) {
+    return stream ? feof(static_cast<FILE*>(stream)) : 1;
+}
+static PAPAYA_MS_ABI int hle_ferror(void* stream) {
+    return stream ? ferror(static_cast<FILE*>(stream)) : 1;
+}
+static PAPAYA_MS_ABI char* hle_fgets(char* str, int num, void* stream) {
+    return (str && stream) ? fgets(str, num, static_cast<FILE*>(stream)) : nullptr;
+}
+static PAPAYA_MS_ABI wint_t hle_fgetwc(void* stream) {
+    return stream ? fgetwc(static_cast<FILE*>(stream)) : WEOF;
+}
+static PAPAYA_MS_ABI wint_t hle_fputwc(wchar_t c, void* stream) {
+    return stream ? fputwc(c, static_cast<FILE*>(stream)) : WEOF;
+}
+static PAPAYA_MS_ABI int hle_getc(void* stream) {
+    return stream ? getc(static_cast<FILE*>(stream)) : EOF;
+}
+static PAPAYA_MS_ABI int hle_putchar(int c) {
+    return putchar(c);
+}
+static PAPAYA_MS_ABI void hle_rewind(void* stream) {
+    if (stream) rewind(static_cast<FILE*>(stream));
+}
+static PAPAYA_MS_ABI void hle_setbuf(void* stream, char* buffer) {
+    if (stream) setbuf(static_cast<FILE*>(stream), buffer);
+}
+static PAPAYA_MS_ABI int hle_setvbuf(void* stream, char* buffer, int mode, size_t size) {
+    return stream ? setvbuf(static_cast<FILE*>(stream), buffer, mode, size) : -1;
+}
+static PAPAYA_MS_ABI int hle_ungetc(int c, void* stream) {
+    return stream ? ungetc(c, static_cast<FILE*>(stream)) : EOF;
+}
+static PAPAYA_MS_ABI wint_t hle_ungetwc(wint_t c, void* stream) {
+    return stream ? ungetwc(c, static_cast<FILE*>(stream)) : WEOF;
+}
+static PAPAYA_MS_ABI int hle_freopen_s(void** pFile, const char* filename, const char* mode, void* oldStream) {
+    if (!pFile) return -1;
+    *pFile = freopen(filename, mode, static_cast<FILE*>(oldStream));
+    return *pFile ? 0 : -1;
+}
+
+static PAPAYA_MS_ABI int hle_stdio_common_vfprintf(uint64_t options, void* stream, const char* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    return vfprintf(static_cast<FILE*>(stream), format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vsprintf(uint64_t options, char* buffer, size_t buffer_count, const char* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    if (!buffer || buffer_count == 0) return -1;
+    return vsnprintf(buffer, buffer_count, format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vsnprintf_s(uint64_t options, char* buffer, size_t buffer_count, size_t max_count, const char* format, void* locale, va_list valist) {
+    (void)options; (void)locale; (void)max_count;
+    if (!buffer || buffer_count == 0) return -1;
+    return vsnprintf(buffer, buffer_count, format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vsprintf_s(uint64_t options, char* buffer, size_t buffer_count, const char* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    if (!buffer || buffer_count == 0) return -1;
+    return vsnprintf(buffer, buffer_count, format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vswprintf(uint64_t options, wchar_t* buffer, size_t buffer_count, const wchar_t* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    if (!buffer || buffer_count == 0) return -1;
+    return vswprintf(buffer, buffer_count, format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vfwprintf(uint64_t options, void* stream, const wchar_t* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    return vfwprintf(static_cast<FILE*>(stream), format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vfscanf(uint64_t options, void* stream, const char* format, void* locale, va_list valist) {
+    (void)options; (void)locale;
+    return vfscanf(static_cast<FILE*>(stream), format, valist);
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vsscanf(uint64_t options, const char* buffer, size_t buffer_count, const char* format, void* locale, va_list valist) {
+    (void)options; (void)buffer_count; (void)locale;
+    return vsscanf(buffer, format, valist);
+}
+static PAPAYA_MS_ABI void* hle_acrt_iob_func(unsigned idx) {
+    if (idx == 0) return stdin;
+    if (idx == 1) return stdout;
+    if (idx == 2) return stderr;
+    return nullptr;
+}
+static PAPAYA_MS_ABI int* hle_p__commode() { static int c = 0; return &c; }
+static PAPAYA_MS_ABI int* hle_p__fmode() { static int f = 0; return &f; }
+static PAPAYA_MS_ABI int hle_fileno(void* stream) { return stream ? fileno(static_cast<FILE*>(stream)) : -1; }
+static PAPAYA_MS_ABI int64_t hle_fseeki64(void* stream, int64_t offset, int origin) {
+    return stream ? fseeko(static_cast<FILE*>(stream), offset, origin) : -1;
+}
+static PAPAYA_MS_ABI int64_t hle_ftelli64(void* stream) {
+    return stream ? ftello(static_cast<FILE*>(stream)) : -1;
+}
+static PAPAYA_MS_ABI intptr_t hle_get_osfhandle(int fd) { return fd; }
+static PAPAYA_MS_ABI int hle_getmaxstdio() { return 512; }
+static PAPAYA_MS_ABI int hle_setmaxstdio(int newmax) { return newmax; }
+static PAPAYA_MS_ABI int hle_chsize_s(int fd, int64_t size) { return ftruncate(fd, size); }
+
+// Additional USER32 stubs
+static PAPAYA_MS_ABI BOOL hle_set_prop_w(void* hWnd, const wchar_t* lpString, void* hData) { (void)hWnd; (void)lpString; (void)hData; return 1; }
+static PAPAYA_MS_ABI BOOL hle_set_menu_item_info_w(void* hMenu, u32 item, BOOL fByPos, void* lpmii) { (void)hMenu; (void)item; (void)fByPos; (void)lpmii; return 1; }
+static PAPAYA_MS_ABI BOOL hle_set_window_display_affinity(void* hWnd, u32 dwAffinity) { (void)hWnd; (void)dwAffinity; return 1; }
+static PAPAYA_MS_ABI BOOL hle_track_popup_menu_ex(void* hMenu, u32 uFlags, int x, int y, void* hWnd, void* lptpm) { (void)hMenu; (void)uFlags; (void)x; (void)y; (void)hWnd; (void)lptpm; return 0; }
+static PAPAYA_MS_ABI BOOL hle_unregister_class_a(const char* lpClassName, void* hInstance) { (void)lpClassName; (void)hInstance; return 1; }
+static PAPAYA_MS_ABI BOOL hle_unregister_class_w(const wchar_t* lpClassName, void* hInstance) { (void)lpClassName; (void)hInstance; return 1; }
+static PAPAYA_MS_ABI BOOL hle_unregister_device_notification(void* handle) { (void)handle; return 1; }
+
+extern "C" int hle_msvc_setjmp(void* jmp_buf);
+__asm__(
+    ".global hle_msvc_setjmp\n"
+    "hle_msvc_setjmp:\n"
+    "movq (%rsp), %r10\n"
+    "movq %rdx, 0x00(%rcx)\n"
+    "movq %rbx, 0x08(%rcx)\n"
+    "movq %rsp, 0x10(%rcx)\n"
+    "addq $8, 0x10(%rcx)\n"
+    "movq %rbp, 0x18(%rcx)\n"
+    "movq %rsi, 0x20(%rcx)\n"
+    "movq %rdi, 0x28(%rcx)\n"
+    "movq %r12, 0x30(%rcx)\n"
+    "movq %r13, 0x38(%rcx)\n"
+    "movq %r14, 0x40(%rcx)\n"
+    "movq %r15, 0x48(%rcx)\n"
+    "movq %r10, 0x50(%rcx)\n"
+    "movdqa %xmm6, 0x60(%rcx)\n"
+    "movdqa %xmm7, 0x70(%rcx)\n"
+    "movdqa %xmm8, 0x80(%rcx)\n"
+    "movdqa %xmm9, 0x90(%rcx)\n"
+    "movdqa %xmm10, 0xa0(%rcx)\n"
+    "movdqa %xmm11, 0xb0(%rcx)\n"
+    "movdqa %xmm12, 0xc0(%rcx)\n"
+    "movdqa %xmm13, 0xd0(%rcx)\n"
+    "movdqa %xmm14, 0xe0(%rcx)\n"
+    "movdqa %xmm15, 0xf0(%rcx)\n"
+    "xorl %eax, %eax\n"
+    "ret\n"
+);
+
+// ADVAPI32 Registry stubs
+static PAPAYA_MS_ABI s32 hle_reg_enum_key_ex_w(void* hKey, u32 dwIndex, wchar_t* lpName, u32* lpcchName, u32* lpReserved, wchar_t* lpClass, u32* lpcchClass, void* lpftLastWriteTime) {
+    (void)hKey; (void)dwIndex; (void)lpName; (void)lpcchName; (void)lpReserved; (void)lpClass; (void)lpcchClass; (void)lpftLastWriteTime;
+    return 259; // ERROR_NO_MORE_ITEMS
+}
+static PAPAYA_MS_ABI s32 hle_reg_open_key_w(void* hKey, const wchar_t* lpSubKey, void** phkResult) {
+    (void)hKey; (void)lpSubKey;
+    if (phkResult) *phkResult = reinterpret_cast<void*>(0x2000);
+    return 0; // ERROR_SUCCESS
+}
+static PAPAYA_MS_ABI s32 hle_reg_query_info_key_w(void* hKey, wchar_t* lpClass, u32* lpcchClass, u32* lpReserved, u32* lpcSubKeys, u32* lpcbMaxSubKeyLen, u32* lpcbMaxClassLen, u32* lpcValues, u32* lpcbMaxValueNameLen, u32* lpcbMaxValueLen, u32* lpcbSecurityDescriptor, void* lpftLastWriteTime) {
+    (void)hKey; (void)lpClass; (void)lpcchClass; (void)lpReserved; (void)lpftLastWriteTime;
+    if (lpcSubKeys) *lpcSubKeys = 0;
+    if (lpcbMaxSubKeyLen) *lpcbMaxSubKeyLen = 0;
+    if (lpcbMaxClassLen) *lpcbMaxClassLen = 0;
+    if (lpcValues) *lpcValues = 0;
+    if (lpcbMaxValueNameLen) *lpcbMaxValueNameLen = 0;
+    if (lpcbMaxValueLen) *lpcbMaxValueLen = 0;
+    if (lpcbSecurityDescriptor) *lpcbSecurityDescriptor = 0;
+    return 0; // ERROR_SUCCESS
+}
+
+// NTDLL
+static PAPAYA_MS_ABI u32 hle_rtl_nt_status_to_dos_error(u32 nt_status) { return nt_status & 0xFFFF; }
+static PAPAYA_MS_ABI u32 hle_nt_query_information_file(HANDLE FileHandle, void* IoStatusBlock, void* FileInformation, u32 Length, u32 FileInformationClass) {
+    (void)FileHandle; (void)IoStatusBlock; (void)FileInformation; (void)Length; (void)FileInformationClass;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_nt_write_file(HANDLE FileHandle, HANDLE Event, void* ApcRoutine, void* ApcContext, void* IoStatusBlock, void* Buffer, u32 Length, void* ByteOffset, void* Key) {
+    (void)FileHandle; (void)Event; (void)ApcRoutine; (void)ApcContext; (void)IoStatusBlock; (void)Buffer; (void)Length; (void)ByteOffset; (void)Key;
+    return 0;
+}
+
+// WSOCK32
+static PAPAYA_MS_ABI int hle_wsa_fd_is_set(int fd, void* set) {
+    return FD_ISSET(fd, static_cast<fd_set*>(set)) ? 1 : 0;
+}
+static PAPAYA_MS_ABI int hle_ioctlsocket(int s, long cmd, u_long* argp) {
+    (void)s; (void)cmd; (void)argp;
+    return 0;
+}
+
+static PAPAYA_MS_ABI void* hle_uia_get_reserved_not_supported_value() {
+    static int dummy = 0;
+    return &dummy;
+}
+static PAPAYA_MS_ABI int hle_uia_host_provider_from_hwnd(void* hwnd, void** ppProvider) {
+    (void)hwnd;
+    if (ppProvider) *ppProvider = nullptr;
+    return 0; // S_OK
+}
+static PAPAYA_MS_ABI int hle_uia_lookup_id(int type, const void* pGuid) {
+    (void)type; (void)pGuid;
+    return 1;
+}
+static PAPAYA_MS_ABI int hle_uia_raise_automation_event(void* pProvider, int id) {
+    (void)pProvider; (void)id;
+    return 0; // S_OK
+}
+static PAPAYA_MS_ABI int hle_uia_raise_automation_property_changed_event(void* pProvider, int id, void* oldValue, void* newValue) {
+    (void)pProvider; (void)id; (void)oldValue; (void)newValue;
+    return 0; // S_OK
+}
+static PAPAYA_MS_ABI int64_t hle_uia_return_raw_element_provider(void* hwnd, uint64_t wParam, int64_t lParam, void* el) {
+    (void)hwnd; (void)wParam; (void)lParam; (void)el;
+    return 0;
 }
 
 static PAPAYA_MS_ABI void* hle_rtl_pc_to_file_header(void* PcValue, void** BaseOfImage) {
@@ -5414,6 +6258,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "FindNextFileW", reinterpret_cast<void*>(&hle_find_next_file_w));
     register_function("KERNEL32.DLL", "FindClose", reinterpret_cast<void*>(&hle_find_close));
 
+    register_function("KERNEL32.DLL", "IsDBCSLeadByteEx", reinterpret_cast<void*>(&hle_isdbcs_lead_byte_ex));
     register_function("KERNEL32.DLL", "GetProcAddress", reinterpret_cast<void*>(&hle_get_proc_address));
     register_function("KERNEL32.DLL", "GetModuleHandleA", reinterpret_cast<void*>(&hle_get_module_handle_a));
     register_function("KERNEL32.DLL", "GetModuleHandleW", reinterpret_cast<void*>(&hle_get_module_handle_w));
@@ -5510,6 +6355,13 @@ Result<> Win32ApiHle::initialize() {
     register_function("msvcrt.dll", "puts",     reinterpret_cast<void*>(&hle_msvcrt_puts));
     register_function("msvcrt.dll", "fputs",    reinterpret_cast<void*>(&hle_msvcrt_fputs));
     register_function("msvcrt.dll", "fputc",    reinterpret_cast<void*>(&hle_msvcrt_fputc));
+    register_function("msvcrt.dll", "fflush",   reinterpret_cast<void*>(&hle_msvcrt_fflush));
+    register_function("msvcrt.dll", "strerror", reinterpret_cast<void*>(&hle_msvcrt_strerror));
+    register_function("msvcrt.dll", "localeconv", reinterpret_cast<void*>(&hle_msvcrt_localeconv));
+    register_function("msvcrt.dll", "_lock",    reinterpret_cast<void*>(&hle_msvcrt_lock));
+    register_function("msvcrt.dll", "_unlock",  reinterpret_cast<void*>(&hle_msvcrt_unlock));
+    register_function("msvcrt.dll", "___lc_codepage_func", reinterpret_cast<void*>(&hle_msvcrt_lc_codepage_func));
+    register_function("msvcrt.dll", "___mb_cur_max_func", reinterpret_cast<void*>(&hle_msvcrt_mb_cur_max_func));
     register_function("msvcrt.dll", "__iob_func", reinterpret_cast<void*>(&hle_msvcrt___iob_func));
 
     register_function("msvcrt.dll", "signal",   reinterpret_cast<void*>(&hle_msvcrt_signal));
@@ -5956,13 +6808,13 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "RtlLookupFunctionEntry", reinterpret_cast<void*>(&hle_rtl_lookup_function_entry));
     register_function("KERNEL32.DLL", "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
     register_function("KERNEL32.DLL", "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
-    register_function("KERNEL32.DLL", "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
+    register_function("KERNEL32.DLL", "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("KERNEL32.DLL", "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("KERNEL32.DLL", "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
     register_function("NTDLL.DLL",    "RtlLookupFunctionEntry", reinterpret_cast<void*>(&hle_rtl_lookup_function_entry));
     register_function("NTDLL.DLL",    "RtlVirtualUnwind",       reinterpret_cast<void*>(&hle_rtl_virtual_unwind));
     register_function("NTDLL.DLL",    "RtlCaptureContext",      reinterpret_cast<void*>(&hle_rtl_capture_context));
-    register_function("NTDLL.DLL",    "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind));
+    register_function("NTDLL.DLL",    "RtlUnwind",              reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("NTDLL.DLL",    "RtlUnwindEx",            reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
     register_function("NTDLL.DLL",    "RtlPcToFileHeader",      reinterpret_cast<void*>(&hle_rtl_pc_to_file_header));
 
@@ -6097,11 +6949,287 @@ Result<> Win32ApiHle::initialize() {
     register_function("dsound.dll", "DirectSoundCreate",  reinterpret_cast<void*>(&hle_direct_sound_create));
     register_function("dsound.dll", "DirectSoundCreate8", reinterpret_cast<void*>(&hle_direct_sound_create8));
     register_function("dsound.dll", "DirectSoundEnumerateA", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
-    register_function("dsound.dll", "DirectSoundEnumerateW", reinterpret_cast<void*>(&hle_direct_sound_enumerate_a));
-    register_function("DINPUT8.DLL", "DirectInput8Create", reinterpret_cast<void*>(&hle_direct_input8_create));
-    register_function("dinput.dll", "DirectInputCreateA", reinterpret_cast<void*>(&hle_direct_input_create_a));
-    register_function("dinput.dll", "DirectInputCreateW", reinterpret_cast<void*>(&hle_direct_input_create_a));
-    register_function("dinput.dll", "DirectInputCreateEx", reinterpret_cast<void*>(&hle_direct_input_create_a));
+    // Synchronization additions (WaitOnAddress / WakeByAddress)
+    register_function("KERNEL32.DLL", "WaitOnAddress",          reinterpret_cast<void*>(&hle_wait_on_address));
+    register_function("KERNEL32.DLL", "WakeByAddressAll",       reinterpret_cast<void*>(&hle_wake_by_address_all));
+    register_function("KERNEL32.DLL", "WakeByAddressSingle",    reinterpret_cast<void*>(&hle_wake_by_address_single));
+
+    // WS2_32 / WSOCK32 additions
+    register_function("WS2_32.dll", "sendto",                   reinterpret_cast<void*>(&hle_sendto));
+    register_function("WS2_32.dll", "recvfrom",                 reinterpret_cast<void*>(&hle_recvfrom));
+    register_function("WSOCK32.dll", "sendto",                  reinterpret_cast<void*>(&hle_sendto));
+    register_function("WSOCK32.dll", "recvfrom",                reinterpret_cast<void*>(&hle_recvfrom));
+
+    // UCRT / MSVCRT additions
+    register_function("MSVCRT.DLL", "getenv",                   reinterpret_cast<void*>(&hle_getenv));
+    register_function("MSVCRT.DLL", "_putenv_s",                reinterpret_cast<void*>(&hle_putenv_s));
+    register_function("MSVCRT.DLL", "_wgetcwd",                 reinterpret_cast<void*>(&hle_wgetcwd));
+    register_function("MSVCRT.DLL", "__p__environ",             reinterpret_cast<void*>(&hle_p_environ));
+    register_function("MSVCRT.DLL", "_time64",                  reinterpret_cast<void*>(&hle_time64));
+    register_function("MSVCRT.DLL", "_gmtime64",                reinterpret_cast<void*>(&hle_gmtime64));
+    register_function("MSVCRT.DLL", "_gmtime64_s",              reinterpret_cast<void*>(&hle_gmtime64_s));
+    register_function("MSVCRT.DLL", "_strftime_l",              reinterpret_cast<void*>(&hle_strftime_l));
+    register_function("MSVCRT.DLL", "_tzset",                   reinterpret_cast<void*>(&hle_tzset));
+    register_function("MSVCRT.DLL", "__daylight",               reinterpret_cast<void*>(&hle_daylight));
+    register_function("MSVCRT.DLL", "__timezone",               reinterpret_cast<void*>(&hle_timezone));
+    register_function("MSVCRT.DLL", "__tzname",                 reinterpret_cast<void*>(&hle_tzname));
+    register_function("MSVCRT.DLL", "qsort",                    reinterpret_cast<void*>(&hle_qsort));
+    register_function("MSVCRT.DLL", "bsearch",                  reinterpret_cast<void*>(&hle_bsearch));
+    register_function("MSVCRT.DLL", "rand",                     reinterpret_cast<void*>(&hle_rand));
+    register_function("MSVCRT.DLL", "srand",                    reinterpret_cast<void*>(&hle_srand));
+    register_function("MSVCRT.DLL", "_mbtowc_l",                reinterpret_cast<void*>(&hle_mbtowc_l));
+    register_function("MSVCRT.DLL", "setlocale",                reinterpret_cast<void*>(&hle_setlocale));
+    register_function("MSVCRT.DLL", "_create_locale",           reinterpret_cast<void*>(&hle_create_locale));
+    register_function("MSVCRT.DLL", "_free_locale",             reinterpret_cast<void*>(&hle_free_locale));
+    register_function("MSVCRT.DLL", "strtod",                   reinterpret_cast<void*>(&hle_strtod));
+    register_function("MSVCRT.DLL", "strtof",                   reinterpret_cast<void*>(&hle_strtof));
+    register_function("MSVCRT.DLL", "strtol",                   reinterpret_cast<void*>(&hle_strtol));
+    register_function("MSVCRT.DLL", "strtoll",                  reinterpret_cast<void*>(&hle_strtoll));
+    register_function("MSVCRT.DLL", "strtoul",                  reinterpret_cast<void*>(&hle_strtoul));
+    register_function("MSVCRT.DLL", "strtoull",                 reinterpret_cast<void*>(&hle_strtoull));
+    register_function("MSVCRT.DLL", "wcstod",                   reinterpret_cast<void*>(&hle_wcstod));
+    register_function("MSVCRT.DLL", "wcstol",                   reinterpret_cast<void*>(&hle_wcstol));
+    register_function("MSVCRT.DLL", "wcstoll",                  reinterpret_cast<void*>(&hle_wcstoll));
+    register_function("MSVCRT.DLL", "wcstoul",                  reinterpret_cast<void*>(&hle_wcstoul));
+    register_function("MSVCRT.DLL", "wcstoull",                 reinterpret_cast<void*>(&hle_wcstoull));
+    register_function("MSVCRT.DLL", "_strtod_l",                reinterpret_cast<void*>(&hle_strtod_l));
+    register_function("MSVCRT.DLL", "_strtoi64_l",              reinterpret_cast<void*>(&hle_strtoi64_l));
+    register_function("MSVCRT.DLL", "_strtoui64_l",             reinterpret_cast<void*>(&hle_strtoui64_l));
+    register_function("MSVCRT.DLL", "_itoa_s",                  reinterpret_cast<void*>(&hle_itoa_s));
+    register_function("MSVCRT.DLL", "wctob",                    reinterpret_cast<void*>(&hle_wctob));
+    register_function("MSVCRT.DLL", "btowc",                    reinterpret_cast<void*>(&hle_btowc));
+    register_function("MSVCRT.DLL", "mbrtowc",                  reinterpret_cast<void*>(&hle_mbrtowc));
+    register_function("MSVCRT.DLL", "mbsrtowcs",                reinterpret_cast<void*>(&hle_mbsrtowcs));
+    register_function("MSVCRT.DLL", "_aligned_malloc",          reinterpret_cast<void*>(&hle_aligned_malloc));
+    register_function("MSVCRT.DLL", "_aligned_free",            reinterpret_cast<void*>(&hle_aligned_free));
+    register_function("MSVCRT.DLL", "_set_new_mode",            reinterpret_cast<void*>(&hle_set_new_mode));
+    register_function("MSVCRT.DLL", "__pctype_func",            reinterpret_cast<void*>(&hle_pctype_func));
+    register_function("MSVCRT.DLL", "_configthreadlocale",      reinterpret_cast<void*>(&hle_configthreadlocale));
+    register_function("MSVCRT.DLL", "memchr",                   reinterpret_cast<void*>(&hle_memchr));
+    register_function("MSVCRT.DLL", "memcmp",                   reinterpret_cast<void*>(&hle_memcmp));
+    register_function("MSVCRT.DLL", "strchr",                   reinterpret_cast<void*>(&hle_strchr));
+    register_function("MSVCRT.DLL", "strrchr",                  reinterpret_cast<void*>(&hle_strrchr));
+    register_function("MSVCRT.DLL", "strstr",                   reinterpret_cast<void*>(&hle_strstr));
+
+    // Math functions
+    register_function("MSVCRT.DLL", "sin",                      reinterpret_cast<void*>(&hle_sin));
+    register_function("MSVCRT.DLL", "sinf",                     reinterpret_cast<void*>(&hle_sinf));
+    register_function("MSVCRT.DLL", "cos",                      reinterpret_cast<void*>(&hle_cos));
+    register_function("MSVCRT.DLL", "cosf",                     reinterpret_cast<void*>(&hle_cosf));
+    register_function("MSVCRT.DLL", "tan",                      reinterpret_cast<void*>(&hle_tan));
+    register_function("MSVCRT.DLL", "tanf",                     reinterpret_cast<void*>(&hle_tanf));
+    register_function("MSVCRT.DLL", "sinh",                     reinterpret_cast<void*>(&hle_sinh));
+    register_function("MSVCRT.DLL", "cosh",                     reinterpret_cast<void*>(&hle_cosh));
+    register_function("MSVCRT.DLL", "tanh",                     reinterpret_cast<void*>(&hle_tanh));
+    register_function("MSVCRT.DLL", "tanhf",                    reinterpret_cast<void*>(&hle_tanhf));
+    register_function("MSVCRT.DLL", "sqrt",                     reinterpret_cast<void*>(&hle_sqrt));
+    register_function("MSVCRT.DLL", "sqrtf",                    reinterpret_cast<void*>(&hle_sqrtf));
+    register_function("MSVCRT.DLL", "pow",                      reinterpret_cast<void*>(&hle_pow));
+    register_function("MSVCRT.DLL", "powf",                     reinterpret_cast<void*>(&hle_powf));
+    register_function("MSVCRT.DLL", "log",                      reinterpret_cast<void*>(&hle_log));
+    register_function("MSVCRT.DLL", "logf",                     reinterpret_cast<void*>(&hle_logf));
+    register_function("MSVCRT.DLL", "exp",                      reinterpret_cast<void*>(&hle_exp));
+    register_function("MSVCRT.DLL", "expf",                     reinterpret_cast<void*>(&hle_expf));
+    register_function("MSVCRT.DLL", "floor",                    reinterpret_cast<void*>(&hle_floor));
+    register_function("MSVCRT.DLL", "floorf",                   reinterpret_cast<void*>(&hle_floorf));
+    register_function("MSVCRT.DLL", "ceil",                     reinterpret_cast<void*>(&hle_ceil));
+    register_function("MSVCRT.DLL", "ceilf",                    reinterpret_cast<void*>(&hle_ceilf));
+    register_function("MSVCRT.DLL", "fabs",                     reinterpret_cast<void*>(&hle_fabs));
+    register_function("MSVCRT.DLL", "fabsf",                    reinterpret_cast<void*>(&hle_fabsf));
+    register_function("MSVCRT.DLL", "atan",                     reinterpret_cast<void*>(&hle_atan));
+    register_function("MSVCRT.DLL", "atanf",                    reinterpret_cast<void*>(&hle_atanf));
+    register_function("MSVCRT.DLL", "atan2",                    reinterpret_cast<void*>(&hle_atan2));
+    register_function("MSVCRT.DLL", "atan2f",                   reinterpret_cast<void*>(&hle_atan2f));
+    register_function("MSVCRT.DLL", "asin",                     reinterpret_cast<void*>(&hle_asin));
+    register_function("MSVCRT.DLL", "asinf",                    reinterpret_cast<void*>(&hle_asinf));
+    register_function("MSVCRT.DLL", "acos",                     reinterpret_cast<void*>(&hle_acos));
+    register_function("MSVCRT.DLL", "acosf",                    reinterpret_cast<void*>(&hle_acosf));
+    register_function("MSVCRT.DLL", "fmod",                     reinterpret_cast<void*>(&hle_fmod));
+    register_function("MSVCRT.DLL", "fmodf",                    reinterpret_cast<void*>(&hle_fmodf));
+    register_function("MSVCRT.DLL", "modf",                     reinterpret_cast<void*>(&hle_modf));
+    register_function("MSVCRT.DLL", "modff",                    reinterpret_cast<void*>(&hle_modff));
+    register_function("MSVCRT.DLL", "remainder",                reinterpret_cast<void*>(&hle_remainder));
+    register_function("MSVCRT.DLL", "remquo",                   reinterpret_cast<void*>(&hle_remquo));
+    register_function("MSVCRT.DLL", "nextafter",                reinterpret_cast<void*>(&hle_nextafter));
+    register_function("MSVCRT.DLL", "lrintf",                   reinterpret_cast<void*>(&hle_lrintf));
+    register_function("MSVCRT.DLL", "log10",                    reinterpret_cast<void*>(&hle_log10));
+    register_function("MSVCRT.DLL", "log10f",                   reinterpret_cast<void*>(&hle_log10f));
+    register_function("MSVCRT.DLL", "log2",                     reinterpret_cast<void*>(&hle_log2));
+    register_function("MSVCRT.DLL", "log2f",                    reinterpret_cast<void*>(&hle_log2f));
+    register_function("MSVCRT.DLL", "hypot",                    reinterpret_cast<void*>(&hle_hypot));
+    register_function("MSVCRT.DLL", "_hypot",                   reinterpret_cast<void*>(&hle_hypot));
+    register_function("MSVCRT.DLL", "cbrt",                     reinterpret_cast<void*>(&hle_cbrt));
+    register_function("MSVCRT.DLL", "cbrtf",                    reinterpret_cast<void*>(&hle_cbrtf));
+    register_function("MSVCRT.DLL", "exp2",                     reinterpret_cast<void*>(&hle_exp2));
+    register_function("MSVCRT.DLL", "exp2f",                    reinterpret_cast<void*>(&hle_exp2f));
+    register_function("MSVCRT.DLL", "fma",                      reinterpret_cast<void*>(&hle_fma));
+    register_function("MSVCRT.DLL", "fmaf",                     reinterpret_cast<void*>(&hle_fmaf));
+    register_function("MSVCRT.DLL", "fmax",                     reinterpret_cast<void*>(&hle_fmax));
+    register_function("MSVCRT.DLL", "fmaxf",                    reinterpret_cast<void*>(&hle_fmaxf));
+    register_function("MSVCRT.DLL", "fmin",                     reinterpret_cast<void*>(&hle_fmin));
+    register_function("MSVCRT.DLL", "fminf",                    reinterpret_cast<void*>(&hle_fminf));
+    register_function("MSVCRT.DLL", "frexp",                    reinterpret_cast<void*>(&hle_frexp));
+    register_function("MSVCRT.DLL", "ilogb",                    reinterpret_cast<void*>(&hle_ilogb));
+    register_function("MSVCRT.DLL", "llrintf",                  reinterpret_cast<void*>(&hle_llrintf));
+    register_function("MSVCRT.DLL", "acosh",                    reinterpret_cast<void*>(&hle_acosh));
+    register_function("MSVCRT.DLL", "asinh",                    reinterpret_cast<void*>(&hle_asinh));
+    register_function("MSVCRT.DLL", "atanh",                    reinterpret_cast<void*>(&hle_atanh));
+
+    // Wide string functions
+    register_function("MSVCRT.DLL", "wcslen",                   reinterpret_cast<void*>(&hle_wcslen));
+    register_function("MSVCRT.DLL", "wcsnlen",                  reinterpret_cast<void*>(&hle_wcsnlen));
+    register_function("MSVCRT.DLL", "wcscmp",                   reinterpret_cast<void*>(&hle_wcscmp));
+    register_function("MSVCRT.DLL", "wcsncmp",                  reinterpret_cast<void*>(&hle_wcsncmp));
+    register_function("MSVCRT.DLL", "wcscpy",                   reinterpret_cast<void*>(&hle_wcscpy));
+    register_function("MSVCRT.DLL", "wcsncpy",                  reinterpret_cast<void*>(&hle_wcsncpy));
+    register_function("MSVCRT.DLL", "wcscpy_s",                 reinterpret_cast<void*>(&hle_wcscpy_s));
+    register_function("MSVCRT.DLL", "wcsstr",                   reinterpret_cast<void*>(&hle_wcsstr));
+    register_function("MSVCRT.DLL", "wcschr",                   reinterpret_cast<void*>(&hle_wcschr));
+    register_function("MSVCRT.DLL", "wcsrchr",                  reinterpret_cast<void*>(&hle_wcsrchr));
+    register_function("MSVCRT.DLL", "wcrtomb",                  reinterpret_cast<void*>(&hle_wcrtomb));
+    register_function("MSVCRT.DLL", "wcrtomb_s",                reinterpret_cast<void*>(&hle_wcrtomb_s));
+    register_function("MSVCRT.DLL", "isalnum",                  reinterpret_cast<void*>(&hle_isalnum));
+    register_function("MSVCRT.DLL", "isalpha",                  reinterpret_cast<void*>(&hle_isalpha));
+    register_function("MSVCRT.DLL", "ispunct",                  reinterpret_cast<void*>(&hle_ispunct));
+    register_function("MSVCRT.DLL", "isspace",                  reinterpret_cast<void*>(&hle_isspace));
+    register_function("MSVCRT.DLL", "isxdigit",                 reinterpret_cast<void*>(&hle_isxdigit));
+    register_function("MSVCRT.DLL", "tolower",                  reinterpret_cast<void*>(&hle_tolower));
+    register_function("MSVCRT.DLL", "toupper",                  reinterpret_cast<void*>(&hle_toupper));
+    register_function("MSVCRT.DLL", "_tolower_l",               reinterpret_cast<void*>(&hle_tolower_l));
+    register_function("MSVCRT.DLL", "_toupper_l",               reinterpret_cast<void*>(&hle_toupper_l));
+    register_function("MSVCRT.DLL", "_towlower_l",              reinterpret_cast<void*>(&hle_towlower_l));
+    register_function("MSVCRT.DLL", "_towupper_l",              reinterpret_cast<void*>(&hle_towupper_l));
+    register_function("MSVCRT.DLL", "_iswxdigit_l",             reinterpret_cast<void*>(&hle_iswxdigit_l));
+    register_function("MSVCRT.DLL", "_strdup",                  reinterpret_cast<void*>(&hle_strdup));
+    register_function("MSVCRT.DLL", "_stricmp",                 reinterpret_cast<void*>(&hle_stricmp));
+    register_function("MSVCRT.DLL", "_memicmp",                 reinterpret_cast<void*>(&hle_memicmp));
+    register_function("MSVCRT.DLL", "_strcoll_l",               reinterpret_cast<void*>(&hle_strcoll_l));
+    register_function("MSVCRT.DLL", "_wcscoll_l",               reinterpret_cast<void*>(&hle_wcscoll_l));
+    register_function("MSVCRT.DLL", "_strxfrm_l",               reinterpret_cast<void*>(&hle_strxfrm_l));
+    register_function("MSVCRT.DLL", "_wcsxfrm_l",               reinterpret_cast<void*>(&hle_wcsxfrm_l));
+    register_function("MSVCRT.DLL", "strcpy_s",                 reinterpret_cast<void*>(&hle_strcpy_s));
+    register_function("MSVCRT.DLL", "strcat_s",                 reinterpret_cast<void*>(&hle_strcat_s));
+    register_function("MSVCRT.DLL", "strncat",                  reinterpret_cast<void*>(&hle_strncat));
+    register_function("MSVCRT.DLL", "strcspn",                  reinterpret_cast<void*>(&hle_strcspn));
+    register_function("MSVCRT.DLL", "strpbrk",                  reinterpret_cast<void*>(&hle_strpbrk));
+    register_function("MSVCRT.DLL", "strnlen",                  reinterpret_cast<void*>(&hle_strnlen));
+    register_function("MSVCRT.DLL", "mbrlen",                   reinterpret_cast<void*>(&hle_mbrlen));
+
+    // Runtime & Filesystem
+    register_function("MSVCRT.DLL", "_configure_narrow_argv",   reinterpret_cast<void*>(&hle_configure_narrow_argv));
+    register_function("MSVCRT.DLL", "_initialize_narrow_environment", reinterpret_cast<void*>(&hle_initialize_narrow_environment));
+    register_function("MSVCRT.DLL", "_initterm_e",              reinterpret_cast<void*>(&hle_initterm_e));
+    register_function("MSVCRT.DLL", "_crt_atexit",              reinterpret_cast<void*>(&hle_crt_atexit));
+    register_function("MSVCRT.DLL", "_register_thread_local_exe_atexit_callback", reinterpret_cast<void*>(&hle_register_thread_local_exe_atexit_callback));
+    register_function("MSVCRT.DLL", "_set_error_mode",          reinterpret_cast<void*>(&hle_set_error_mode));
+    register_function("MSVCRT.DLL", "_set_invalid_parameter_handler", reinterpret_cast<void*>(&hle_set_invalid_parameter_handler));
+    register_function("MSVCRT.DLL", "_endthreadex",             reinterpret_cast<void*>(&hle_endthreadex));
+    register_function("MSVCRT.DLL", "_getpid",                  reinterpret_cast<void*>(&hle_getpid));
+    register_function("MSVCRT.DLL", "perror",                   reinterpret_cast<void*>(&hle_perror));
+    register_function("MSVCRT.DLL", "strerror_s",               reinterpret_cast<void*>(&hle_strerror_s));
+    register_function("MSVCRT.DLL", "_fstat64",                 reinterpret_cast<void*>(&hle_fstat64));
+    register_function("MSVCRT.DLL", "_lock_file",               reinterpret_cast<void*>(&hle_lock_file));
+    register_function("MSVCRT.DLL", "_unlock_file",             reinterpret_cast<void*>(&hle_unlock_file));
+    register_function("MSVCRT.DLL", "_wchdir",                  reinterpret_cast<void*>(&hle_wchdir));
+    register_function("MSVCRT.DLL", "remove",                   reinterpret_cast<void*>(&hle_remove));
+    register_function("MSVCRT.DLL", "__p___argc",               reinterpret_cast<void*>(&hle_p___argc));
+    register_function("MSVCRT.DLL", "__p___argv",               reinterpret_cast<void*>(&hle_p___argv));
+    register_function("MSVCRT.DLL", "__sys_nerr",               reinterpret_cast<void*>(&hle_sys_nerr));
+    register_function("MSVCRT.DLL", "_assert",                  reinterpret_cast<void*>(&hle_assert));
+    register_function("MSVCRT.DLL", "_beginthreadex",           reinterpret_cast<void*>(&hle_beginthreadex));
+
+    // stdio
+    register_function("MSVCRT.DLL", "fopen",                    reinterpret_cast<void*>(&hle_fopen));
+    register_function("MSVCRT.DLL", "_wfopen",                  reinterpret_cast<void*>(&hle_wfopen));
+    register_function("MSVCRT.DLL", "_wfopen_s",                reinterpret_cast<void*>(&hle_wfopen_s));
+    register_function("MSVCRT.DLL", "_wfsopen",                 reinterpret_cast<void*>(&hle_wfsopen));
+    register_function("MSVCRT.DLL", "fclose",                   reinterpret_cast<void*>(&hle_fclose));
+    register_function("MSVCRT.DLL", "fread",                    reinterpret_cast<void*>(&hle_fread));
+    register_function("MSVCRT.DLL", "fseek",                    reinterpret_cast<void*>(&hle_fseek));
+    register_function("MSVCRT.DLL", "ftell",                    reinterpret_cast<void*>(&hle_ftell));
+    register_function("MSVCRT.DLL", "fsetpos",                  reinterpret_cast<void*>(&hle_fsetpos));
+    register_function("MSVCRT.DLL", "fgetpos",                  reinterpret_cast<void*>(&hle_fgetpos));
+    register_function("MSVCRT.DLL", "feof",                     reinterpret_cast<void*>(&hle_feof));
+    register_function("MSVCRT.DLL", "ferror",                   reinterpret_cast<void*>(&hle_ferror));
+    register_function("MSVCRT.DLL", "fgets",                    reinterpret_cast<void*>(&hle_fgets));
+    register_function("MSVCRT.DLL", "fgetwc",                   reinterpret_cast<void*>(&hle_fgetwc));
+    register_function("MSVCRT.DLL", "fputwc",                   reinterpret_cast<void*>(&hle_fputwc));
+    register_function("MSVCRT.DLL", "getc",                     reinterpret_cast<void*>(&hle_getc));
+    register_function("MSVCRT.DLL", "putchar",                  reinterpret_cast<void*>(&hle_putchar));
+    register_function("MSVCRT.DLL", "rewind",                   reinterpret_cast<void*>(&hle_rewind));
+    register_function("MSVCRT.DLL", "setbuf",                   reinterpret_cast<void*>(&hle_setbuf));
+    register_function("MSVCRT.DLL", "setvbuf",                  reinterpret_cast<void*>(&hle_setvbuf));
+    register_function("MSVCRT.DLL", "ungetc",                   reinterpret_cast<void*>(&hle_ungetc));
+    register_function("MSVCRT.DLL", "ungetwc",                  reinterpret_cast<void*>(&hle_ungetwc));
+    register_function("MSVCRT.DLL", "freopen_s",                reinterpret_cast<void*>(&hle_freopen_s));
+    register_function("MSVCRT.DLL", "__stdio_common_vfprintf",  reinterpret_cast<void*>(&hle_stdio_common_vfprintf));
+    register_function("MSVCRT.DLL", "__stdio_common_vsprintf",  reinterpret_cast<void*>(&hle_stdio_common_vsprintf));
+    register_function("MSVCRT.DLL", "__stdio_common_vsnprintf_s", reinterpret_cast<void*>(&hle_stdio_common_vsnprintf_s));
+    register_function("MSVCRT.DLL", "__stdio_common_vsprintf_s", reinterpret_cast<void*>(&hle_stdio_common_vsprintf_s));
+    register_function("MSVCRT.DLL", "__stdio_common_vswprintf", reinterpret_cast<void*>(&hle_stdio_common_vswprintf));
+    register_function("MSVCRT.DLL", "__stdio_common_vfwprintf", reinterpret_cast<void*>(&hle_stdio_common_vfwprintf));
+    register_function("MSVCRT.DLL", "__stdio_common_vfscanf",   reinterpret_cast<void*>(&hle_stdio_common_vfscanf));
+    register_function("MSVCRT.DLL", "__stdio_common_vsscanf",   reinterpret_cast<void*>(&hle_stdio_common_vsscanf));
+    register_function("MSVCRT.DLL", "__acrt_iob_func",          reinterpret_cast<void*>(&hle_acrt_iob_func));
+    register_function("MSVCRT.DLL", "__p__commode",             reinterpret_cast<void*>(&hle_p__commode));
+    register_function("MSVCRT.DLL", "__p__fmode",               reinterpret_cast<void*>(&hle_p__fmode));
+    register_function("MSVCRT.DLL", "_fileno",                  reinterpret_cast<void*>(&hle_fileno));
+    register_function("MSVCRT.DLL", "_fseeki64",                reinterpret_cast<void*>(&hle_fseeki64));
+    register_function("MSVCRT.DLL", "_ftelli64",                reinterpret_cast<void*>(&hle_ftelli64));
+    register_function("MSVCRT.DLL", "_get_osfhandle",           reinterpret_cast<void*>(&hle_get_osfhandle));
+    register_function("MSVCRT.DLL", "_getmaxstdio",             reinterpret_cast<void*>(&hle_getmaxstdio));
+    register_function("MSVCRT.DLL", "_setmaxstdio",             reinterpret_cast<void*>(&hle_setmaxstdio));
+    register_function("MSVCRT.DLL", "_chsize_s",                reinterpret_cast<void*>(&hle_chsize_s));
+
+    // User32 additions
+    register_function("USER32.DLL", "SetPropW",                 reinterpret_cast<void*>(&hle_set_prop_w));
+    register_function("USER32.DLL", "SetMenuItemInfoW",         reinterpret_cast<void*>(&hle_set_menu_item_info_w));
+    register_function("USER32.DLL", "SetWindowDisplayAffinity", reinterpret_cast<void*>(&hle_set_window_display_affinity));
+    register_function("USER32.DLL", "TrackPopupMenuEx",         reinterpret_cast<void*>(&hle_track_popup_menu_ex));
+    register_function("USER32.DLL", "UnregisterClassA",         reinterpret_cast<void*>(&hle_unregister_class_a));
+    register_function("USER32.DLL", "UnregisterClassW",         reinterpret_cast<void*>(&hle_unregister_class_w));
+    register_function("USER32.DLL", "UnregisterDeviceNotification", reinterpret_cast<void*>(&hle_unregister_device_notification));
+
+    // isw helpers
+    register_function("MSVCRT.DLL", "_isctype_l",               reinterpret_cast<void*>(&hle_isctype_l));
+    register_function("MSVCRT.DLL", "_iswalpha_l",              reinterpret_cast<void*>(&hle_iswalpha_l));
+    register_function("MSVCRT.DLL", "_iswcntrl_l",              reinterpret_cast<void*>(&hle_iswcntrl_l));
+    register_function("MSVCRT.DLL", "_iswdigit_l",              reinterpret_cast<void*>(&hle_iswdigit_l));
+    register_function("MSVCRT.DLL", "_iswlower_l",              reinterpret_cast<void*>(&hle_iswlower_l));
+    register_function("MSVCRT.DLL", "_iswprint_l",              reinterpret_cast<void*>(&hle_iswprint_l));
+    register_function("MSVCRT.DLL", "_iswpunct_l",              reinterpret_cast<void*>(&hle_iswpunct_l));
+    register_function("MSVCRT.DLL", "_iswspace_l",              reinterpret_cast<void*>(&hle_iswspace_l));
+    register_function("MSVCRT.DLL", "_iswupper_l",              reinterpret_cast<void*>(&hle_iswupper_l));
+
+    // setjmp / longjmp
+    register_function("MSVCRT.DLL", "__intrinsic_setjmpex",     reinterpret_cast<void*>(&hle_msvc_setjmp));
+    register_function("MSVCRT.DLL", "_setjmp",                  reinterpret_cast<void*>(&hle_msvc_setjmp));
+    register_function("MSVCRT.DLL", "setjmp",                   reinterpret_cast<void*>(&hle_msvc_setjmp));
+    register_function("MSVCRT.DLL", "longjmp",                  reinterpret_cast<void*>(&hle_rtl_unwind_ex_impl));
+
+    // ADVAPI32 additions
+    register_function("ADVAPI32.DLL", "RegEnumKeyExW",          reinterpret_cast<void*>(&hle_reg_enum_key_ex_w));
+    register_function("ADVAPI32.DLL", "RegOpenKeyW",            reinterpret_cast<void*>(&hle_reg_open_key_w));
+    register_function("ADVAPI32.DLL", "RegQueryInfoKeyW",       reinterpret_cast<void*>(&hle_reg_query_info_key_w));
+
+    // NTDLL additions
+    register_function("NTDLL.DLL", "RtlNtStatusToDosError",     reinterpret_cast<void*>(&hle_rtl_nt_status_to_dos_error));
+    register_function("NTDLL.DLL", "NtQueryInformationFile",    reinterpret_cast<void*>(&hle_nt_query_information_file));
+    register_function("NTDLL.DLL", "NtWriteFile",               reinterpret_cast<void*>(&hle_nt_write_file));
+
+    // WSOCK32 additions
+    register_function("WSOCK32.DLL", "__WSAFDIsSet",            reinterpret_cast<void*>(&hle_wsa_fd_is_set));
+    register_function("WSOCK32.DLL", "ioctlsocket",             reinterpret_cast<void*>(&hle_ioctlsocket));
+    register_function("WS2_32.DLL", "__WSAFDIsSet",             reinterpret_cast<void*>(&hle_wsa_fd_is_set));
+    register_function("WS2_32.DLL", "ioctlsocket",              reinterpret_cast<void*>(&hle_ioctlsocket));
+
+    // UIAutomationCore additions
+    register_function("UIAutomationCore.DLL", "UiaGetReservedNotSupportedValue", reinterpret_cast<void*>(&hle_uia_get_reserved_not_supported_value));
+    register_function("UIAutomationCore.DLL", "UiaHostProviderFromHwnd",         reinterpret_cast<void*>(&hle_uia_host_provider_from_hwnd));
+    register_function("UIAutomationCore.DLL", "UiaLookupId",                     reinterpret_cast<void*>(&hle_uia_lookup_id));
+    register_function("UIAutomationCore.DLL", "UiaRaiseAutomationEvent",         reinterpret_cast<void*>(&hle_uia_raise_automation_event));
+    register_function("UIAutomationCore.DLL", "UiaRaiseAutomationPropertyChangedEvent", reinterpret_cast<void*>(&hle_uia_raise_automation_property_changed_event));
+    register_function("UIAutomationCore.DLL", "UiaReturnRawElementProvider",     reinterpret_cast<void*>(&hle_uia_return_raw_element_provider));
 
     return {};
 }
@@ -6130,9 +7258,10 @@ void* Win32ApiHle::resolve_symbol(std::string_view dll_name, std::string_view fu
     static const char* kCoreDlls[] = {
         "KERNEL32.DLL", "NTDLL.DLL", "USER32.DLL", "ADVAPI32.DLL",
         "OLE32.DLL", "GDI32.DLL", "SHELL32.DLL", "MSVCRT.DLL",
-        "WS2_32.DLL", "WINMM.DLL", "OPENGL32.DLL", "D3D11.DLL",
+        "WS2_32.DLL", "WSOCK32.DLL", "WINMM.DLL", "OPENGL32.DLL", "D3D11.DLL",
         "DXGI.DLL", "DINPUT8.DLL", "XINPUT1_3.DLL", "IMM32.DLL",
-        "CRYPT32.DLL", "BCRYPT.DLL", "DWMAPI.DLL", "AVRT.DLL"
+        "CRYPT32.DLL", "BCRYPT.DLL", "DWMAPI.DLL", "AVRT.DLL",
+        "UIAUTOMATIONCORE.DLL"
     };
     for (const char* core_dll : kCoreDlls) {
         auto cit = export_table_.find(core_dll);

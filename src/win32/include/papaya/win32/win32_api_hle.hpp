@@ -403,6 +403,18 @@ public:
     static PAPAYA_MS_ABI int   hle_msvcrt_fputc(int, void*);
     static PAPAYA_MS_ABI void* hle_msvcrt___iob_func();
 
+    // stdio + locale (real, host-backed; remove unresolved-import boot noise)
+    static PAPAYA_MS_ABI int   hle_msvcrt_fflush(void* stream);
+    static PAPAYA_MS_ABI char* hle_msvcrt_strerror(int errnum);
+    static PAPAYA_MS_ABI void* hle_msvcrt_localeconv();
+    static PAPAYA_MS_ABI void  hle_msvcrt_lock(int locknum);
+    static PAPAYA_MS_ABI void  hle_msvcrt_unlock(int locknum);
+    static PAPAYA_MS_ABI int   hle_msvcrt_lc_codepage_func();
+    static PAPAYA_MS_ABI int   hle_msvcrt_mb_cur_max_func();
+
+    // KERNEL32
+    static PAPAYA_MS_ABI BOOL  hle_isdbcs_lead_byte_ex(u32 codepage, u8 byte);
+
     // Misc / signal
     static PAPAYA_MS_ABI void* hle_msvcrt_signal(int, void*);
     static PAPAYA_MS_ABI void  hle_msvcrt__commode(int);
