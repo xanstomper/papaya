@@ -573,10 +573,38 @@ BOOL Win32ApiHle::hle_switch_to_thread() {
 // -------------------------------------------------------------
 // Synchronization
 // -------------------------------------------------------------
+// CRITICAL_SECTION safety rule: enter/leave/try/delete may only dereference
+// mutexes this HLE itself allocated in InitializeCriticalSection*. Guests
+// also fire Enter/LeaveCriticalSection at lock objects that were never run
+// through our initializer (msvcrt's internal stdio locks, CRT lock tables) —
+// their DebugInfo field is guest garbage. Dereferencing it as a recursive_
+// mutex* corrupts the host heap (observed: guest stdio locking clobbered
+// the malloc chunk header of the FILE buffer -> abort in fclose). Locks we
+// never initialized are therefore no-ops: correct for single-threaded
+// guests, and a known scope limit for multi-threaded ones.
+static std::mutex g_cs_registry_mutex;
+static std::unordered_set<void*>& cs_mutex_registry() {
+    static std::unordered_set<void*> set;
+    return set;
+}
+static bool cs_mutex_registered(void* mtx) {
+    std::lock_guard<std::mutex> lk(g_cs_registry_mutex);
+    return cs_mutex_registry().count(mtx) != 0;
+}
+static void cs_mutex_register(void* mtx) {
+    std::lock_guard<std::mutex> lk(g_cs_registry_mutex);
+    cs_mutex_registry().insert(mtx);
+}
+static void cs_mutex_unregister(void* mtx) {
+    std::lock_guard<std::mutex> lk(g_cs_registry_mutex);
+    cs_mutex_registry().erase(mtx);
+}
+
 void Win32ApiHle::hle_init_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection) return;
     auto* mtx = new std::recursive_mutex();
     lpSection->DebugInfo = mtx;
+    cs_mutex_register(mtx);
     lpSection->LockCount = -1;
     lpSection->RecursionCount = 0;
 }
@@ -597,25 +625,30 @@ BOOL Win32ApiHle::hle_init_critical_section_ex(Win32CriticalSection* lpSection, 
 
 void Win32ApiHle::hle_enter_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection || !lpSection->DebugInfo) return;
+    if (!cs_mutex_registered(lpSection->DebugInfo)) return;  // never-initialized guest lock
     auto* mtx = static_cast<std::recursive_mutex*>(lpSection->DebugInfo);
     mtx->lock();
 }
 
 BOOL Win32ApiHle::hle_try_enter_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection || !lpSection->DebugInfo) return FALSE_VAL;
+    if (!cs_mutex_registered(lpSection->DebugInfo)) return TRUE_VAL;  // unowned lock: "acquired"
     auto* mtx = static_cast<std::recursive_mutex*>(lpSection->DebugInfo);
     return mtx->try_lock() ? TRUE_VAL : FALSE_VAL;
 }
 
 void Win32ApiHle::hle_leave_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection || !lpSection->DebugInfo) return;
+    if (!cs_mutex_registered(lpSection->DebugInfo)) return;  // never-initialized guest lock
     auto* mtx = static_cast<std::recursive_mutex*>(lpSection->DebugInfo);
     mtx->unlock();
 }
 
 void Win32ApiHle::hle_delete_critical_section(Win32CriticalSection* lpSection) {
     if (!lpSection || !lpSection->DebugInfo) return;
+    if (!cs_mutex_registered(lpSection->DebugInfo)) return;  // never ours: do not free
     auto* mtx = static_cast<std::recursive_mutex*>(lpSection->DebugInfo);
+    cs_mutex_unregister(mtx);
     delete mtx;
     lpSection->DebugInfo = nullptr;
 }
@@ -823,6 +856,12 @@ static std::string normalize_win_path(const char* p) {
     if (!p) return "";
     std::string s(p);
     std::replace(s.begin(), s.end(), '\\', '/');
+    // Strip Win32 extended/device path prefixes: \\?\C:\..., \\?\UNC\...,
+    // \\.\device\... (Godot 4.3+ generates \\?\ paths for pack lookups).
+    while (s.rfind("//?/", 0) == 0 || s.rfind("//./", 0) == 0) {
+        s = s.substr(4);
+    }
+    if (s.rfind("UNC/", 0) == 0) s = "//" + s.substr(4);
     if (s.size() >= 2 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':') {
         std::string stripped = s.substr(2);
         while (!stripped.empty() && stripped[0] == '/') stripped.erase(0, 1);
@@ -831,6 +870,22 @@ static std::string normalize_win_path(const char* p) {
         }
     }
     return s;
+}
+
+// Some Godot 4.3+ titles probe "<name>.exe.pck" while the shipped pack is
+// "<name>.pck". Fall back transparently (compat shim; no game files touched).
+static bool pck_exe_fallback(const std::string& raw, std::string& out_norm) {
+    out_norm = normalize_win_path(raw.c_str());
+    struct stat st{};
+    if (stat(out_norm.c_str(), &st) == 0) return true;
+    std::string lower = out_norm;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(c));
+    if (lower.size() > 8 && lower.ends_with(".exe.pck")) {
+        std::string alt = out_norm.substr(0, out_norm.size() - 8) + ".pck";
+        struct stat st2{};
+        if (stat(alt.c_str(), &st2) == 0) { out_norm = alt; return true; }
+    }
+    return false;
 }
 
 HANDLE Win32ApiHle::hle_create_file_a(const char* lpFileName, u32 dwAccess, u32 dwShare, void* lpSec, u32 dwDisp, u32 dwFlags, HANDLE hTemplate) {
@@ -861,6 +916,13 @@ HANDLE Win32ApiHle::hle_create_file_a(const char* lpFileName, u32 dwAccess, u32 
     int fd = open(path.c_str(), flags, 0666);
     if (fd < 0 && (flags & O_RDWR)) {
         fd = open(path.c_str(), O_RDONLY);
+    }
+    if (fd < 0 && !(flags & O_CREAT)) {
+        std::string alt;
+        if (pck_exe_fallback(lpFileName ? lpFileName : "", alt) && alt != path) {
+            fd = open(alt.c_str(), flags, 0666);
+            if (fd >= 0) path = alt;
+        }
     }
     log::info("WIN32", "CreateFile: raw='{}' norm='{}' fd={}", lpFileName ? lpFileName : "null", path, fd);
     if (fd < 0) {
@@ -909,8 +971,22 @@ BOOL Win32ApiHle::hle_write_file(HANDLE hFile, const void* lpBuffer, u32 nNumber
     return FALSE_VAL;
 }
 
+// ---- Toolhelp32 snapshot (real /proc/self/task walk) ----
+struct ToolhelpSnapshot {
+    u32 tag{0x54484E53};          // "THNS"
+    std::vector<pid_t> tids;
+    size_t pos{0};
+};
+static std::unordered_map<void*, ToolhelpSnapshot*> g_toolhelp_snaps;
+static std::mutex g_toolhelp_mtx;
+
 BOOL Win32ApiHle::hle_close_handle(HANDLE hObject) {
     if (!hObject) return TRUE_VAL;
+    {   // toolhelp snapshots carry their own tag
+        std::lock_guard<std::mutex> lk(g_toolhelp_mtx);
+        auto it = g_toolhelp_snaps.find(hObject);
+        if (it != g_toolhelp_snaps.end()) { delete it->second; g_toolhelp_snaps.erase(it); return TRUE_VAL; }
+    }
     switch (handle_tag(hObject)) {
         case kHandleThread: { delete static_cast<NativeThreadState*>(hObject); return TRUE_VAL; }
         case kHandleEvent:  { delete static_cast<NativeEventState*>(hObject); return TRUE_VAL; }
@@ -984,7 +1060,11 @@ u32 Win32ApiHle::hle_get_file_attributes_a(const char* lpFileName) {
         g_last_error = 2;
         return 0xFFFFFFFF;
     }
-    std::string p = normalize_win_path(lpFileName);
+    std::string p;
+    if (!pck_exe_fallback(lpFileName, p)) {
+        g_last_error = 2;
+        return 0xFFFFFFFF;
+    }
     struct stat st{};
     if (stat(p.c_str(), &st) == 0) {
         return S_ISDIR(st.st_mode) ? 0x10 : 0x80;
@@ -1234,6 +1314,183 @@ BOOL Win32ApiHle::hle_get_disk_free_space_ex_a(const char* lpDirectoryName, uint
     if (lpTotalNumberOfFreeBytes) *lpTotalNumberOfFreeBytes = 100ULL * 1024 * 1024 * 1024;
     return TRUE_VAL;
 }
+
+// ---- real host-backed kernel32/ole glue (evidenced by Unity/Godot titles) ----
+#include <sys/statvfs.h>
+#include <sys/stat.h>
+#include <utime.h>
+
+static void statvfs_for_path(const char* path, uint64_t* free_call, uint64_t* total, uint64_t* free_drive) {
+    struct statvfs v{};
+    const char* real = path ? normalize_win_path(path).c_str() : ".";
+    if (statvfs(real, &v) != 0) { statvfs(".", &v); }
+    uint64_t bsz = v.f_bsize;
+    if (total) *total = v.f_blocks * bsz;
+    if (free_drive) *free_drive = v.f_bavail * bsz;
+    if (free_call) *free_call = v.f_bavail * bsz;
+}
+
+BOOL Win32ApiHle::hle_get_disk_free_space_ex_w(const wchar_t* lpDirectoryName, uint64_t* lpFreeBytesAvailableToCaller, uint64_t* lpTotalNumberOfBytes, uint64_t* lpTotalNumberOfFreeBytes) {
+    std::string p = lpDirectoryName ? win_utf16_to_utf8(lpDirectoryName) : ".";
+    statvfs_for_path(p.c_str(), lpFreeBytesAvailableToCaller, lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes);
+    return TRUE_VAL;
+}
+
+u32 Win32ApiHle::hle_expand_environment_strings_a(const char* lpSrc, char* lpDst, u32 nSize) {
+    if (!lpSrc) return 0;
+    std::string out;
+    const char* p = lpSrc;
+    while (*p) {
+        if (*p == '%') {
+            const char* e = std::strchr(p + 1, '%');
+            if (e) {
+                std::string var(p + 1, e);
+                const char* val = std::getenv(var.c_str());
+                if (val) out += val;
+                p = e + 1;
+                continue;
+            }
+        }
+        out += *p++;
+    }
+    if (lpDst && nSize) { std::strncpy(lpDst, out.c_str(), nSize - 1); lpDst[nSize - 1] = 0; }
+    return static_cast<u32>(out.size() + 1);
+}
+
+u32 Win32ApiHle::hle_expand_environment_strings_w(const wchar_t* lpSrc, wchar_t* lpDst, u32 nSize) {
+    if (!lpSrc) return 0;
+    std::string narrow = win_utf16_to_utf8(lpSrc);
+    int needed = hle_expand_environment_strings_a(narrow.c_str(), nullptr, 0);
+    if (!lpDst || !nSize) return needed > 0 ? static_cast<u32>(needed) : 0;
+    std::string tmp(static_cast<size_t>(needed), '\0');
+    hle_expand_environment_strings_a(narrow.c_str(), tmp.data(), static_cast<u32>(needed));
+    u32 n = std::min<u32>(static_cast<u32>(needed), nSize);
+    for (u32 i = 0; i + 1 < n; ++i) lpDst[i] = static_cast<wchar_t>(static_cast<u8>(tmp[i]));
+    if (n > 0) lpDst[n - 1] = 0;
+    return static_cast<u32>(tmp.size());
+}
+
+BOOL Win32ApiHle::hle_set_file_attributes_a(const char* lpFileName, u32 dwFileAttributes) {
+    if (!lpFileName) return FALSE_VAL;
+    std::string p = normalize_win_path(lpFileName);
+    struct stat st{};
+    if (stat(p.c_str(), &st) != 0) return FALSE_VAL;
+    mode_t m = st.st_mode;
+    if (dwFileAttributes & 0x1) m &= ~(S_IWUSR | S_IWGRP | S_IWOTH);   // FILE_ATTRIBUTE_READONLY
+    else m |= S_IWUSR;
+    chmod(p.c_str(), m);
+    return TRUE_VAL;
+}
+
+BOOL Win32ApiHle::hle_set_file_attributes_w(const wchar_t* lpFileName, u32 dwFileAttributes) {
+    if (!lpFileName) return FALSE_VAL;
+    std::string narrow = win_utf16_to_utf8(lpFileName);
+    return hle_set_file_attributes_a(narrow.c_str(), dwFileAttributes);
+}
+
+BOOL Win32ApiHle::hle_set_file_time(HANDLE hFile, const void* lpCreation, const void* lpLastAccess, const void* lpLastWrite) {
+    (void)lpCreation;
+    int fd = static_cast<int>(reinterpret_cast<intptr_t>(hFile));
+    struct timespec times[2]{};
+    // FILETIME: 100ns since 1601. Convert to unix seconds.
+    auto ft_to_timespec = [](const void* ft) -> struct timespec {
+        struct timespec ts{0, 0};
+        if (!ft) return ts;
+        u64 f = *static_cast<const u64*>(ft);
+        if (f == 0) return ts;
+        constexpr u64 kUnixEpochDelta = 116444736000000000ULL;
+        u64 us100 = f > kUnixEpochDelta ? f - kUnixEpochDelta : 0;
+        ts.tv_sec = static_cast<time_t>(us100 / 10000000);
+        ts.tv_nsec = static_cast<long>((us100 % 10000000) * 100);
+        return ts;
+    };
+    times[0] = ft_to_timespec(lpLastAccess);
+    times[1] = ft_to_timespec(lpLastWrite);
+    return (futimens(fd, times) == 0) ? TRUE_VAL : FALSE_VAL;
+}
+
+u32 Win32ApiHle::hle_suspend_thread(HANDLE hThread) {
+    auto* nts = static_cast<NativeThreadState*>(hThread);
+    if (!nts || nts->tag != kHandleThread) return static_cast<u32>(-1);
+    return (pthread_kill(nts->handle, SIGSTOP) == 0) ? 1 : static_cast<u32>(-1);
+}
+
+u32 Win32ApiHle::hle_resume_thread(HANDLE hThread) {
+    auto* nts = static_cast<NativeThreadState*>(hThread);
+    if (!nts || nts->tag != kHandleThread) return static_cast<u32>(-1);
+    return (pthread_kill(nts->handle, SIGCONT) == 0) ? 1 : static_cast<u32>(-1);
+}
+
+HANDLE Win32ApiHle::hle_create_toolhelp32_snapshot(u32 dwFlags, u32 th32ProcessID) {
+    (void)dwFlags; (void)th32ProcessID;
+    auto* sn = new ToolhelpSnapshot();
+    for (const auto& de : std::filesystem::directory_iterator("/proc/self/task")) {
+        try { sn->tids.push_back(static_cast<pid_t>(std::stoul(de.path().filename().string()))); }
+        catch (...) {}
+    }
+    std::lock_guard<std::mutex> lk(g_toolhelp_mtx);
+    g_toolhelp_snaps[sn] = sn;
+    return sn;
+}
+
+BOOL Win32ApiHle::hle_thread32_first(HANDLE hSnapshot, void* lpte) {
+    auto* sn = static_cast<ToolhelpSnapshot*>(hSnapshot);
+    auto* e = static_cast<u8*>(lpte);
+    if (!sn || !e) return FALSE_VAL;
+    std::lock_guard<std::mutex> lk(g_toolhelp_mtx);
+    if (sn->tids.empty()) return FALSE_VAL;
+    u32 dwSize = *reinterpret_cast<u32*>(e);
+    if (dwSize < 32) return FALSE_VAL;
+    sn->pos = 0;
+    *reinterpret_cast<u32*>(e + 8) = sn->tids[0];        // th32ThreadID
+    *reinterpret_cast<u32*>(e + 12) = getpid();          // th32OwnerProcessID
+    return TRUE_VAL;
+}
+
+BOOL Win32ApiHle::hle_thread32_next(HANDLE hSnapshot, void* lpte) {
+    auto* sn = static_cast<ToolhelpSnapshot*>(hSnapshot);
+    auto* e = static_cast<u8*>(lpte);
+    if (!sn || !e) return FALSE_VAL;
+    std::lock_guard<std::mutex> lk(g_toolhelp_mtx);
+    if (sn->pos + 1 >= sn->tids.size()) return FALSE_VAL;
+    ++sn->pos;
+    *reinterpret_cast<u32*>(e + 8) = sn->tids[sn->pos];
+    *reinterpret_cast<u32*>(e + 12) = getpid();
+    return TRUE_VAL;
+}
+
+// ---- OLE glue ---------------------------------------------------------------
+s32 Win32ApiHle::hle_ole_initialize(const void* pvReserved) {
+    (void)pvReserved;
+    return hle_co_initialize_ex(nullptr, 0);   // S_OK / S_FALSE mirror
+}
+void Win32ApiHle::hle_ole_uninitialize() {}
+
+s32 Win32ApiHle::hle_register_drag_drop(void* hwnd, void* pDropTarget) { (void)hwnd; (void)pDropTarget; return 0x80004001; } // E_NOTIMPL
+s32 Win32ApiHle::hle_revoke_drag_drop(void* hwnd) { (void)hwnd; return 0x80004001; }
+s32 Win32ApiHle::hle_set_error_info(u32 dwReserved, void* perrinfo) { (void)dwReserved; (void)perrinfo; return 0; } // accept & drop
+s32 Win32ApiHle::hle_get_error_info(u32 dwReserved, void** pperrinfo) { (void)dwReserved; if (pperrinfo) *pperrinfo = nullptr; return 0x80004001; }
+s32 Win32ApiHle::hle_create_error_info(u32 dwReserved, void** pperrinfo) { (void)dwReserved; if (pperrinfo) *pperrinfo = nullptr; return 0x80004001; }
+s32 Win32ApiHle::hle_co_create_free_threaded_marshaler(void* pOuter, void** ppMarshal) { (void)pOuter; if (ppMarshal) *ppMarshal = nullptr; return 0x80004001; }
+
+void Win32ApiHle::hle_release_stg_medium(void* pmedium) {
+    if (!pmedium) return;
+    // STGMEDIUM: tymed@0, union@8, pUnkForRelease@16
+    u32 tymed = *reinterpret_cast<u32*>(static_cast<u8*>(pmedium));
+    void* unk = *reinterpret_cast<void**>(static_cast<u8*>(pmedium) + 16);
+    void* data = *reinterpret_cast<void**>(static_cast<u8*>(pmedium) + 8);
+    if (unk) { hle_com_release(unk); }
+    else if (tymed == 1 && data) { (void)hle_global_free(data); }   // TYMED_HGLOBAL
+    std::memset(pmedium, 0, 24);
+}
+
+u32 Win32ApiHle::hle_com_release(void* pUnk) {
+    // IUnknown::Release via vtable slot 2
+    if (!pUnk || !*reinterpret_cast<void**>(pUnk)) return 0;
+    auto fn = reinterpret_cast<u32 (__attribute__((ms_abi))*)(void*)>((*reinterpret_cast<void***>(pUnk))[2]);
+    return fn ? fn(pUnk) : 0;
+}
+
 u32 Win32ApiHle::hle_get_logical_drives() { return 0x4; } // Drive C:
 u32 Win32ApiHle::hle_get_temp_file_name_w(const wchar_t* lpPathName, const wchar_t* lpPrefixString, u32 uUnique, wchar_t* lpTempFileName) {
     if (!lpTempFileName) return 0;
@@ -5843,24 +6100,55 @@ static PAPAYA_MS_ABI int hle_freopen_s(void** pFile, const char* filename, const
     return nf ? 0 : -1;
 }
 
+// Convert a Windows x64 va_list (single char* into the callee home area:
+// [4 gp x 8][4 xmm x 16][stack args...]) into a SysV __va_list_tag so host
+// libc formatting works. The two formats differ structurally; guests always
+// hand us the Windows layout (ms_abi). gp beyond 4 and fp beyond 4 are
+// mapped from the contiguous stack slots; deeper args are out of scope.
+struct VaTag { unsigned gp, fp; void* over; void* rsa; };
+static void win_va_to_sysv(va_list win, va_list out) {
+    static thread_local unsigned long long slots[6 + 8];  // 6 gp + 8 fp slots
+    auto* w = reinterpret_cast<const unsigned long long*>(win);
+    slots[0] = w[0]; slots[1] = w[1]; slots[2] = w[2]; slots[3] = w[3];
+    const char* stack = reinterpret_cast<const char*>(win) + 0x60;
+    slots[4] = *reinterpret_cast<const unsigned long long*>(stack);
+    slots[5] = *reinterpret_cast<const unsigned long long*>(stack + 8);
+    auto* fp = reinterpret_cast<double*>(reinterpret_cast<char*>(slots) + 48);
+    const char* x = reinterpret_cast<const char*>(win);
+    fp[0] = *reinterpret_cast<const double*>(x + 0x20);
+    fp[1] = *reinterpret_cast<const double*>(x + 0x30);
+    fp[2] = *reinterpret_cast<const double*>(x + 0x40);
+    fp[3] = *reinterpret_cast<const double*>(x + 0x50);
+    VaTag tag{0, 48, nullptr, slots};
+    std::memcpy(out, &tag, sizeof(tag));   // out decays to __va_list_tag*
+}
+
 static PAPAYA_MS_ABI int hle_stdio_common_vfprintf(uint64_t options, void* stream, const char* format, void* locale, va_list valist) {
     (void)options; (void)locale;
-    return vfprintf(static_cast<FILE*>(stream), format, valist);
+    va_list ap;
+    win_va_to_sysv(valist, ap);
+    return vfprintf(static_cast<FILE*>(stream), format, ap);
 }
 static PAPAYA_MS_ABI int hle_stdio_common_vsprintf(uint64_t options, char* buffer, size_t buffer_count, const char* format, void* locale, va_list valist) {
     (void)options; (void)locale;
     if (!buffer || buffer_count == 0) return -1;
-    return vsnprintf(buffer, buffer_count, format, valist);
+    va_list ap;
+    win_va_to_sysv(valist, ap);
+    return vsnprintf(buffer, buffer_count, format, ap);
 }
 static PAPAYA_MS_ABI int hle_stdio_common_vsnprintf_s(uint64_t options, char* buffer, size_t buffer_count, size_t max_count, const char* format, void* locale, va_list valist) {
     (void)options; (void)locale; (void)max_count;
     if (!buffer || buffer_count == 0) return -1;
-    return vsnprintf(buffer, buffer_count, format, valist);
+    va_list ap;
+    win_va_to_sysv(valist, ap);
+    return vsnprintf(buffer, buffer_count, format, ap);
 }
 static PAPAYA_MS_ABI int hle_stdio_common_vsprintf_s(uint64_t options, char* buffer, size_t buffer_count, const char* format, void* locale, va_list valist) {
     (void)options; (void)locale;
     if (!buffer || buffer_count == 0) return -1;
-    return vsnprintf(buffer, buffer_count, format, valist);
+    va_list ap;
+    win_va_to_sysv(valist, ap);
+    return vsnprintf(buffer, buffer_count, format, ap);
 }
 static PAPAYA_MS_ABI int hle_stdio_common_vswprintf(uint64_t options, wchar_t* buffer, size_t buffer_count, const wchar_t* format, void* locale, va_list valist) {
     (void)options; (void)locale;
@@ -6353,6 +6641,26 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "WaitForSingleObject", reinterpret_cast<void*>(&hle_wait_for_single_object));
     register_function("KERNEL32.DLL", "WaitForMultipleObjects", reinterpret_cast<void*>(&hle_wait_for_multiple_objects));
 
+    register_function("KERNEL32.DLL", "ExpandEnvironmentStringsA", reinterpret_cast<void*>(&hle_expand_environment_strings_a));
+    register_function("KERNEL32.DLL", "ExpandEnvironmentStringsW", reinterpret_cast<void*>(&hle_expand_environment_strings_w));
+    register_function("KERNEL32.DLL", "GetDiskFreeSpaceExW", reinterpret_cast<void*>(&hle_get_disk_free_space_ex_w));
+    register_function("KERNEL32.DLL", "SetFileAttributesA", reinterpret_cast<void*>(&hle_set_file_attributes_a));
+    register_function("KERNEL32.DLL", "SetFileAttributesW", reinterpret_cast<void*>(&hle_set_file_attributes_w));
+    register_function("KERNEL32.DLL", "SetFileTime", reinterpret_cast<void*>(&hle_set_file_time));
+    register_function("KERNEL32.DLL", "SuspendThread", reinterpret_cast<void*>(&hle_suspend_thread));
+    register_function("KERNEL32.DLL", "ResumeThread", reinterpret_cast<void*>(&hle_resume_thread));
+    register_function("KERNEL32.DLL", "CreateToolhelp32Snapshot", reinterpret_cast<void*>(&hle_create_toolhelp32_snapshot));
+    register_function("KERNEL32.DLL", "Thread32First", reinterpret_cast<void*>(&hle_thread32_first));
+    register_function("KERNEL32.DLL", "Thread32Next", reinterpret_cast<void*>(&hle_thread32_next));
+    register_function("OLE32.dll", "OleInitialize", reinterpret_cast<void*>(&hle_ole_initialize));
+    register_function("OLE32.dll", "OleUninitialize", reinterpret_cast<void*>(&hle_ole_uninitialize));
+    register_function("OLE32.dll", "RegisterDragDrop", reinterpret_cast<void*>(&hle_register_drag_drop));
+    register_function("OLE32.dll", "RevokeDragDrop", reinterpret_cast<void*>(&hle_revoke_drag_drop));
+    register_function("OLE32.dll", "SetErrorInfo", reinterpret_cast<void*>(&hle_set_error_info));
+    register_function("OLE32.dll", "GetErrorInfo", reinterpret_cast<void*>(&hle_get_error_info));
+    register_function("OLE32.dll", "CreateErrorInfo", reinterpret_cast<void*>(&hle_create_error_info));
+    register_function("OLE32.dll", "CoCreateFreeThreadedMarshaler", reinterpret_cast<void*>(&hle_co_create_free_threaded_marshaler));
+    register_function("OLE32.dll", "ReleaseStgMedium", reinterpret_cast<void*>(&hle_release_stg_medium));
     register_function("KERNEL32.DLL", "CreateFileA", reinterpret_cast<void*>(&hle_create_file_a));
     register_function("KERNEL32.DLL", "CreateFileW", reinterpret_cast<void*>(&hle_create_file_w));
     register_function("KERNEL32.DLL", "ReadFile", reinterpret_cast<void*>(&hle_read_file));
