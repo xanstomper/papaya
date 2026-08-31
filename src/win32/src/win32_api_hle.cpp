@@ -3933,6 +3933,66 @@ void* Win32ApiHle::hle_get_active_window()   { return s_active_hwnd ? s_active_h
 void* Win32ApiHle::hle_set_active_window(void* hwnd) { s_active_hwnd = hwnd; return hwnd; }
 void* Win32ApiHle::hle_get_focus() { return s_active_hwnd ? s_active_hwnd : window_manager().first_window(); }
 void* Win32ApiHle::hle_set_focus(void* hwnd) { s_active_hwnd = hwnd; return hwnd; }
+
+// Dialog / menu / item helpers (ranked user32 gaps). Menu and dialog item
+// handles are synthesized (pseudo) where papaya tracks windows; most games only
+// need non-null handles and item state to draw UI/process clicks.
+void* Win32ApiHle::hle_get_dlg_item(void* hDlg, int nIDDlgItem) {
+    (void)nIDDlgItem;
+    // Synthesize a child-item handle derived from the dialog handle + id so it
+    // round-trips through GetDlgItemInt/SetDlgItemText callers on the same id.
+    if (!hDlg) return nullptr;
+    return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(hDlg) + 0x100 + static_cast<unsigned>(nIDDlgItem & 0xFFFF));
+}
+BOOL  Win32ApiHle::hle_end_dialog(void* hDlg, u64 nResult) {
+    (void)hDlg; (void)nResult;
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_get_parent(void* hwnd) {
+    if (!hwnd) return nullptr;
+    // For papaya's single-window model, the active hwnd is the top window; a
+    // GetParent on it returns NULL.
+    return (hwnd == static_cast<void*>(s_active_hwnd)) ? nullptr : reinterpret_cast<void*>(0x30000);
+}
+BOOL  Win32ApiHle::hle_enable_window(void* hwnd, BOOL enable) {
+    (void)hwnd; (void)enable;
+    return TRUE_VAL;   // enabled
+}
+int   Win32ApiHle::hle_get_window_text_length_w(void* hwnd) {
+    (void)hwnd;
+    return 0;
+}
+void* Win32ApiHle::hle_get_menu(void* hwnd) {
+    (void)hwnd;
+    return reinterpret_cast<void*>(0x40001);   // pseudo HMENU
+}
+void* Win32ApiHle::hle_get_sub_menu(void* hMenu, int pos) {
+    (void)hMenu; (void)pos;
+    return hMenu;   // treat as same menu (no submenu model)
+}
+void* Win32ApiHle::hle_get_system_menu(void* hwnd, BOOL revert) {
+    (void)hwnd; (void)revert;
+    return reinterpret_cast<void*>(0x40002);
+}
+BOOL  Win32ApiHle::hle_set_menu(void* hwnd, void* hMenu) {
+    (void)hwnd; (void)hMenu;
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_destroy_menu(void* hMenu) { (void)hMenu; return reinterpret_cast<void*>(1); }
+int   Win32ApiHle::hle_get_menu_item_count(void* hMenu) { (void)hMenu; return 0; }
+int   Win32ApiHle::hle_get_menu_item_id(void* hMenu, int pos) { (void)hMenu; (void)pos; return 0; }
+u64   Win32ApiHle::hle_check_menu_item(void* hMenu, u32 item, u32 fCheck) {
+    (void)hMenu; (void)item; (void)fCheck;
+    return 0;   // prev state MF_UNCHECKED
+}
+BOOL  Win32ApiHle::hle_enable_menu_item(void* hMenu, u32 item, u32 fEnable) {
+    (void)hMenu; (void)item; (void)fEnable;
+    return TRUE_VAL;
+}
+u32   Win32ApiHle::hle_get_dlg_ctrl_id(void* hwnd) {
+    if (!hwnd) return 0;
+    return static_cast<u32>(reinterpret_cast<uintptr_t>(hwnd) & 0xFFFF);
+}
 void* Win32ApiHle::hle_get_capture() { return s_capture_hwnd; }
 void* Win32ApiHle::hle_set_capture(void* hwnd) { s_capture_hwnd = hwnd; return hwnd; }
 BOOL  Win32ApiHle::hle_release_capture() { s_capture_hwnd = nullptr; return TRUE_VAL; }
@@ -8089,6 +8149,22 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "MoveWindow",               reinterpret_cast<void*>(&hle_move_window));
     register_function("USER32.DLL", "FlashWindowEx",            reinterpret_cast<void*>(&hle_flash_window_ex));
     register_function("USER32.DLL", "SetFocus",                 reinterpret_cast<void*>(&hle_set_focus));
+    register_function("USER32.DLL", "GetFocus",                 reinterpret_cast<void*>(&hle_get_focus));
+    register_function("USER32.DLL", "GetDlgItem",               reinterpret_cast<void*>(&hle_get_dlg_item));
+    register_function("USER32.DLL", "EndDialog",                reinterpret_cast<void*>(&hle_end_dialog));
+    register_function("USER32.DLL", "GetParent",                reinterpret_cast<void*>(&hle_get_parent));
+    register_function("USER32.DLL", "EnableWindow",             reinterpret_cast<void*>(&hle_enable_window));
+    register_function("USER32.DLL", "GetWindowTextLengthW",     reinterpret_cast<void*>(&hle_get_window_text_length_w));
+    register_function("USER32.DLL", "GetMenu",                  reinterpret_cast<void*>(&hle_get_menu));
+    register_function("USER32.DLL", "GetSubMenu",               reinterpret_cast<void*>(&hle_get_sub_menu));
+    register_function("USER32.DLL", "GetSystemMenu",            reinterpret_cast<void*>(&hle_get_system_menu));
+    register_function("USER32.DLL", "SetMenu",                  reinterpret_cast<void*>(&hle_set_menu));
+    register_function("USER32.DLL", "DestroyMenu",              reinterpret_cast<void*>(&hle_destroy_menu));
+    register_function("USER32.DLL", "GetMenuItemCount",         reinterpret_cast<void*>(&hle_get_menu_item_count));
+    register_function("USER32.DLL", "GetMenuItemID",            reinterpret_cast<void*>(&hle_get_menu_item_id));
+    register_function("USER32.DLL", "CheckMenuItem",            reinterpret_cast<void*>(&hle_check_menu_item));
+    register_function("USER32.DLL", "EnableMenuItem",           reinterpret_cast<void*>(&hle_enable_menu_item));
+    register_function("USER32.DLL", "GetDlgCtrlID",             reinterpret_cast<void*>(&hle_get_dlg_ctrl_id));
     register_function("USER32.DLL", "AllowSetForegroundWindow", reinterpret_cast<void*>(&hle_allow_set_foreground_window));
     register_function("USER32.DLL", "OpenClipboard",            reinterpret_cast<void*>(&hle_open_clipboard));
     register_function("USER32.DLL", "CloseClipboard",           reinterpret_cast<void*>(&hle_close_clipboard));

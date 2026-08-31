@@ -551,6 +551,22 @@ public:
     static PAPAYA_MS_ABI void* hle_get_active_window();
     static PAPAYA_MS_ABI void* hle_set_active_window(void* hwnd);
     static PAPAYA_MS_ABI void* hle_get_focus();
+    // Dialog / menu / item helpers (ranked user32 gaps)
+    static PAPAYA_MS_ABI void* hle_get_dlg_item(void* hDlg, int nIDDlgItem);
+    static PAPAYA_MS_ABI BOOL  hle_end_dialog(void* hDlg, u64 nResult);
+    static PAPAYA_MS_ABI void* hle_get_parent(void* hwnd);
+    static PAPAYA_MS_ABI BOOL  hle_enable_window(void* hwnd, BOOL enable);
+    static PAPAYA_MS_ABI int   hle_get_window_text_length_w(void* hwnd);
+    static PAPAYA_MS_ABI void* hle_get_menu(void* hwnd);
+    static PAPAYA_MS_ABI void* hle_get_sub_menu(void* hMenu, int pos);
+    static PAPAYA_MS_ABI void* hle_get_system_menu(void* hwnd, BOOL revert);
+    static PAPAYA_MS_ABI BOOL  hle_set_menu(void* hwnd, void* hMenu);
+    static PAPAYA_MS_ABI void* hle_destroy_menu(void* hMenu);
+    static PAPAYA_MS_ABI int   hle_get_menu_item_count(void* hMenu);
+    static PAPAYA_MS_ABI int   hle_get_menu_item_id(void* hMenu, int pos);
+    static PAPAYA_MS_ABI u64   hle_check_menu_item(void* hMenu, u32 item, u32 fCheck);
+    static PAPAYA_MS_ABI BOOL  hle_enable_menu_item(void* hMenu, u32 item, u32 fEnable);
+    static PAPAYA_MS_ABI u32   hle_get_dlg_ctrl_id(void* hwnd);
     static PAPAYA_MS_ABI void* hle_set_focus(void* hwnd);
     static PAPAYA_MS_ABI void* hle_get_capture();
     static PAPAYA_MS_ABI void* hle_set_capture(void* hwnd);
