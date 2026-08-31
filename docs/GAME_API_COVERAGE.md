@@ -51,4 +51,4 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 
 - Status: NONE (0 impl), LOW (<20%), PARTIAL (20-79%), COVERED (>=80%).
 - `register_function` registration is later-wins; generic_stub registrations are excluded from the implemented set where they override nothing (audit with stub-vs-real counts).
-- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 40 DLL families.
+- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 41 DLL families.

@@ -26,6 +26,8 @@ build wsp_min2
 build godot_path
 # msvcrt _wfopen wide-path conversion (wcstombs -> win_utf16_to_utf8)
 build wfopen_path
+# ucrtbase.dll wide-string surface (Unity/Godot-Mono/.NET)
+build ucrt_wide
 # window / message pump suite
 build msgpump_test -luser32 -lgdi32
 build strgl_test   -luser32 -lgdi32

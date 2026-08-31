@@ -5995,6 +5995,279 @@ static PAPAYA_MS_ABI uintptr_t hle_beginthreadex(void* sec, unsigned stack_size,
     return reinterpret_cast<uintptr_t>(h);
 }
 
+// UCRT (ucrtbase.dll) compatibility family. Modern games (Unity, Godot Mono,
+// .NET apps) import these directly under ucrtbase.dll rather than msvcrt.dll;
+// the PE resolver forwards unknown ucrtbase imports here. All host-backed.
+// ASCII-only case fold: locale-independent and deterministic, matching what
+// games' wide-string compare/split paths need (avoiding std::towlower, which is
+// locale- and stdlib-version-dependent and can silently no-op under a C locale).
+static wchar_t* g_guest_wargv_storage[2] = { const_cast<wchar_t*>(L"game.exe"), nullptr };
+static wchar_t** g_guest_wargv = g_guest_wargv_storage;
+
+static PAPAYA_MS_ABI wchar_t*** hle_p___wargv() { return &g_guest_wargv; }
+static PAPAYA_MS_ABI int hle_configure_wide_argv(int mode) { (void)mode; return 0; }
+static PAPAYA_MS_ABI wchar_t** hle_get_initial_wide_environment() { static wchar_t* e[] = { nullptr }; return e; }
+static PAPAYA_MS_ABI wchar_t** hle_initialize_wide_environment() { static wchar_t* e[] = { nullptr }; return e; }
+static PAPAYA_MS_ABI char** hle_get_initial_narrow_environment() { static char* e[] = { nullptr }; return e; }
+
+// Guest wide strings are UTF-16LE (2-byte code units, per the Windows ABI),
+// but host wchar_t is 4-byte UTF-32. Reading a guest string as wchar_t* would
+// misinterpret every code unit. All wide-string HLEs below therefore treat the
+// pointer as const uint16_t* (UTF-16LE) and operate on code units directly.
+static size_t u16_len(const uint16_t* s) { size_t n = 0; while (s && s[n]) ++n; return n; }
+static uint16_t u16_lower(uint16_t c) { return (c >= 'A' && c <= 'Z') ? (uint16_t)(c + 32) : c; }
+static uint16_t u16_upper(uint16_t c) { return (c >= 'a' && c <= 'z') ? (uint16_t)(c - 32) : c; }
+
+static PAPAYA_MS_ABI int hle_wcsicmp(const void* a, const void* b) {
+    const uint16_t* A = static_cast<const uint16_t*>(a);
+    const uint16_t* B = static_cast<const uint16_t*>(b);
+    for (;;) { uint16_t ca = u16_lower(*A), cb = u16_lower(*B); if (ca != cb || ca == 0) return (int)ca - (int)cb; ++A; ++B; }
+}
+static PAPAYA_MS_ABI void* hle_wcsdup(const void* s) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!S) return nullptr;
+    size_t n = u16_len(S) + 1;
+    uint16_t* d = static_cast<uint16_t*>(malloc(n * sizeof(uint16_t)));
+    if (d) for (size_t i = 0; i < n; ++i) d[i] = S[i];
+    return d;
+}
+static PAPAYA_MS_ABI void* hle_wcscat(void* d, const void* s) {
+    uint16_t* D = static_cast<uint16_t*>(d);
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    size_t dl = u16_len(D), sl = u16_len(S), i;
+    for (i = 0; i < sl; ++i) D[dl + i] = S[i];
+    D[dl + sl] = 0;
+    return D;
+}
+static PAPAYA_MS_ABI int hle_wcsnicmp(const void* a, const void* b, size_t n) {
+    const uint16_t* A = static_cast<const uint16_t*>(a);
+    const uint16_t* B = static_cast<const uint16_t*>(b);
+    for (size_t i = 0; i < n; ++i) { uint16_t ca = u16_lower(A[i]), cb = u16_lower(B[i]); if (ca != cb) return (int)ca - (int)cb; if (ca == 0) return 0; }
+    return 0;
+}
+static PAPAYA_MS_ABI void* hle_wcspbrk(const void* s, const void* set) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    const uint16_t* Set = static_cast<const uint16_t*>(set);
+    size_t sl = u16_len(Set);
+    for (const uint16_t* p = S; *p; ++p) for (size_t i = 0; i < sl; ++i) if (*p == Set[i]) return const_cast<uint16_t*>(p);
+    return nullptr;
+}
+static PAPAYA_MS_ABI int hle_iswspace(wint_t c) { wchar_t w = static_cast<wchar_t>(c); return (w == L' ' || w == L'\t' || w == L'\n' || w == L'\r' || w == L'\v' || w == L'\f') ? 1 : 0; }
+static PAPAYA_MS_ABI wint_t hle_towupper(wint_t c) { return u16_upper(static_cast<uint16_t>(c)); }
+static PAPAYA_MS_ABI wint_t hle_towlower(wint_t c) { return u16_lower(static_cast<uint16_t>(c)); }
+static PAPAYA_MS_ABI int hle_iswprint(wint_t c) { wchar_t w = static_cast<wchar_t>(c); return (w >= 0x20 && w != 0x7f) ? 1 : 0; }
+static PAPAYA_MS_ABI int hle_iswxdigit(wint_t c) { wchar_t w = static_cast<wchar_t>(c); return (w >= L'0' && w <= L'9') || (w >= L'a' && w <= L'f') || (w >= L'A' && w <= L'F') ? 1 : 0; }
+static PAPAYA_MS_ABI int hle_iswdigit(wint_t c) { wchar_t w = static_cast<wchar_t>(c); return (w >= L'0' && w <= L'9') ? 1 : 0; }
+static PAPAYA_MS_ABI int hle_iswalnum(wint_t c) { wchar_t w = static_cast<wchar_t>(c); return ((w >= L'A' && w <= L'Z') || (w >= L'a' && w <= L'z') || (w >= L'0' && w <= L'9')) ? 1 : 0; }
+static PAPAYA_MS_ABI int hle_isprint(int c) { return (c >= 0x20 && c != 0x7f) ? 1 : 0; }
+
+static PAPAYA_MS_ABI void* hle_wcsupr(void* s) { uint16_t* p = static_cast<uint16_t*>(s); if (p) for (; *p; ++p) *p = u16_upper(*p); return s; }
+static PAPAYA_MS_ABI void* hle_wcslwr(void* s) { uint16_t* p = static_cast<uint16_t*>(s); if (p) for (; *p; ++p) *p = u16_lower(*p); return s; }
+static PAPAYA_MS_ABI void* hle_wcsrev(void* s) {
+    uint16_t* S = static_cast<uint16_t*>(s);
+    if (!S) return nullptr;
+    size_t n = u16_len(S); if (n < 2) return S;
+    for (size_t i = 0, j = n - 1; i < j; ++i, --j) { uint16_t t = S[i]; S[i] = S[j]; S[j] = t; }
+    return S;
+}
+static PAPAYA_MS_ABI void* hle_wcstok(void* s, const void* delim, void** ctx) {
+    uint16_t* S = static_cast<uint16_t*>(s);
+    const uint16_t* delimv = static_cast<const uint16_t*>(delim);
+    uint16_t* cur = S;
+    if (!cur && ctx) { uint16_t* saved = nullptr; std::memcpy(&saved, ctx, sizeof(saved)); cur = saved; }
+    if (!cur) return nullptr;
+    size_t dl = u16_len(delimv);
+    while (*cur) { bool sep = false; for (size_t i = 0; i < dl; ++i) if (*cur == delimv[i]) { sep = true; break; } if (!sep) break; ++cur; }
+    if (!*cur) { if (ctx) { uint16_t* n = nullptr; std::memcpy(ctx, &n, sizeof(n)); } return nullptr; }
+    uint16_t* token = cur;
+    while (*cur) { bool sep = false; for (size_t i = 0; i < dl; ++i) if (*cur == delimv[i]) { sep = true; break; } if (sep) break; ++cur; }
+    if (*cur) { *cur = 0; ++cur; }
+    if (ctx) std::memcpy(ctx, &cur, sizeof(cur));
+    return token;
+}
+static PAPAYA_MS_ABI void* hle_wcstok_s(void* s, const void* delim, void** ctx) { return hle_wcstok(s, delim, ctx); }
+static PAPAYA_MS_ABI size_t hle_wcscspn(const void* s, const void* set) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    const uint16_t* Set = static_cast<const uint16_t*>(set);
+    size_t sl = u16_len(Set);
+    size_t i = 0;
+    for (; S[i]; ++i) for (size_t j = 0; j < sl; ++j) if (S[i] == Set[j]) return i;
+    return i;
+}
+static PAPAYA_MS_ABI size_t hle_wcsspn(const void* s, const void* set) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    const uint16_t* Set = static_cast<const uint16_t*>(set);
+    size_t sl = u16_len(Set), i = 0;
+    while (S[i]) { bool in = false; for (size_t j = 0; j < sl; ++j) if (S[i] == Set[j]) { in = true; break; } if (!in) break; ++i; }
+    return i;
+}
+static PAPAYA_MS_ABI int hle_wcsncat_s(void* d, size_t sz, const void* s, size_t n) {
+    uint16_t* D = static_cast<uint16_t*>(d);
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!D || !S || sz == 0) return -1;
+    size_t dl = u16_len(D);
+    size_t wn = u16_len(S); if (wn > n) wn = n;
+    if (dl + wn + 1 >= sz) return -2;
+    for (size_t i = 0; i < wn; ++i) D[dl + i] = S[i];
+    D[dl + wn] = 0;
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_wcsncpy_s(void* d, size_t sz, const void* s, size_t n) {
+    uint16_t* D = static_cast<uint16_t*>(d);
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!D || !S || sz == 0) return -1;
+    size_t src = u16_len(S); if (src > n) src = n;
+    if (src >= sz) return -2;
+    for (size_t i = 0; i < src; ++i) D[i] = S[i];
+    D[src] = 0;
+    return 0;
+}
+static PAPAYA_MS_ABI void hle_wsplitpath(const void* path, void* d, void* dir, void* fname, void* ext) {
+    const uint16_t* P = static_cast<const uint16_t*>(path);
+    if (!P) return;
+    size_t len = u16_len(P);
+    if (len > 2048) len = 2048;
+
+    // Split drive (X:), dir, base name, extension by scanning back for last
+    // slash and last dot. Copies UTF-16 code units into guest buffers.
+    size_t drive_len = 0;
+    size_t path_start = 0;
+    if (len >= 2 && P[0] >= 'A' && P[0] <= 'Z' && P[1] == ':') { drive_len = 2; path_start = 2; }
+
+    // find last slash among remaining
+    size_t last_slash = (size_t)-1;
+    for (size_t i = path_start; i < len; ++i) if (P[i] == L'/' || P[i] == L'\\') last_slash = i;
+    size_t dir_start = path_start, dir_end = 0, name_start = path_start;
+    if (last_slash != (size_t)-1) { dir_end = last_slash; name_start = last_slash + 1; }
+
+    // find last dot in name
+    size_t dot = (size_t)-1;
+    for (size_t i = name_start; i < len; ++i) if (P[i] == L'.') dot = i;
+    size_t base_end = (dot != (size_t)-1) ? dot : len;
+    size_t ext_start = (dot != (size_t)-1) ? dot : len;
+
+    auto copy = [](uint16_t* out, const uint16_t* src, size_t n) {
+        if (!out) return;
+        for (size_t i = 0; i < n; ++i) out[i] = src[i];
+        out[n] = 0;
+    };
+    copy(static_cast<uint16_t*>(d), P, drive_len);
+    copy(static_cast<uint16_t*>(dir), P + dir_start, dir_end > dir_start ? dir_end - dir_start + 1 : 0);
+    copy(static_cast<uint16_t*>(fname), P + name_start, base_end - name_start);
+    copy(static_cast<uint16_t*>(ext), P + ext_start, len - ext_start);
+}
+static PAPAYA_MS_ABI int hle_wtoi(const void* s) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!S) return 0;
+    long long v = 0; bool neg = false; size_t i = 0;
+    while (S[i] == L' ' || S[i] == L'\t') ++i;
+    if (S[i] == L'-') { neg = true; ++i; } else if (S[i] == L'+') ++i;
+    while (S[i] >= L'0' && S[i] <= L'9') { v = v * 10 + (S[i] - L'0'); ++i; }
+    return (int)(neg ? -v : v);
+}
+static PAPAYA_MS_ABI long hle_wtol(const void* s) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!S) return 0;
+    long long v = 0; bool neg = false; size_t i = 0;
+    while (i < u16_len(S) && (S[i] == L' ' || S[i] == L'\t')) ++i;
+    if (S[i] == L'-') { neg = true; ++i; } else if (S[i] == L'+') ++i;
+    while (S[i] >= L'0' && S[i] <= L'9') { v = v * 10 + (S[i] - L'0'); ++i; }
+    return (long)(neg ? -v : v);
+}
+static PAPAYA_MS_ABI unsigned long long hle_wcstoui64(const void* s, void** end, int base) {
+    const uint16_t* S = static_cast<const uint16_t*>(s);
+    if (!S) { if (end) *end = nullptr; return 0; }
+    size_t i = 0; unsigned long long v = 0;
+    while (S[i] == L' ' || S[i] == L'\t') ++i;
+    bool neg = false; if (S[i] == L'-') { neg = true; ++i; } else if (S[i] == L'+') ++i;
+    if (base == 0 || base == 16) { if (S[i] == L'0' && (S[i+1] == L'x' || S[i+1] == L'X')) { base = 16; i += 2; } else if (base == 0) base = 10; }
+    if (base == 0) { if (S[i] == L'0') base = 8; else base = 10; }
+    for (; S[i]; ++i) {
+        unsigned d;
+        if (S[i] >= L'0' && S[i] <= L'9') d = S[i] - L'0';
+        else if (S[i] >= L'a' && S[i] <= L'f') d = S[i] - L'a' + 10;
+        else if (S[i] >= L'A' && S[i] <= L'F') d = S[i] - L'A' + 10;
+        else break;
+        if ((unsigned)base <= d) break;
+        v = v * (unsigned)base + d;
+    }
+    if (end) *end = const_cast<uint16_t*>(S + i);
+    return neg ? (unsigned long long)-(long long)v : v;
+}
+static PAPAYA_MS_ABI void* hle_ui64tow(unsigned long long v, void* buf, int radix) {
+    if (!buf) return nullptr;
+    if (radix != 16 && radix != 8 && radix != 10) radix = 10;
+    uint16_t tmp[65]; size_t n = 0;
+    const char* hx = "0123456789abcdef";
+    unsigned long long x = v;
+    do { unsigned digit = (unsigned)(x % (unsigned)radix); tmp[n++] = (uint16_t)hx[digit]; x /= (unsigned)radix; } while (x);
+    uint16_t* out = static_cast<uint16_t*>(buf);
+    for (size_t i = 0; i < n; ++i) out[i] = tmp[n - 1 - i];
+    out[n] = 0;
+    return out;
+}
+static PAPAYA_MS_ABI void* hle_wgetenv(const void* name) {
+    const uint16_t* N = static_cast<const uint16_t*>(name);
+    if (!N) return nullptr;
+    char mb[1024]; size_t n = u16_len(N); if (n >= sizeof(mb)) n = sizeof(mb) - 1;
+    for (size_t i = 0; i < n; ++i) mb[i] = (char)N[i];
+    mb[n] = 0;
+    const char* val = getenv(mb); if (!val) return nullptr;
+    static uint16_t wv[2048]; size_t m = 0;
+    for (; val[m] && m < 2047; ++m) wv[m] = (uint16_t)(unsigned char)val[m];
+    wv[m] = 0;
+    return wv;
+}
+static PAPAYA_MS_ABI void hle_wperror(const void* msg) {
+    const uint16_t* M = static_cast<const uint16_t*>(msg);
+    if (M && M[0]) { char mb[2048]; size_t n = u16_len(M); if (n >= sizeof(mb)) n = sizeof(mb) - 1; for (size_t i = 0; i < n; ++i) mb[i] = (char)M[i]; mb[n] = 0; fputs(mb, stderr); fputs(": ", stderr); }
+    perror(nullptr);
+}
+static PAPAYA_MS_ABI time_t hle_time32(time_t* t) { time_t now = time(nullptr); if (t) *t = now; return now; }
+
+// low-level fd I/O (used by UCRT _open/_read/_write/_lseek/_close/_chsize/_setmode)
+static PAPAYA_MS_ABI int hle_open(const char* path, int oflag, int pmode) {
+    (void)pmode;
+    if (!path) return -1;
+    std::string p = normalize_win_path(path);
+    return ::open(p.c_str(), oflag);
+}
+static PAPAYA_MS_ABI int hle_wopen(const wchar_t* path, int oflag, int pmode) {
+    if (!path) return -1;
+    char mb[1024]; size_t n = wcstombs(mb, path, sizeof(mb) - 1); if (n == (size_t)-1) return -1; mb[n] = 0;
+    std::string p = normalize_win_path(mb);
+    return open(p.c_str(), oflag);
+}
+static PAPAYA_MS_ABI int hle_close(int fd) { return ::close(fd); }
+static PAPAYA_MS_ABI int hle_read(int fd, void* buf, unsigned count) { return static_cast<int>(::read(fd, buf, count)); }
+static PAPAYA_MS_ABI int hle_write(int fd, const void* buf, unsigned count) { return static_cast<int>(::write(fd, buf, count)); }
+static PAPAYA_MS_ABI long long hle_lseek(int fd, long long off, int whence) { return ::lseek(fd, off, whence); }
+static PAPAYA_MS_ABI int hle_chsize(int fd, long long size) { return ftruncate(fd, size) == 0 ? 0 : -1; }
+static PAPAYA_MS_ABI int hle_fstat64i32(int fd, void* sb) { (void)fd; (void)sb; return 0; }
+static PAPAYA_MS_ABI int hle_setmode(int fd, int mode) { (void)fd; (void)mode; return 0; }
+static PAPAYA_MS_ABI int hle_kbhit() { return 0; }
+static PAPAYA_MS_ABI int hle_putc(int c, FILE* stream) { return fputc(c, stream); }
+static PAPAYA_MS_ABI int hle_fgetws(wchar_t* s, int n, void* stream) { return fgetws(s, n, static_cast<FILE*>(stream)) ? 0 : -1; }
+static PAPAYA_MS_ABI int hle_fputws(const wchar_t* s, void* stream) { return fputws(s, static_cast<FILE*>(stream)) == EOF ? -1 : 0; }
+
+static PAPAYA_MS_ABI int hle_vswprintf_helper(int* /*result*/, void* buf, size_t count, const wchar_t* fmt, void* args) {
+    // Minimal: report truncation gracefully without formatting (safe no-op).
+    (void)buf; (void)count; (void)fmt; (void)args;
+    return -1;
+}
+static PAPAYA_MS_ABI int hle_stdio_common_vswscanf(void* opt, const wchar_t* str, const wchar_t* fmt, void* argptr) {
+    (void)opt; (void)str; (void)fmt; (void)argptr;
+    return 0;
+}
+static PAPAYA_MS_ABI int hle_pclose(void* pipe) { return pipe ? pclose(static_cast<FILE*>(pipe)) : -1; }
+static PAPAYA_MS_ABI void* hle_wpopen(const wchar_t* cmd, const wchar_t* mode) {
+    if (!cmd || !mode) return nullptr;
+    char mcmd[2048], mmode[16];
+    size_t nc = wcstombs(mcmd, cmd, sizeof(mcmd)-1); if (nc == (size_t)-1) return nullptr; mcmd[nc]=0;
+    size_t nm = wcstombs(mmode, mode, sizeof(mmode)-1); if (nm == (size_t)-1) return nullptr; mmode[nm]=0;
+    return popen(mcmd, mmode);
+}
+
 // stdio functions
 static PAPAYA_MS_ABI void* hle_fopen(const char* filename, const char* mode) {
     if (!filename || !mode) return nullptr;
@@ -7704,6 +7977,71 @@ Result<> Win32ApiHle::initialize() {
     register_function("MSVCRT.DLL", "_getmaxstdio",             reinterpret_cast<void*>(&hle_getmaxstdio));
     register_function("MSVCRT.DLL", "_setmaxstdio",             reinterpret_cast<void*>(&hle_setmaxstdio));
     register_function("MSVCRT.DLL", "_chsize_s",                reinterpret_cast<void*>(&hle_chsize_s));
+
+    // UCRT (ucrtbase.dll) family. Modern Unity/Godot-Mono/.NET games import
+    // the Universal CRT directly under ucrtbase.dll. Register the host-backed
+    // CRT surface below; the PE resolver forwards ucrtbase imports here.
+    register_function("UCRTBASE.DLL", "__p___wargv",                reinterpret_cast<void*>(&hle_p___wargv));
+    register_function("UCRTBASE.DLL", "__p___argc",                 reinterpret_cast<void*>(&hle_p___argc));
+    register_function("UCRTBASE.DLL", "__p___argv",                 reinterpret_cast<void*>(&hle_p___argv));
+    register_function("UCRTBASE.DLL", "_configure_narrow_argv",     reinterpret_cast<void*>(&hle_configure_narrow_argv));
+    register_function("UCRTBASE.DLL", "_crt_atexit",                reinterpret_cast<void*>(&hle_crt_atexit));
+    register_function("UCRTBASE.DLL", "_initterm",                  reinterpret_cast<void*>(&hle_msvcrt__initterm));
+    register_function("UCRTBASE.DLL", "_initterm_e",                reinterpret_cast<void*>(&hle_initterm_e));
+    register_function("UCRTBASE.DLL", "_set_app_type",              reinterpret_cast<void*>(&hle_msvcrt__set_app_type));
+    register_function("UCRTBASE.DLL", "exit",                       reinterpret_cast<void*>(&hle_msvcrt_exit));
+    register_function("UCRTBASE.DLL", "_initialize_narrow_environment", reinterpret_cast<void*>(&hle_initialize_narrow_environment));
+    register_function("UCRTBASE.DLL", "_configure_wide_argv",       reinterpret_cast<void*>(&hle_configure_wide_argv));
+    register_function("UCRTBASE.DLL", "_get_initial_wide_environment", reinterpret_cast<void*>(&hle_get_initial_wide_environment));
+    register_function("UCRTBASE.DLL", "_initialize_wide_environment", reinterpret_cast<void*>(&hle_initialize_wide_environment));
+    register_function("UCRTBASE.DLL", "_get_initial_narrow_environment", reinterpret_cast<void*>(&hle_get_initial_narrow_environment));
+    register_function("UCRTBASE.DLL", "_wcsicmp",                  reinterpret_cast<void*>(&hle_wcsicmp));
+    register_function("UCRTBASE.DLL", "_wcsdup",                   reinterpret_cast<void*>(&hle_wcsdup));
+    register_function("UCRTBASE.DLL", "wcscat",                    reinterpret_cast<void*>(&hle_wcscat));
+    register_function("UCRTBASE.DLL", "_wcsnicmp",                 reinterpret_cast<void*>(&hle_wcsnicmp));
+    register_function("UCRTBASE.DLL", "wcspbrk",                   reinterpret_cast<void*>(&hle_wcspbrk));
+    register_function("UCRTBASE.DLL", "iswspace",                  reinterpret_cast<void*>(&hle_iswspace));
+    register_function("UCRTBASE.DLL", "towupper",                  reinterpret_cast<void*>(&hle_towupper));
+    register_function("UCRTBASE.DLL", "towlower",                  reinterpret_cast<void*>(&hle_towlower));
+    register_function("UCRTBASE.DLL", "iswprint",                  reinterpret_cast<void*>(&hle_iswprint));
+    register_function("UCRTBASE.DLL", "iswxdigit",                 reinterpret_cast<void*>(&hle_iswxdigit));
+    register_function("UCRTBASE.DLL", "iswdigit",                  reinterpret_cast<void*>(&hle_iswdigit));
+    register_function("UCRTBASE.DLL", "iswalnum",                  reinterpret_cast<void*>(&hle_iswalnum));
+    register_function("UCRTBASE.DLL", "isprint",                   reinterpret_cast<void*>(&hle_isprint));
+    register_function("UCRTBASE.DLL", "_wcsupr",                   reinterpret_cast<void*>(&hle_wcsupr));
+    register_function("UCRTBASE.DLL", "_wcslwr",                   reinterpret_cast<void*>(&hle_wcslwr));
+    register_function("UCRTBASE.DLL", "_wcsrev",                   reinterpret_cast<void*>(&hle_wcsrev));
+    register_function("UCRTBASE.DLL", "wcstok",                    reinterpret_cast<void*>(&hle_wcstok));
+    register_function("UCRTBASE.DLL", "wcstok_s",                  reinterpret_cast<void*>(&hle_wcstok_s));
+    register_function("UCRTBASE.DLL", "wcscspn",                   reinterpret_cast<void*>(&hle_wcscspn));
+    register_function("UCRTBASE.DLL", "wcsspn",                    reinterpret_cast<void*>(&hle_wcsspn));
+    register_function("UCRTBASE.DLL", "wcsncat_s",                 reinterpret_cast<void*>(&hle_wcsncat_s));
+    register_function("UCRTBASE.DLL", "wcsncpy_s",                 reinterpret_cast<void*>(&hle_wcsncpy_s));
+    register_function("UCRTBASE.DLL", "_wsplitpath",               reinterpret_cast<void*>(&hle_wsplitpath));
+    register_function("UCRTBASE.DLL", "_wtoi",                     reinterpret_cast<void*>(&hle_wtoi));
+    register_function("UCRTBASE.DLL", "_wtol",                     reinterpret_cast<void*>(&hle_wtol));
+    register_function("UCRTBASE.DLL", "_wcstoui64",                reinterpret_cast<void*>(&hle_wcstoui64));
+    register_function("UCRTBASE.DLL", "_ui64tow",                  reinterpret_cast<void*>(&hle_ui64tow));
+    register_function("UCRTBASE.DLL", "_wgetenv",                  reinterpret_cast<void*>(&hle_wgetenv));
+    register_function("UCRTBASE.DLL", "_wperror",                  reinterpret_cast<void*>(&hle_wperror));
+    register_function("UCRTBASE.DLL", "_time32",                   reinterpret_cast<void*>(&hle_time32));
+    register_function("UCRTBASE.DLL", "_open",                     reinterpret_cast<void*>(&hle_open));
+    register_function("UCRTBASE.DLL", "_wopen",                    reinterpret_cast<void*>(&hle_wopen));
+    register_function("UCRTBASE.DLL", "_close",                    reinterpret_cast<void*>(&hle_close));
+    register_function("UCRTBASE.DLL", "_read",                     reinterpret_cast<void*>(&hle_read));
+    register_function("UCRTBASE.DLL", "_write",                    reinterpret_cast<void*>(&hle_write));
+    register_function("UCRTBASE.DLL", "_lseek",                    reinterpret_cast<void*>(&hle_lseek));
+    register_function("UCRTBASE.DLL", "_chsize",                   reinterpret_cast<void*>(&hle_chsize));
+    register_function("UCRTBASE.DLL", "_fstat64i32",               reinterpret_cast<void*>(&hle_fstat64i32));
+    register_function("UCRTBASE.DLL", "_setmode",                  reinterpret_cast<void*>(&hle_setmode));
+    register_function("UCRTBASE.DLL", "_kbhit",                    reinterpret_cast<void*>(&hle_kbhit));
+    register_function("UCRTBASE.DLL", "getc",                      reinterpret_cast<void*>(&hle_getc));
+    register_function("UCRTBASE.DLL", "putc",                      reinterpret_cast<void*>(&hle_putc));
+    register_function("UCRTBASE.DLL", "fgetws",                    reinterpret_cast<void*>(&hle_fgetws));
+    register_function("UCRTBASE.DLL", "fputws",                    reinterpret_cast<void*>(&hle_fputws));
+    register_function("UCRTBASE.DLL", "__stdio_common_vswscanf",   reinterpret_cast<void*>(&hle_stdio_common_vswscanf));
+    register_function("UCRTBASE.DLL", "_pclose",                   reinterpret_cast<void*>(&hle_pclose));
+    register_function("UCRTBASE.DLL", "_wpopen",                   reinterpret_cast<void*>(&hle_wpopen));
 
     // User32 additions
     register_function("USER32.DLL", "SetPropW",                 reinterpret_cast<void*>(&hle_set_prop_w));
