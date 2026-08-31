@@ -54,6 +54,33 @@ invisible in scattered commits or a flat coverage percentage.
 - surface-wide codegen stubs (2172) + CRT->libc gets (`1237653`)
 - registry delete/create-key (`1239eaf`)
 
+## Tier 2 + Tier 3 (2026-08-31, segmented)
+
+**Tier 2 — newer efficiency layer:**
+- *Object mapping (HANDLE->futex/condvar/eventfd):* audited and found ALREADY
+  realized — papaya's events/mutexes/sems map to real `pthread`/`std::condition_variable`
+  (glibc condvars are futex-backed), so Win32 sync waits block in-kernel, not
+  busy-poll. No rework needed; documented as satisfied.
+- *ABI-shim codegen:* pure libc-forwardable unregistered surface is ~27 symbols
+  (already covered by earlier msvcrt/ucrtbase work), so the marginal upside of a
+  signature->libc generator is low; the real generator value was the surface-wide
+  stub codegen already shipped.
+
+**Tier 3 — run-the-game's-own-runtime, VERIFIED:**
+- `gen_game_manifest.py` -> `docs/game_manifest.md/.json`: 9 installed games, 5
+  engine families, only ~40 unique system DLLs imported (proves "translate only
+  what the corpus needs").
+- `launch_game` Auto-mode now routes by engine: Java JVM bundle -> JVM bridge,
+  Godot PCK (separate/standalone) -> host Godot binary, embedded-PCK/exe ->
+  NativeWin32 in-process.
+- **Verified live:** `TheoTown.jar` launched via papaya -> forked -> exec'd the
+  host JVM (`Game execution spawned, PID..., exit 0`). Java game ran via the
+  bridge with ZERO Win32 API reimplementation.
+
+**Conclusion:** papaya's efficiency edge is selectively-native execution (bridge
+each runtime, translate only what's imported), which Tier 3 now exercises. Next
+Tier-3 target: the Godot-Mono/.NET host for SlayTheSpire2.
+
 ## Hygiene standard (adopted)
 
 1. **Commit atomically per feature** but group tightly-related micro-batches into
