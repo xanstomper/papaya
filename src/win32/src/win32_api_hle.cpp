@@ -2302,6 +2302,115 @@ u32 Win32ApiHle::hle_get_module_file_name_w(void* hModule, wchar_t* lpFilename, 
     return len;
 }
 
+// ---- PE resource strings (RT_STRING) for LoadStringA/W ---------------------
+// Layout: resource directory tree -> level0 type (RT_STRING=6) -> level1 id
+// (block = id/16) -> level2 language -> IMAGE_RESOURCE_DATA_ENTRY -> the
+// string block: 16 length-prefixed UTF-16 strings, entry id%16.
+struct ResDirEntry { u32 nameOrId; u32 offsetToData; };              // 8 bytes
+struct ResDataEntry { u32 offsetToData; u32 size; u32 codePage; u32 reserved; };
+
+// Resolve an RVA in the mapped image to a host pointer (PE sections map 1:1 at
+// their virtual addresses for the native loader; fall back to a crude cover).
+static const u8* rva_ptr(const u8* base, u32 rva) {
+    if (!base || rva == 0) return nullptr;
+    return base + rva;   // papaya maps sections at their RVA in place
+}
+
+// Walk a resource directory for RT_STRING: return pointer + size of the
+// block containing string id, or nullptr.
+static const u8* find_rt_string(const u8* base, u32 string_id) {
+    if (!base) return nullptr;
+    // NT headers
+    const u8* dos = base;
+    const auto* nt64 = reinterpret_cast<const ImageNtHeaders64*>(dos + *reinterpret_cast<const u32*>(dos + 0x3C));
+    if (nt64->signature != 0x00004550) return nullptr;
+    u32 res_rva = nt64->optional_header.data_directory[IMAGE_DIRECTORY_ENTRY_RESOURCE].virtual_address;
+    if (res_rva == 0) return nullptr;
+    const u8* res = rva_ptr(base, res_rva);
+    if (!res) return nullptr;
+    // IMAGE_RESOURCE_DIRECTORY: Char(4) Stamp(4) Ver(4) Named(2) Id(2),
+    // so total entries = u16@12 + u16@14, entries start at res+16.
+    auto dir_entries = [](const u8* d) -> u32 {
+        return *reinterpret_cast<const u16*>(d + 12) + *reinterpret_cast<const u16*>(d + 14);
+    };
+    // level 0: find type RT_STRING (6), value (not name)
+    u32 type_count = dir_entries(res);
+    auto* entries = reinterpret_cast<const ResDirEntry*>(res + 16);
+    const u8* type_dir = nullptr;
+    for (u32 i = 0; i < type_count; ++i) {
+        if ((entries[i].nameOrId & 0x80000000u) == 0 && entries[i].nameOrId == 6) {
+            if (entries[i].offsetToData & 0x80000000u) type_dir = res + (entries[i].offsetToData & 0x7FFFFFFFu);
+            break;
+        }
+    }
+    if (!type_dir) return nullptr;
+    // RT_STRING resource id for string n is (n>>4)+1; within the block, entry
+    // index is n&0xF (each block holds 16 length-prefixed UTF-16 strings).
+    u32 block = (string_id >> 4) + 1;
+    u32 sub_count = dir_entries(type_dir);
+    auto* sub = reinterpret_cast<const ResDirEntry*>(type_dir + 16);
+    const u8* lang_dir = nullptr;
+    for (u32 i = 0; i < sub_count; ++i) {
+        if ((sub[i].nameOrId & 0x80000000u) == 0 && sub[i].nameOrId == block) {
+            if (sub[i].offsetToData & 0x80000000u) lang_dir = res + (sub[i].offsetToData & 0x7FFFFFFFu);
+            break;
+        }
+    }
+    if (!lang_dir) return nullptr;
+    // level 2: pick first language entry -> data entry -> string block.
+    u32 lang_count = dir_entries(lang_dir);
+    auto* lang = reinterpret_cast<const ResDirEntry*>(lang_dir + 16);
+    if (lang_count == 0) return nullptr;
+    for (u32 i = 0; i < lang_count; ++i) {
+        if (lang[i].offsetToData & 0x80000000u) continue;   // subdir, skip
+        auto* data = reinterpret_cast<const ResDataEntry*>(res + lang[i].offsetToData);
+        if (!data->offsetToData) continue;
+        const u8* block_ptr = rva_ptr(base, data->offsetToData);
+        if (block_ptr) return block_ptr;
+    }
+    return nullptr;
+}
+
+int Win32ApiHle::hle_load_string_w(void* hInstance, u32 uID, wchar_t* lpBuffer, int cchBufferMax) {
+    if (!lpBuffer || cchBufferMax <= 0) return 0;
+    lpBuffer[0] = 0;
+    const u8* base = static_cast<const u8*>(hInstance ? hInstance : reinterpret_cast<void*>(0x140000000));
+    // If the instance is a pseudo small handle (e.g. from LoadLibrary stubs) fall
+    // back to the main module base.
+    const u8* block = find_rt_string(base, uID);
+    if (!block) return 0;
+    // Block holds 16 [u16 len][u16 chars...] entries; index = uID & 0xF.
+    u32 idx = uID & 0xF;
+    const u8* p = block;
+    for (u32 i = 0; i < idx; ++i) {
+        u16 slen = *reinterpret_cast<const u16*>(p); p += 2 + slen * 2;
+    }
+    u16 len = *reinterpret_cast<const u16*>(p); p += 2;
+    int copy = (static_cast<int>(len) < cchBufferMax - 1) ? static_cast<int>(len) : cchBufferMax - 1;
+    auto* dst = reinterpret_cast<uint16_t*>(lpBuffer);
+    for (int i = 0; i < copy; ++i) dst[i] = reinterpret_cast<const uint16_t*>(p)[i];
+    dst[copy] = 0;
+    return copy;
+}
+
+int Win32ApiHle::hle_load_string_a(void* hInstance, u32 uID, char* lpBuffer, int cchBufferMax) {
+    if (!lpBuffer || cchBufferMax <= 0) return 0;
+    wchar_t wbuf[1024];
+    int n = hle_load_string_w(hInstance, uID, wbuf, cchBufferMax < 1024 ? cchBufferMax : 1024);
+    for (int i = 0; i < n && i < cchBufferMax - 1; ++i) lpBuffer[i] = static_cast<char>(wbuf[i] & 0xFF);
+    if (n < cchBufferMax) lpBuffer[n] = 0;
+    return n;
+}
+
+void* Win32ApiHle::hle_load_cursor_w(void* hInstance, const void* lpCursorName) {
+    (void)hInstance; (void)lpCursorName;
+    return reinterpret_cast<void*>(0x1C001);   // pseudo HCURSOR
+}
+void* Win32ApiHle::hle_load_icon_w(void* hInstance, const void* lpIconName) {
+    (void)hInstance; (void)lpIconName;
+    return reinterpret_cast<void*>(0x1C002);
+}
+
 static const u64 g_pointer_cookie = 0x2B992DD785DDULL;
 
 void* Win32ApiHle::hle_encode_pointer(void* ptr) {
@@ -7894,6 +8003,12 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "GetRawInputData",          reinterpret_cast<void*>(&hle_get_raw_input_data));
     register_function("USER32.DLL", "CreateIconIndirect",       reinterpret_cast<void*>(&hle_create_icon_indirect));
     register_function("USER32.DLL", "CreateIconFromResource",   reinterpret_cast<void*>(&hle_create_icon_from_resource));
+    register_function("USER32.DLL", "LoadStringW",              reinterpret_cast<void*>(&hle_load_string_w));
+    register_function("USER32.DLL", "LoadStringA",              reinterpret_cast<void*>(&hle_load_string_a));
+    register_function("USER32.DLL", "LoadCursorW",              reinterpret_cast<void*>(&hle_load_cursor_w));
+    register_function("USER32.DLL", "LoadCursorA",              reinterpret_cast<void*>(&hle_load_cursor_a));
+    register_function("USER32.DLL", "LoadIconW",                reinterpret_cast<void*>(&hle_load_icon_w));
+    register_function("USER32.DLL", "LoadIconA",                reinterpret_cast<void*>(&hle_load_icon_a));
     register_function("USER32.DLL", "DestroyIcon",              reinterpret_cast<void*>(&hle_destroy_icon));
     register_function("USER32.DLL", "SetWindowsHookExA",        reinterpret_cast<void*>(&hle_set_windows_hook_ex_a));
     register_function("USER32.DLL", "UnhookWindowsHookEx",      reinterpret_cast<void*>(&hle_unhook_windows_hook_ex));

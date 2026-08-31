@@ -1,0 +1,5 @@
+STRINGTABLE
+BEGIN
+    1001 "Hello from PapaResource"
+    1002 "Second string here"
+END

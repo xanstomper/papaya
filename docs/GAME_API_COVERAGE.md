@@ -36,7 +36,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | setupapi.dll | 771 | 0 | 761 | 761 | 0% | 99% | NONE |
 | shell32.dll | 442 | 8 | 0 | 8 | 2% | 2% | LOW |
 | shlwapi.dll | 391 | 1 | 380 | 381 | 0% | 97% | LOW |
-| user32.dll | 971 | 131 | 0 | 131 | 13% | 13% | LOW |
+| user32.dll | 971 | 135 | 0 | 135 | 14% | 14% | LOW |
 | uxtheme.dll | 93 | 0 | 83 | 83 | 0% | 89% | NONE |
 | version.dll | 31 | 0 | 21 | 21 | 0% | 68% | NONE |
 | winmm.dll | 221 | 32 | 179 | 211 | 14% | 95% | LOW |
@@ -45,7 +45,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | xinput1_3.dll | 20 | 7 | 0 | 7 | 35% | 35% | PARTIAL |
 | xinput1_4.dll | 19 | 7 | 0 | 7 | 37% | 37% | PARTIAL |
 | xinput9_1_0.dll | 16 | 3 | 0 | 3 | 19% | 19% | LOW |
-| **TOTAL** | **13397** | **830** | **2172** | **3002** | **6%** | **22%** | |
+| **TOTAL** | **13397** | **834** | **2172** | **3006** | **6%** | **22%** | |
 
 ## Notes
 

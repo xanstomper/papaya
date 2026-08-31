@@ -728,6 +728,12 @@ public:
     static PAPAYA_MS_ABI void* hle_load_library_ex_w(const wchar_t* lpLibFileName, HANDLE hFile, u32 dwFlags);
     static PAPAYA_MS_ABI u32   hle_get_module_file_name_w(void* hModule, wchar_t* lpFilename, u32 nSize);
 
+    // Resource loading (RT_STRING -> LoadStringA/W; cursor/icon _w pseudo-handles)
+    static PAPAYA_MS_ABI int   hle_load_string_w(void* hInstance, u32 uID, wchar_t* lpBuffer, int cchBufferMax);
+    static PAPAYA_MS_ABI int   hle_load_string_a(void* hInstance, u32 uID, char* lpBuffer, int cchBufferMax);
+    static PAPAYA_MS_ABI void* hle_load_cursor_w(void* hInstance, const void* lpCursorName);
+    static PAPAYA_MS_ABI void* hle_load_icon_w(void* hInstance, const void* lpIconName);
+
     // Winsock (WS2_32)
     static PAPAYA_MS_ABI int   hle_wsa_startup(u16 wVersionRequested, void* lpWSAData);
     static PAPAYA_MS_ABI int   hle_wsa_cleanup();
