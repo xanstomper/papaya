@@ -109,6 +109,20 @@ Honest remaining: STS2 (Godot-Mono) needs the GodotSharp/.NET-host glue on top
 of the DotnetBridge groundwork; D3D drawing (command-list + DXBC->SPIR-V) is
 the multi-year shader phase; ARM64 in-papaya JIT remains delegated to Box64/FEX.
 
+## D3D11 shader-translation phase — Stage 1 landed (`4b1d3bc`)
+
+Multi-session phase; modern faster approach: papaya writes the D3D11-state->
+Vulkan mapping, NOT a shader compiler. Stage 2 will drive an existing compiler
+lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
+
+- Stage 1 (done, verified): `dxbc_parse()` — DXBC container parser (header,
+  chunk directory, SHDR/SHEX bytecode words, ISGN/OSGN signature elements with
+  real 32-byte element layout + semantic names). Bounds-checked; bad magic /
+  truncated fail cleanly. Tested with a synthetic-but-valid DXBC blob
+  (chunks=2, bytecode, 1 input sig "POSITION"). ctest 22/22.
+- Stage 2 (next): wire the compiler-lib backend and the D3D11-state->Vulkan
+  pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
+
 ## Hygiene standard (adopted)
 
 1. **Commit atomically per feature** but group tightly-related micro-batches into
