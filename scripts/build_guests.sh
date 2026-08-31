@@ -42,6 +42,8 @@ build rtl_helpers -lntdll
 build user32_dialog -luser32
 # oleaut32 Variant + SafeArray (COM interop)
 build oleaut_variant -loleaut32
+# GDI wide text (CreateFontIndirectW / TextOutW / metrics)
+build gdi_text_w -lgdi32 -luser32
 # RT_STRING resource loading via LoadStringA/W (links loadstring.rc)
 "$CC" -O1 -Wall -c "$REPO/tests/guests/loadstring.c" -o "$OUT/loadstring.o" -I.
 x86_64-w64-mingw32-windres "$REPO/tests/guests/loadstring.rc" -O coff -o "$OUT/loadstring_res.o"

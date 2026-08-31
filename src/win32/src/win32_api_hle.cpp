@@ -2887,6 +2887,11 @@ void* Win32ApiHle::hle_create_font_indirect_a(const void* lpLogFont) {
     static u8 font;   // non-null HFONT handle
     return &font;
 }
+void* Win32ApiHle::hle_create_font_indirect_w(const void* lpLogFont) {
+    (void)lpLogFont;
+    static u8 fontw;   // non-null HFONT handle (W)
+    return &fontw;
+}
 u32 Win32ApiHle::hle_map_virtual_key_a(u32 uCode, u32 uMapType) {
     // MAPVK_VK_TO_CHAR(2): return the char code; other maps: identity.
     return (uMapType == 2) ? uCode : uCode;
@@ -5074,6 +5079,39 @@ BOOL Win32ApiHle::hle_get_text_metrics_a(void* hdc, void* lptm) {
     std::memset(lptm, 0, 56);
     auto* tm = static_cast<s32*>(lptm);
     tm[0] = 8; tm[1] = 6; tm[2] = 2;   // height, ascent, descent
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_get_text_metrics_w(void* hdc, void* lptm) {
+    return hle_get_text_metrics_a(hdc, lptm);
+}
+BOOL Win32ApiHle::hle_get_text_extent_point32_w(void* hdc, const void* lpString, int c, void* lpSize) {
+    (void)hdc;
+    if (!lpSize) return FALSE_VAL;
+    auto* sz = static_cast<s32*>(lpSize);
+    const uint16_t* s = static_cast<const uint16_t*>(lpString);
+    int len = 0;
+    if (c > 0) len = c;
+    else if (s) { while (s[len]) ++len; }
+    sz[0] = len * 6;
+    sz[1] = 8;
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_text_out_w(void* hdc, int x, int y, const void* lpString, int nCount) {
+    auto* d = gdi_dc_of(hdc);
+    u8* fb = gdi_dc_fb(d);
+    if (!d || !fb || !lpString || nCount <= 0) return FALSE_VAL;
+    u32 tc = d->text_color;
+    u8 tr = static_cast<u8>(tc & 0xFF), tg = static_cast<u8>((tc>>8)&0xFF), tb = static_cast<u8>((tc>>16)&0xFF);
+    const uint16_t* s = static_cast<const uint16_t*>(lpString);
+    int gx = x;
+    for (int i = 0; i < nCount && s[i]; ++i, gx += 6) {
+        for (int r = 0; r < 8; ++r) for (int cr = 0; cr < 4; ++cr) {
+            int px = gx + cr, py = y + r;
+            if (px < 0 || py < 0 || px >= d->w || py >= d->h) continue;
+            u8* p = fb + (static_cast<u32>(py) * d->w + static_cast<u32>(px)) * 4;
+            p[0]=tr; p[1]=tg; p[2]=tb; p[3]=0xFF;
+        }
+    }
     return TRUE_VAL;
 }
 // DrawTextA: draw within a rect honoring DT_* flags (single-line supported).
@@ -7908,6 +7946,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("USER32.DLL", "ClientToScreen", reinterpret_cast<void*>(&hle_client_to_screen));
     register_function("USER32.DLL", "ScreenToClient", reinterpret_cast<void*>(&hle_screen_to_client));
     register_function("GDI32.DLL", "CreateFontIndirectA", reinterpret_cast<void*>(&hle_create_font_indirect_a));
+    register_function("GDI32.DLL", "CreateFontIndirectW", reinterpret_cast<void*>(&hle_create_font_indirect_w));
     register_function("USER32.DLL", "MapVirtualKeyA", reinterpret_cast<void*>(&hle_map_virtual_key_a));
     register_function("USER32.DLL", "GetDC", reinterpret_cast<void*>(&hle_get_dc));
     register_function("USER32.DLL", "ReleaseDC", reinterpret_cast<void*>(&hle_release_dc));
@@ -8216,6 +8255,7 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "SetBkColor",           reinterpret_cast<void*>(&hle_set_bk_color));
     register_function("GDI32.DLL", "SetTextColor",         reinterpret_cast<void*>(&hle_set_text_color));
     register_function("GDI32.DLL", "TextOutA",             reinterpret_cast<void*>(&hle_text_out_a));
+    register_function("GDI32.DLL", "TextOutW",             reinterpret_cast<void*>(&hle_text_out_w));
     register_function("GDI32.DLL", "FillRect",             reinterpret_cast<void*>(&hle_fill_rect));
     register_function("GDI32.DLL", "Rectangle",            reinterpret_cast<void*>(&hle_rectangle));
     register_function("GDI32.DLL", "Ellipse",              reinterpret_cast<void*>(&hle_ellipse));
@@ -8226,7 +8266,9 @@ Result<> Win32ApiHle::initialize() {
     register_function("GDI32.DLL", "SetBkMode",            reinterpret_cast<void*>(&hle_set_bk_mode));
     register_function("GDI32.DLL", "SetTextAlign",         reinterpret_cast<void*>(&hle_set_text_align));
     register_function("GDI32.DLL", "GetTextExtentPoint32A", reinterpret_cast<void*>(&hle_get_text_extent_point32_a));
+    register_function("GDI32.DLL", "GetTextExtentPoint32W", reinterpret_cast<void*>(&hle_get_text_extent_point32_w));
     register_function("GDI32.DLL", "GetTextMetricsA",      reinterpret_cast<void*>(&hle_get_text_metrics_a));
+    register_function("GDI32.DLL", "GetTextMetricsW",      reinterpret_cast<void*>(&hle_get_text_metrics_w));
     register_function("GDI32.DLL", "DrawTextA",            reinterpret_cast<void*>(&hle_draw_text_a));
     register_function("GDI32.DLL", "ExtTextOutA",          reinterpret_cast<void*>(&hle_ext_text_out_a));
 

@@ -685,6 +685,7 @@ public:
     static PAPAYA_MS_ABI u32   hle_set_bk_color(void* hdc, u32 crColor);
     static PAPAYA_MS_ABI u32   hle_set_text_color(void* hdc, u32 crColor);
     static PAPAYA_MS_ABI BOOL  hle_text_out_a(void* hdc, int x, int y, const char* lpString, int nCount);
+    static PAPAYA_MS_ABI BOOL  hle_text_out_w(void* hdc, int x, int y, const void* lpString, int nCount);
     static PAPAYA_MS_ABI BOOL  hle_fill_rect(void* hdc, const void* lprc, void* hbr);
     static PAPAYA_MS_ABI BOOL  hle_rectangle(void* hdc, int l, int t, int r, int b);
     static PAPAYA_MS_ABI BOOL  hle_ellipse(void* hdc, int l, int t, int r, int b);
@@ -696,7 +697,10 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_set_bk_mode(void* hdc, int mode);
     static PAPAYA_MS_ABI u32   hle_set_text_align(void* hdc, u32 align);
     static PAPAYA_MS_ABI BOOL  hle_get_text_extent_point32_a(void* hdc, const char* lpString, int c, void* lpSize);
+    static PAPAYA_MS_ABI BOOL  hle_get_text_extent_point32_w(void* hdc, const void* lpString, int c, void* lpSize);
     static PAPAYA_MS_ABI BOOL  hle_get_text_metrics_a(void* hdc, void* lptm);
+    static PAPAYA_MS_ABI BOOL  hle_get_text_metrics_w(void* hdc, void* lptm);
+    static PAPAYA_MS_ABI void* hle_create_font_indirect_w(const void* lpLogFont);
     static PAPAYA_MS_ABI BOOL  hle_draw_text_a(void* hdc, const char* lpChText, int cchText, void* lprc, u32 format);
     static PAPAYA_MS_ABI BOOL  hle_ext_text_out_a(void* hdc, int x, int y, u32 options, const void* lprc, const char* lpString, u32 c, const void* lpDx);
     static PAPAYA_MS_ABI BOOL  hle_enum_windows(void* lpEnumFunc, void* lParam);
