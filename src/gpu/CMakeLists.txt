@@ -4,6 +4,7 @@ add_library(papaya-gpu STATIC
     src/swapchain_upscaler.cpp
     src/vulkan_layer.cpp
     src/vulkan_swapchain.cpp
+    src/shader_translator.cpp
 )
 
 target_include_directories(papaya-gpu PUBLIC

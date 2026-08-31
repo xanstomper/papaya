@@ -172,6 +172,11 @@ add_executable(test_cpu_backend test_cpu_backend.cpp)
 target_link_libraries(test_cpu_backend PRIVATE papaya-cpu)
 add_test(NAME CpuBackendTest COMMAND test_cpu_backend)
 
+# DXBC shader-container parser (Stage 1 of D3D11 shader translation).
+add_executable(test_shader_translator test_shader_translator.cpp)
+target_link_libraries(test_shader_translator PRIVATE papaya-gpu)
+add_test(NAME ShaderTranslatorTest COMMAND test_shader_translator)
+
 if (PAPAYA_ENABLE_FUZZING)
     add_subdirectory(fuzz)
 endif()
