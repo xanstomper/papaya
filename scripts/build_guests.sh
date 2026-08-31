@@ -32,6 +32,10 @@ build ucrt_wide
 build kernel32_mapfile
 # advapi32 registry create/delete-key + delete-value
 build reg_create_delete -ladvapi32
+# CRT runtime + formatting + comctl32/delay-load batch
+build crt_runtime -lcomctl32
+# _vsnprintf real varargs formatting through the CRT HLE
+build vsnprintf_test
 # window / message pump suite
 build msgpump_test -luser32 -lgdi32
 build strgl_test   -luser32 -lgdi32

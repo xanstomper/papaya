@@ -27,7 +27,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | gdi32.dll | 970 | 35 | 0 | 35 | 4% | 4% | LOW |
 | imm32.dll | 149 | 6 | 0 | 6 | 4% | 4% | LOW |
 | iphlpapi.dll | 359 | 2 | 347 | 349 | 1% | 97% | LOW |
-| kernel32.dll | 1745 | 278 | 0 | 278 | 16% | 16% | LOW |
+| kernel32.dll | 1745 | 280 | 0 | 280 | 16% | 16% | LOW |
 | msvcrt.dll | 1423 | 192 | 0 | 192 | 13% | 13% | LOW |
 | ntdll.dll | 2344 | 15 | 0 | 15 | 1% | 1% | LOW |
 | ole32.dll | 539 | 16 | 0 | 16 | 3% | 3% | LOW |
@@ -45,7 +45,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | xinput1_3.dll | 20 | 7 | 0 | 7 | 35% | 35% | PARTIAL |
 | xinput1_4.dll | 19 | 7 | 0 | 7 | 37% | 37% | PARTIAL |
 | xinput9_1_0.dll | 16 | 3 | 0 | 3 | 19% | 19% | LOW |
-| **TOTAL** | **13397** | **828** | **2172** | **3000** | **6%** | **22%** | |
+| **TOTAL** | **13397** | **830** | **2172** | **3002** | **6%** | **22%** | |
 
 ## Notes
 
@@ -53,4 +53,4 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 - **stub** = `register_stub` from `scripts/gen_thunks.py` — benign, call-time-present attribution stubs that make imports resolve and `GetProcAddress` probes succeed without claiming real semantics. Real implementations are never overridden.
 - **callable** = real+stub, i.e. how many exports resolve at load.
 - Status (real only): NONE, LOW (<20%), PARTIAL (20-79%), COVERED (>=80%).
-- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 44 DLL families.
+- Generated gen_coverage.py on 2026-08-30; HLE file `win32_api_hle.cpp` at 47 DLL families.

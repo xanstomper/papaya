@@ -72,13 +72,17 @@ def imports_weighted() -> dict[tuple[str, str], int]:
 
 
 def hle_implemented() -> set[tuple[str, str]]:
+    """All registered symbol names across the HLE tables, as a flat set.
+    Callers combine this with per-import logic; because the resolver's Core
+    forwarding + global fallback resolve any registered symbol under ucrtbase,
+    api-ms-win-crt-*, msvcrt, ntdll, kernel32, etc. regardless of which table it
+    lives in, a name counts as implemented if it is registered ANYWHERE."""
     text = HLE.read_text()
     pat = re.compile(r'register_function\(\s*"([^"]+)"\s*,\s*"([^"]+)"')
-    out = set()
+    names = set()
     for m in pat.finditer(text):
-        dll = m.group(1).upper().removesuffix(".DLL").lower()
-        out.add((dll, m.group(2)))
-    return out
+        names.add(m.group(2))
+    return names
 
 
 def main():
@@ -87,7 +91,7 @@ def main():
     rows = []
     for (dll, name), n in usage.items():
         tier = 0 if dll in CORE else (1 if dll in GRAPHICS else 2)
-        rows.append((dll, name, n, tier, (dll, name) in impl))
+        rows.append((dll, name, n, tier, name in impl))
     # sort: usage desc, tier asc, unimplemented first, dll, name
     rows.sort(key=lambda r: (-r[2], r[3], r[4], r[0], r[1]))
 

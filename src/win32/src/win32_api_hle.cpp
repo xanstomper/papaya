@@ -394,6 +394,19 @@ BOOL Win32ApiHle::hle_is_wow64_process(void* hProcess, void* lpfIsWow64Process) 
     if (lpfIsWow64Process) *static_cast<BOOL*>(lpfIsWow64Process) = FALSE_VAL;
     return TRUE_VAL;   // x64-native, not running under WoW64
 }
+// Delay-load helpers (kernel32, imported by many Unity/game runtimes). These
+// resolve a delay-import or report the failure hook so the loader proceeds.
+static PAPAYA_MS_ABI void* hle_delay_load_failure_hook(unsigned reason, void* info) {
+    (void)reason; (void)info;
+    return reinterpret_cast<void*>(1);   // signature: proceed with default handling
+}
+static PAPAYA_MS_ABI void* hle_resolve_delay_loaded_api(unsigned flags, void* parent, void* descriptor, void* failure_hook, void* res) {
+    (void)flags; (void)parent; (void)failure_hook; (void)res;
+    if (!descriptor) return nullptr;
+    return nullptr;   // caller falls back to its own resolution path
+}
+static PAPAYA_MS_ABI int hle_init_common_controls(void) { return 0; }   // comctl32 InitCommonControls (void)
+static PAPAYA_MS_ABI int hle_init_common_controls_ex(void* lpInitCtrls) { (void)lpInitCtrls; return 1; }  // returns TRUE
 BOOL Win32ApiHle::hle_is_bad_string_ptr_a(const void* ptr, u32 size) {
     if (!ptr) return TRUE_VAL;
     if (size != 0) { return (memchr(ptr, 0, size) == nullptr) ? TRUE_VAL : FALSE_VAL; }
@@ -6120,6 +6133,26 @@ static PAPAYA_MS_ABI int hle_crt_atexit(void (*fn)()) {
     (void)fn;
     return 0;
 }
+// UCRT runtime helpers that Unity/Godot/.NET startup paths import (ranked).
+static void win_va_to_sysv(va_list win, va_list out);   // defined below
+static PAPAYA_MS_ABI int hle_vsnprintf(char* buf, size_t count, const char* fmt, va_list valist) {
+    va_list ap; win_va_to_sysv(valist, ap);
+    return std::vsnprintf(buf, count, fmt, ap);
+}
+static PAPAYA_MS_ABI int hle_vsnprintf_s(char* buf, size_t count, size_t max, const char* fmt, va_list valist) {
+    (void)max; va_list ap; win_va_to_sysv(valist, ap);
+    return std::vsnprintf(buf, count, fmt, ap);
+}
+static PAPAYA_MS_ABI void hle_terminate() { abort(); }
+static PAPAYA_MS_ABI void hle_c_exit() { _Exit(0); }
+static PAPAYA_MS_ABI int hle_register_onexit_function(void* table, void (*fn)()) {
+    (void)table; (void)fn;
+    return 0;
+}
+static PAPAYA_MS_ABI void hle_initialize_onexit_table(void* table) { if (table) std::memset(table, 0, sizeof(void*)); }
+static PAPAYA_MS_ABI int hle_seh_filter_exe(void* ex, u32 ctx) { (void)ex; (void)ctx; return 0; }
+static PAPAYA_MS_ABI void hle_set_fmode(int mode) { (void)mode; }
+static PAPAYA_MS_ABI int* hle_p___fmode() { static int fmode = 0; return &fmode; }
 static PAPAYA_MS_ABI void hle_register_thread_local_exe_atexit_callback(void* cb) { (void)cb; }
 static PAPAYA_MS_ABI int hle_set_error_mode(int mode) { return mode; }
 static PAPAYA_MS_ABI void* hle_set_invalid_parameter_handler(void* handler) { return handler; }
@@ -8252,7 +8285,32 @@ Result<> Win32ApiHle::initialize() {
     register_function("UCRTBASE.DLL", "_pclose",                   reinterpret_cast<void*>(&hle_pclose));
     register_function("UCRTBASE.DLL", "_wpopen",                   reinterpret_cast<void*>(&hle_wpopen));
 
-    // User32 additions
+    // UCRT runtime + formatting (ranked, high game import count)
+    register_function("UCRTBASE.DLL", "_vsnprintf",               reinterpret_cast<void*>(&hle_vsnprintf));
+    register_function("UCRTBASE.DLL", "_vsnprintf_s",             reinterpret_cast<void*>(&hle_vsnprintf_s));
+    register_function("UCRTBASE.DLL", "terminate",                reinterpret_cast<void*>(&hle_terminate));
+    register_function("UCRTBASE.DLL", "_c_exit",                  reinterpret_cast<void*>(&hle_c_exit));
+    register_function("UCRTBASE.DLL", "_register_onexit_function", reinterpret_cast<void*>(&hle_register_onexit_function));
+    register_function("UCRTBASE.DLL", "_initialize_onexit_table", reinterpret_cast<void*>(&hle_initialize_onexit_table));
+    register_function("UCRTBASE.DLL", "_seh_filter_exe",          reinterpret_cast<void*>(&hle_seh_filter_exe));
+    register_function("UCRTBASE.DLL", "_set_fmode",               reinterpret_cast<void*>(&hle_set_fmode));
+    register_function("UCRTBASE.DLL", "__p___fmode",              reinterpret_cast<void*>(&hle_p___fmode));
+    // ntdll forwarding (many games import _vsnprintf from ntdll)
+    register_function("NTDLL.DLL",   "_vsnprintf",                reinterpret_cast<void*>(&hle_vsnprintf));
+    register_function("NTDLL.DLL",   "_vsnprintf_s",              reinterpret_cast<void*>(&hle_vsnprintf_s));
+    // api-ms-win-crt-runtime / stdio forward to the CRT surface above
+    register_function("api-ms-win-crt-runtime-l1-1-0.dll", "terminate", reinterpret_cast<void*>(&hle_terminate));
+    register_function("api-ms-win-crt-runtime-l1-1-0.dll", "_c_exit",   reinterpret_cast<void*>(&hle_c_exit));
+    register_function("api-ms-win-crt-runtime-l1-1-0.dll", "_register_onexit_function", reinterpret_cast<void*>(&hle_register_onexit_function));
+    register_function("api-ms-win-crt-runtime-l1-1-0.dll", "_initialize_onexit_table", reinterpret_cast<void*>(&hle_initialize_onexit_table));
+    register_function("api-ms-win-crt-runtime-l1-1-0.dll", "_seh_filter_exe", reinterpret_cast<void*>(&hle_seh_filter_exe));
+    register_function("api-ms-win-crt-stdio-l1-1-0.dll", "_set_fmode", reinterpret_cast<void*>(&hle_set_fmode));
+    register_function("api-ms-win-crt-stdio-l1-1-0.dll", "__p___fmode", reinterpret_cast<void*>(&hle_p___fmode));
+    // kernel32 delay-load + comctl32
+    register_function("KERNEL32.DLL", "DelayLoadFailureHook",     reinterpret_cast<void*>(&hle_delay_load_failure_hook));
+    register_function("KERNEL32.DLL", "ResolveDelayLoadedAPI",    reinterpret_cast<void*>(&hle_resolve_delay_loaded_api));
+    register_function("comctl32.dll", "InitCommonControls",        reinterpret_cast<void*>(&hle_init_common_controls));
+    register_function("comctl32.dll", "InitCommonControlsEx",      reinterpret_cast<void*>(&hle_init_common_controls_ex));
     register_function("USER32.DLL", "SetPropW",                 reinterpret_cast<void*>(&hle_set_prop_w));
     register_function("USER32.DLL", "SetMenuItemInfoW",         reinterpret_cast<void*>(&hle_set_menu_item_info_w));
     register_function("USER32.DLL", "SetWindowDisplayAffinity", reinterpret_cast<void*>(&hle_set_window_display_affinity));
