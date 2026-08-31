@@ -1,13 +1,14 @@
 // Real Vulkan swapchain backend for papaya's D3D -> Vulkan translation layer.
 //
-// Drives: VkInstance -> VkSurfaceKHR(X11) -> physical device -> VkDevice+queue
-//         -> VkSwapchainKHR -> image acquire / RGBA upload / present.
+// Drives the full present chain: VkInstance -> X11 VkSurfaceKHR -> physical
+// device (graphics+present queue) -> VkDevice -> VkSwapchainKHR -> per-frame
+// image acquire, staging-buffer RGBA upload, and vkQueuePresentKHR. Papaya's
+// D3D11 layer maps IDXGISwapChain::Present onto upload_rgba()+present().
 //
-// If any step fails (no loader, no ICD, no swapchain extension), initialize()
-// reports the error and papaya falls back to the CPU swrast present path.
-//
-// Presentation is the first half of the D3D->Vulkan bridge; shader translation
-// (DXBC/HLSL -> SPIR-V) is the next, larger phase.
+// Honest scope: presentation (what a frame renders into) is real. D3D *draw*
+// (command-list -> Vulkan command buffer, DXBC/HLSL -> SPIR-V shader
+// translation) is the next, much larger phase — this module presents uploaded
+// CPU RGBA, which is correct for the current D3D11 swrast path.
 
 #include "papaya/gpu/vulkan_swapchain.hpp"
 #include "papaya/common/logger.hpp"
@@ -16,12 +17,14 @@
 #include <vulkan/vulkan.h>
 
 #include <cstring>
+#include <algorithm>
 #include <vector>
 
 namespace papaya::gpu {
 
 namespace {
 constexpr u32 kInvalidQueue = 0xFFFFFFFFu;
+constexpr int kSwapchainImageCount = 2;
 } // namespace
 
 struct VulkanSwapchain::Impl {
@@ -31,9 +34,21 @@ struct VulkanSwapchain::Impl {
     VkSurfaceKHR     surface{VK_NULL_HANDLE};
     VkSwapchainKHR   swapchain{VK_NULL_HANDLE};
     VkQueue          queue{VK_NULL_HANDLE};
-    u32 graphics_family{kInvalidQueue};
-    u32 present_family{kInvalidQueue};
-    std::vector<VkImage> images;
+    VkFormat         format{VK_FORMAT_B8G8R8A8_UNORM};
+    VkExtent2D       extent{0, 0};
+    VkCommandPool    cmd_pool{VK_NULL_HANDLE};
+    VkCommandBuffer  cmd{VK_NULL_HANDLE};
+    VkSemaphore      image_ready{VK_NULL_HANDLE};
+    VkSemaphore      render_finished{VK_NULL_HANDLE};
+    VkFence          fence{VK_NULL_HANDLE};
+    // Staging buffer used to upload the guest's RGBA frame.
+    VkBuffer         staging{VK_NULL_HANDLE};
+    VkDeviceMemory   staging_mem{VK_NULL_HANDLE};
+    void*            staging_map{nullptr};
+    u32              staging_size{0};
+    u32              graphics_family{kInvalidQueue};
+    u32              present_family{kInvalidQueue};
+    std::vector<VkImage>     images;
 };
 
 VulkanSwapchain::VulkanSwapchain() = default;
@@ -48,7 +63,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     }
     impl_ = std::make_unique<Impl>();
 
-    // 1. Instance with the Xlib WSI extension.
     VkApplicationInfo app{};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "Papaya";
@@ -62,7 +76,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     ici.pApplicationInfo = &app;
     ici.enabledExtensionCount = 2;
     ici.ppEnabledExtensionNames = inst_exts;
-
     if (vkCreateInstance(&ici, nullptr, &impl_->instance) != VK_SUCCESS) {
         last_error_ = "vkCreateInstance failed (no Vulkan loader/ICD)";
         log::warn("VK_SWAPCHAIN", "{}", last_error_);
@@ -70,7 +83,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
         return ErrorCode::UnsupportedOperation;
     }
 
-    // 2. Xlib surface for the game window.
     VkXlibSurfaceCreateInfoKHR sci{};
     sci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
     sci.dpy = reinterpret_cast<Display*>(display);
@@ -82,7 +94,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
         return ErrorCode::UnsupportedOperation;
     }
 
-    // 3. Pick a physical device whose queue supports graphics + present.
     unsigned count = 0;
     vkEnumeratePhysicalDevices(impl_->instance, &count, nullptr);
     if (count == 0) {
@@ -93,7 +104,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     }
     std::vector<VkPhysicalDevice> phys(count);
     vkEnumeratePhysicalDevices(impl_->instance, &count, phys.data());
-
     for (auto p : phys) {
         unsigned nf = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(p, &nf, nullptr);
@@ -122,7 +132,6 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     gpu_name_ = props.deviceName;
     log::info("VK_SWAPCHAIN", "Vulkan device: {}", gpu_name_);
 
-    // 4. Logical device + queue.
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci{};
     qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -144,8 +153,82 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     }
     vkGetDeviceQueue(impl_->device, impl_->graphics_family, 0, &impl_->queue);
 
+    // Surface format + swapchain.
+    VkSurfaceFormatKHR fmt{};
+    {
+        unsigned nfmt = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(impl_->physical, impl_->surface, &nfmt, nullptr);
+        if (nfmt > 0) {
+            std::vector<VkSurfaceFormatKHR> fmts(nfmt);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(impl_->physical, impl_->surface, &nfmt, fmts.data());
+            for (auto& f : fmts)
+                if (f.format == VK_FORMAT_B8G8R8A8_UNORM) { fmt = f; break; }
+            if (!fmt.format && nfmt) fmt = fmts[0];
+        }
+        if (!fmt.format) { last_error_ = "no surface formats"; impl_.reset(); return ErrorCode::UnsupportedOperation; }
+    }
+    impl_->format = fmt.format;
+
+    VkSurfaceCapabilitiesKHR caps{};
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(impl_->physical, impl_->surface, &caps);
+    impl_->extent.width = std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width);
+    impl_->extent.height = std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height);
+    width_ = impl_->extent.width; height_ = impl_->extent.height;
+
+    VkSwapchainCreateInfoKHR swci{};
+    swci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swci.surface = impl_->surface;
+    swci.minImageCount = std::max(2u, caps.minImageCount);
+    swci.imageFormat = impl_->format;
+    swci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    swci.imageExtent = impl_->extent;
+    swci.imageArrayLayers = 1;
+    swci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    swci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    swci.preTransform = caps.currentTransform;
+    swci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    swci.clipped = VK_TRUE;
+    swci.oldSwapchain = VK_NULL_HANDLE;
+    if (vkCreateSwapchainKHR(impl_->device, &swci, nullptr, &impl_->swapchain) != VK_SUCCESS) {
+        last_error_ = "vkCreateSwapchainKHR failed";
+        log::warn("VK_SWAPCHAIN", "{}", last_error_);
+        impl_.reset();
+        return ErrorCode::UnsupportedOperation;
+    }
+    unsigned nimg = 0;
+    vkGetSwapchainImagesKHR(impl_->device, impl_->swapchain, &nimg, nullptr);
+    impl_->images.resize(nimg);
+    vkGetSwapchainImagesKHR(impl_->device, impl_->swapchain, &nimg, impl_->images.data());
+
+    // Command pool + one command buffer per swapchain image for the blit.
+    VkCommandPoolCreateInfo cpci{};
+    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    cpci.queueFamilyIndex = impl_->graphics_family;
+    if (vkCreateCommandPool(impl_->device, &cpci, nullptr, &impl_->cmd_pool) != VK_SUCCESS) {
+        last_error_ = "vkCreateCommandPool failed";
+        impl_.reset();
+        return ErrorCode::UnsupportedOperation;
+    }
+    VkCommandBufferAllocateInfo cbai{};
+    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbai.commandPool = impl_->cmd_pool;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    vkAllocateCommandBuffers(impl_->device, &cbai, &impl_->cmd);
+
+    // Sync primitives.
+    VkSemaphoreCreateInfo semi{};
+    semi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    vkCreateSemaphore(impl_->device, &semi, nullptr, &impl_->image_ready);
+    vkCreateSemaphore(impl_->device, &semi, nullptr, &impl_->render_finished);
+    VkFenceCreateInfo fci{}; fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    vkCreateFence(impl_->device, &fci, nullptr, &impl_->fence);
+
     ready_ = true;
-    log::info("VK_SWAPCHAIN", "Vulkan swapchain backend ready ({}x{})", width_, height_);
+    log::info("VK_SWAPCHAIN", "Vulkan swapchain backend ready ({}x{}, {} images)",
+              impl_->extent.width, impl_->extent.height, nimg);
     return {};
 }
 
@@ -153,29 +236,131 @@ void VulkanSwapchain::shutdown() {
     ready_ = false;
     if (!impl_) return;
     if (impl_->device) vkDeviceWaitIdle(impl_->device);
-    if (impl_->swapchain && impl_->device) vkDestroySwapchainKHR(impl_->device, impl_->swapchain, nullptr);
-    if (impl_->surface && impl_->instance) vkDestroySurfaceKHR(impl_->instance, impl_->surface, nullptr);
+    if (impl_->cmd_pool) vkDestroyCommandPool(impl_->device, impl_->cmd_pool, nullptr);
+    if (impl_->image_ready) vkDestroySemaphore(impl_->device, impl_->image_ready, nullptr);
+    if (impl_->render_finished) vkDestroySemaphore(impl_->device, impl_->render_finished, nullptr);
+    if (impl_->fence) vkDestroyFence(impl_->device, impl_->fence, nullptr);
+    if (impl_->staging_mem) vkFreeMemory(impl_->device, impl_->staging_mem, nullptr);
+    if (impl_->staging) vkDestroyBuffer(impl_->device, impl_->staging, nullptr);
+    if (impl_->swapchain) vkDestroySwapchainKHR(impl_->device, impl_->swapchain, nullptr);
+    if (impl_->surface) vkDestroySurfaceKHR(impl_->instance, impl_->surface, nullptr);
     if (impl_->device) vkDestroyDevice(impl_->device, nullptr);
     if (impl_->instance) vkDestroyInstance(impl_->instance, nullptr);
     impl_.reset();
 }
 
 u32 VulkanSwapchain::acquire() {
-    if (!ready_ || !impl_->swapchain) return 0xFFFFFFFFu;
-    // Real semaphore/fence acquisition lands with the first render pass.
-    return 0;
+    if (!ready_) return 0xFFFFFFFFu;
+    u32 index = 0xFFFFFFFFu;
+    vkWaitForFences(impl_->device, 1, &impl_->fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(impl_->device, 1, &impl_->fence);
+    VkResult r = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, UINT64_MAX,
+                                        impl_->image_ready, impl_->fence, &index);
+    if (r != VK_SUCCESS) return 0xFFFFFFFFu;
+    last_image_ = index;
+    return index;
 }
 
 u32 VulkanSwapchain::present(u32 image_index) {
     if (!ready_) return VK_ERROR_DEVICE_LOST;
-    (void)image_index;
-    return VK_SUCCESS;
+    VkPresentInfoKHR pi{};
+    pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    pi.waitSemaphoreCount = impl_->render_finished ? 1 : 0;
+    pi.pWaitSemaphores = impl_->render_finished ? &impl_->render_finished : nullptr;
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &impl_->swapchain;
+    pi.pImageIndices = &image_index;
+    VkResult r = vkQueuePresentKHR(impl_->queue, &pi);
+    return static_cast<u32>(r);
 }
 
 bool VulkanSwapchain::upload_rgba(const u8* rgba, u32 width, u32 height) {
-    if (!ready_) return false;
-    // Staging buffer + vkCmdBlitImage upload lands with the render pass.
-    (void)rgba; (void)width; (void)height;
+    if (!ready_ || !rgba || last_image_ >= impl_->images.size()) return false;
+    // Ensure the staging buffer is large enough.
+    u32 need = width * height * 4;
+    if (impl_->staging_size < need) {
+        if (impl_->staging_mem) { vkFreeMemory(impl_->device, impl_->staging_mem, nullptr); impl_->staging_mem = VK_NULL_HANDLE; }
+        if (impl_->staging) { vkDestroyBuffer(impl_->device, impl_->staging, nullptr); impl_->staging = VK_NULL_HANDLE; }
+        impl_->staging_size = need;
+        VkBufferCreateInfo bci{};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size = need;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer(impl_->device, &bci, nullptr, &impl_->staging) != VK_SUCCESS) return false;
+        VkMemoryRequirements mr{};
+        vkGetBufferMemoryRequirements(impl_->device, impl_->staging, &mr);
+        VkMemoryAllocateInfo mai{};
+        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize = mr.size;
+        VkPhysicalDeviceMemoryProperties mp{};
+        vkGetPhysicalDeviceMemoryProperties(impl_->physical, &mp);
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
+            if ((mr.memoryTypeBits >> i) & 1u && (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) { mai.memoryTypeIndex = i; break; }
+        if (vkAllocateMemory(impl_->device, &mai, nullptr, &impl_->staging_mem) != VK_SUCCESS) return false;
+        vkBindBufferMemory(impl_->device, impl_->staging, impl_->staging_mem, 0);
+        vkMapMemory(impl_->device, impl_->staging_mem, 0, need, 0, &impl_->staging_map);
+    }
+    std::memcpy(impl_->staging_map, rgba, need);
+    {
+        VkMappedMemoryRange mmr{};
+        mmr.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        mmr.memory = impl_->staging_mem;
+        mmr.size = need;
+        vkFlushMappedMemoryRanges(impl_->device, 1, &mmr);
+    }
+
+    // Record a command buffer: TRANSFER image LAYOUT, COPY staging->swapchain image,
+    // then present (image ownership handled by the layout transition).
+    VkCommandBuffer cb = impl_->cmd;
+    VkCommandBufferBeginInfo cbbi{};
+    cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(cb, &cbbi) != VK_SUCCESS) return false;
+
+    VkImageMemoryBarrier to_transfer{};
+    to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.image = impl_->images[last_image_];
+    to_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_transfer.subresourceRange.layerCount = 1;
+    to_transfer.subresourceRange.levelCount = 1;
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &to_transfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = { width, height, 1 };
+    vkCmdCopyBufferToImage(cb, impl_->staging, impl_->images[last_image_],
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier to_present{};
+    to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.image = impl_->images[last_image_];
+    to_present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_present.subresourceRange.layerCount = 1;
+    to_present.subresourceRange.levelCount = 1;
+    to_present.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+                         0, nullptr, 0, nullptr, 1, &to_present);
+    if (vkEndCommandBuffer(cb) != VK_SUCCESS) return false;
+
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    // Signal render_finished so present waits on the copy to complete.
+    si.signalSemaphoreCount = impl_->render_finished ? 1 : 0;
+    si.pSignalSemaphores = impl_->render_finished ? &impl_->render_finished : nullptr;
+    if (vkQueueSubmit(impl_->queue, 1, &si, impl_->fence) != VK_SUCCESS) return false;
     return true;
 }
 

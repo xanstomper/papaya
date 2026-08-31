@@ -57,6 +57,7 @@ private:
     bool   ready_{false};
     u32    width_{0};
     u32    height_{0};
+    u32    last_image_{0xFFFFFFFFu};
     std::string last_error_;
     std::string gpu_name_{"(none)"};
 };
