@@ -1,5 +1,21 @@
 # Papaya — Progress & Hygiene Log
 
+## Strategy (2026-08-31): selectively-native, not "translate everything"
+
+Wine reimplemented ~15-20M LOC of the Win32 surface. Papaya will not win by
+out-reimplementing that. The chosen edge (see `docs/game_manifest.md`):
+
+1. **Bridge each game's own runtime** — run Godot/Unity/DotNET/Java in-process
+   (or via the host runtime bridge) so the engine does the heavy lifting; papaya
+   services only the syscalls that runtime actually issues.
+2. **Drive API work from the real corpus, not the alphabet.** The 9 installed
+   games import only ~40 unique system DLLs. Manifest-drive: account only those.
+3. **Native graphics passthrough** where present (GLX/Mesa via the existing
+   GL passthrough), Vulkan as the D3D→Vulkan substrate for the rest.
+4. **Data-driven per-title config** (manifest) instead of thousands of LOC.
+
+This is maintenance of progress, not raw API-count.
+
 This is the single source of truth for what has actually shipped. It exists so
 feature work and health are auditable after any session, instead of being
 invisible in scattered commits or a flat coverage percentage.
