@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <memory>
 #include <mutex>
@@ -108,6 +109,13 @@ public:
     // Symbol resolution for IAT patching
     void* resolve_symbol(std::string_view dll_name, std::string_view function_name);
     void register_function(std::string_view dll_name, std::string_view function_name, void* func_ptr);
+
+    // Same as register_function, but additionally records the (dll,name) as a
+    // codegen attribution stub so coverage tooling can distinguish real
+    // implementations from benign stubs. Stub registration never overrides a
+    // real implementation (register_function is called first for real impls).
+    void register_stub(std::string_view dll_name, std::string_view function_name, void* func_ptr);
+    const std::unordered_set<std::string>& stub_exports() const { return stub_exports_; }
 
     // KERNEL32 / NTDLL Emulation: Memory
     static PAPAYA_MS_ABI void* hle_virtual_alloc(void* lpAddress, size_t dwSize, u32 flAllocationType, u32 flProtect);
@@ -747,6 +755,7 @@ private:
     std::shared_ptr<steam::SteamApiStub> steam_stub_;
     std::shared_ptr<input::VirtualXInputManager> input_mgr_;
     std::unordered_map<std::string, std::unordered_map<std::string, void*>> export_table_;
+    std::unordered_set<std::string> stub_exports_;   // "DLL!Name" codegen attribution stubs
 };
 
 } // namespace papaya::win32
