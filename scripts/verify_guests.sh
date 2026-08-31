@@ -13,7 +13,7 @@ GUESTS="${1:-$REPO/build/guests}"
 PAPAYA_BIN="${PAPAYA_BIN:-$REPO/build/src/app/papaya}"
 RUNNER="${PAPAYA_RUNNER:-}"
 TIMEOUT_S="${VERIFY_TIMEOUT:-60}"
-STRICT="msvcrt_boot wstest wsprintf_boot wsp_min2 godot_path wfopen_path ucrt_wide kernel32_mapfile reg_create_delete crt_runtime vsnprintf_test loadstring rtl_helpers user32_dialog"
+STRICT="msvcrt_boot wstest wsprintf_boot wsp_min2 godot_path wfopen_path ucrt_wide kernel32_mapfile reg_create_delete crt_runtime vsnprintf_test loadstring rtl_helpers user32_dialog oleaut_variant"
 
 [ -x "$PAPAYA_BIN" ] || { echo "error: papaya not built at $PAPAYA_BIN" >&2; exit 2; }
 [ -d "$GUESTS" ] || { echo "error: guest dir not found: $GUESTS (run scripts/build_guests.sh)" >&2; exit 2; }

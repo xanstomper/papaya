@@ -7286,6 +7286,90 @@ static PAPAYA_MS_ABI u32 hle_sys_string_len(void* bstr) {
     return *reinterpret_cast<u32*>(static_cast<u8*>(bstr) - 4) / sizeof(char16_t);
 }
 
+// ---- OLEAUT32 Variant + SafeArray (ranked gap) -----------------------------
+// VARIANT (x64): {u16 vt; u16 wRes1; u16 wRes2; u16 wRes3; u64 data;} = 16 bytes
+// VT_EMPTY=0, VT_I4=3, VT_I2=2, VT_BOOL=11, VT_BSTR=8, VT_UI4=19.
+static PAPAYA_MS_ABI void hle_variant_init(void* pvar) {
+    if (pvar) std::memset(pvar, 0, 16);
+}
+static PAPAYA_MS_ABI void hle_variant_clear(void* pvar) {
+    if (!pvar) return;
+    auto* vt = reinterpret_cast<u16*>(pvar);
+    if ((*vt & 0xFF) == 8 /*VT_BSTR*/ || (*vt & 0xFF) == 9/*VT_DISPATCH*/) {
+        void* b = *reinterpret_cast<void**>(static_cast<u8*>(pvar) + 8);
+        if (b) hle_sys_free_string(b);
+    }
+    std::memset(pvar, 0, 16);
+}
+// A minimal real SAFEARRAY backing: header (cDims=1, cLocks=0, cbElementSize,
+// rgsabound) + the flat element block. We mint handles in a small map.
+struct SafeArrayHdr { void* data; u32 cDims; u32 cLocks; u32 cbSize; long ubound; long lbound; };
+static std::mutex g_safearr_mutex;
+static std::unordered_map<void*, SafeArrayHdr> g_safe_arrays;
+static PAPAYA_MS_ABI void* hle_safe_array_create(void* bounds, u32 cDims, u16 vt) {
+    (void)vt;
+    if (cDims < 1 || !bounds) return nullptr;
+    long ub = reinterpret_cast<const long*>(bounds)[1];
+    long lb = reinterpret_cast<const long*>(bounds)[0];
+    long n = (ub - lb) + 1;
+    u32 esize = 4;
+    if (vt == 8 || vt == 11) esize = 8;
+    auto* handle = static_cast<u8*>(calloc(1, 16));
+    void* data = calloc(static_cast<size_t>(n > 0 ? n : 1), esize);
+    {
+        std::lock_guard<std::mutex> lk(g_safearr_mutex);
+        g_safe_arrays[handle] = {data, cDims, esize, ub, lb};
+    }
+    return handle;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_destroy(void* psa) {
+    if (!psa) return 0x80020004;
+    SafeArrayHdr h{};
+    {
+        std::lock_guard<std::mutex> lk(g_safearr_mutex);
+        auto it = g_safe_arrays.find(psa);
+        if (it != g_safe_arrays.end()) { h = it->second; g_safe_arrays.erase(it); }
+        else return 0x80020004;
+    }
+    free(h.data); free(psa);
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_access_data(void* psa, void** ppvData) {
+    if (!ppvData) return 0x80020004;
+    SafeArrayHdr h{};
+    {
+        std::lock_guard<std::mutex> lk(g_safearr_mutex);
+        auto it = g_safe_arrays.find(psa);
+        if (it == g_safe_arrays.end()) return 0x80020004;
+        h = it->second; it->second.cLocks = 0;   // (no real lock bookkeeping needed)
+    }
+    *ppvData = h.data;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_unaccess_data(void* psa) {
+    (void)psa;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_get_ubound(void* psa, u32 dim, long* pl) {
+    std::lock_guard<std::mutex> lk(g_safearr_mutex);
+    auto it = g_safe_arrays.find(psa);
+    if (it == g_safe_arrays.end() || !pl) return 0x80020004;
+    *pl = it->second.ubound;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_get_lbound(void* psa, u32 dim, long* pl) {
+    std::lock_guard<std::mutex> lk(g_safearr_mutex);
+    auto it = g_safe_arrays.find(psa);
+    if (it == g_safe_arrays.end() || !pl) return 0x80020004;
+    *pl = it->second.lbound;
+    return 0;
+}
+static PAPAYA_MS_ABI u32 hle_safe_array_get_elemsize(void* psa) {
+    std::lock_guard<std::mutex> lk(g_safearr_mutex);
+    auto it = g_safe_arrays.find(psa);
+    return it == g_safe_arrays.end() ? 0 : it->second.cbSize;
+}
+
 static PAPAYA_MS_ABI u32 hle_midi_in_get_num_devs() { return 0; }
 static PAPAYA_MS_ABI u32 hle_midi_in_get_dev_caps_a(u64 uDeviceID, void* pmcic, u32 cbpmcic) { (void)uDeviceID; (void)pmcic; (void)cbpmcic; return 2; }
 static PAPAYA_MS_ABI u32 hle_midi_in_open(void** lphMidiIn, u32 uDeviceID, u64 dwCallback, u64 dwInstance, u32 fdwOpen) {
@@ -8226,6 +8310,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("OLEAUT32.dll", "2",                      reinterpret_cast<void*>(&hle_sys_alloc_string));
     register_function("OLEAUT32.dll", "6",                      reinterpret_cast<void*>(&hle_sys_free_string));
     register_function("OLEAUT32.dll", "8",                      reinterpret_cast<void*>(&hle_sys_alloc_string_len));
+    // OLEAUT32 Variant + SafeArray (ranked COM gap)
+    register_function("OLEAUT32.dll", "VariantInit",               reinterpret_cast<void*>(&hle_variant_init));
+    register_function("OLEAUT32.dll", "VariantClear",              reinterpret_cast<void*>(&hle_variant_clear));
+    register_function("OLEAUT32.dll", "SafeArrayCreate",           reinterpret_cast<void*>(&hle_safe_array_create));
+    register_function("OLEAUT32.dll", "SafeArrayDestroy",          reinterpret_cast<void*>(&hle_safe_array_destroy));
+    register_function("OLEAUT32.dll", "SafeArrayAccessData",       reinterpret_cast<void*>(&hle_safe_array_access_data));
+    register_function("OLEAUT32.dll", "SafeArrayUnaccessData",     reinterpret_cast<void*>(&hle_safe_array_unaccess_data));
+    register_function("OLEAUT32.dll", "SafeArrayGetUBound",        reinterpret_cast<void*>(&hle_safe_array_get_ubound));
+    register_function("OLEAUT32.dll", "SafeArrayGetLBound",        reinterpret_cast<void*>(&hle_safe_array_get_lbound));
+    register_function("OLEAUT32.dll", "SafeArrayGetElemsize",      reinterpret_cast<void*>(&hle_safe_array_get_elemsize));
 
     // WINMM
     register_function("WINMM.dll", "midiInGetNumDevs",          reinterpret_cast<void*>(&hle_midi_in_get_num_devs));
