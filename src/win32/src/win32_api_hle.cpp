@@ -6860,6 +6860,97 @@ static PAPAYA_MS_ABI s32 hle_reg_query_info_key_w(void* hKey, wchar_t* lpClass, 
 
 // NTDLL
 static PAPAYA_MS_ABI u32 hle_rtl_nt_status_to_dos_error(u32 nt_status) { return nt_status & 0xFFFF; }
+// ---- NTDLL Rtl string/image/version helpers (high game import weight) -------
+// UNICODE_STRING / STRING (ANSI_STRING) layout on x64:
+//   u16 Length; u16 MaximumLength; u32 pad; void* Buffer;   (16 bytes)
+// ANSI_STRING is 8 bytes (no pad).
+struct GuestUnicodeString { u16 Length, MaximumLength; u32 pad; void* Buffer; };
+struct GuestAnsiString   { u16 Length, MaximumLength; void* Buffer; };
+static PAPAYA_MS_ABI void hle_rtl_init_unicode_string(void* str, const void* src) {
+    auto* us = static_cast<GuestUnicodeString*>(str);
+    const uint16_t* s = static_cast<const uint16_t*>(src);
+    if (!us) return;
+    if (!s) { us->Length = us->MaximumLength = 0; us->Buffer = nullptr; return; }
+    size_t n = 0; while (s[n]) ++n;
+    us->Length = static_cast<u16>(n * 2);
+    us->MaximumLength = static_cast<u16>((n + 1) * 2);
+    us->Buffer = const_cast<uint16_t*>(s);
+}
+static PAPAYA_MS_ABI void hle_rtl_init_ansi_string(void* str, const char* src) {
+    auto* as = static_cast<GuestAnsiString*>(str);
+    if (!as) return;
+    if (!src) { as->Length = as->MaximumLength = 0; as->Buffer = nullptr; return; }
+    size_t n = std::strlen(src);
+    as->Length = static_cast<u16>(n);
+    as->MaximumLength = static_cast<u16>(n + 1);
+    as->Buffer = const_cast<char*>(src);
+}
+static PAPAYA_MS_ABI void hle_rtl_free_unicode_string(void* str) {
+    auto* us = static_cast<GuestUnicodeString*>(str);
+    if (us && us->Buffer) free(us->Buffer);
+    if (us) { us->Buffer = nullptr; us->Length = us->MaximumLength = 0; }
+}
+static PAPAYA_MS_ABI void hle_rtl_free_ansi_string(void* str) {
+    auto* as = static_cast<GuestAnsiString*>(str);
+    if (as && as->Buffer) free(as->Buffer);
+    if (as) { as->Buffer = nullptr; as->Length = as->MaximumLength = 0; }
+}
+static PAPAYA_MS_ABI u32 hle_rtl_unicode_string_to_ansi_string(void* dest, const void* src, unsigned char alloc) {
+    auto* d = static_cast<GuestAnsiString*>(dest);
+    auto* s = static_cast<const GuestUnicodeString*>(src);
+    if (!d || !s) return 0xC000000D;   // STATUS_INVALID_PARAMETER
+    const uint16_t* w = static_cast<const uint16_t*>(s->Buffer);
+    std::string as;
+    for (const uint16_t* p = w; p && *p; ++p) as.push_back(static_cast<char>(*p & 0xFF));
+    if (alloc) {
+        d->MaximumLength = static_cast<u16>(as.size() + 1);
+        d->Buffer = malloc(as.size() + 1);
+        std::memcpy(d->Buffer, as.c_str(), as.size() + 1);
+    } else if (d->Buffer && d->MaximumLength > as.size()) {
+        std::memcpy(d->Buffer, as.c_str(), as.size() + 1);
+    }
+    d->Length = static_cast<u16>(as.size());
+    return 0;   // STATUS_SUCCESS
+}
+static PAPAYA_MS_ABI u32 hle_rtl_ansi_string_to_unicode_string(void* dest, const void* src, unsigned char alloc) {
+    auto* d = static_cast<GuestUnicodeString*>(dest);
+    auto* s = static_cast<const GuestAnsiString*>(src);
+    if (!d || !s) return 0xC000000D;
+    const char* a = static_cast<const char*>(s->Buffer);
+    size_t n = a ? std::strlen(a) : 0;
+    if (alloc) {
+        d->MaximumLength = static_cast<u16>((n + 1) * 2);
+        d->Buffer = malloc((n + 1) * 2);
+        auto* w = static_cast<uint16_t*>(d->Buffer);
+        for (size_t i = 0; i < n; ++i) w[i] = static_cast<uint16_t>(static_cast<u8>(a[i]));
+        w[n] = 0;
+    } else if (d->Buffer && d->MaximumLength > n * 2) {
+        auto* w = static_cast<uint16_t*>(d->Buffer);
+        for (size_t i = 0; i < n; ++i) w[i] = static_cast<uint16_t>(static_cast<u8>(a[i]));
+        w[n] = 0;
+    }
+    d->Length = static_cast<u16>(n * 2);
+    return 0;
+}
+static PAPAYA_MS_ABI void* hle_rtl_image_nt_header(void* base) {
+    if (!base) return nullptr;
+    const u8* dos = static_cast<const u8*>(base);
+    const u8* nt = dos + *reinterpret_cast<const u32*>(dos + 0x3C);
+    if (*reinterpret_cast<const u32*>(nt) != 0x00004550) return nullptr;
+    return const_cast<u8*>(nt);
+}
+static PAPAYA_MS_ABI u32 hle_rtl_get_version(void* verinfo) {
+    auto* v = reinterpret_cast<u32*>(verinfo);
+    if (!v) return 0xC000000D;
+    u32 sz = v[0];   // dwOSVersionInfoSize
+    u32* pv = v;
+    pv[1] = 10; pv[2] = 0; pv[3] = 19045; pv[4] = 22631; pv[5] = 0;   // 10.0.19045 (Win10 22H2)
+    std::memset(&pv[6], 0, sz - 24 >= 0 ? sz - 24 : 0);
+    // OSVERSIONINFOEX: first byte of szCSDVersion
+    if (sz >= 24) { auto* szcsd = reinterpret_cast<char*>(&pv[6]); *szcsd = 0; }
+    return 0;
+}
+static PAPAYA_MS_ABI void hle_rtl_zero_memory(void* p, size_t n) { if (p) std::memset(p, 0, n); }
 static PAPAYA_MS_ABI u32 hle_nt_query_information_file(HANDLE FileHandle, void* IoStatusBlock, void* FileInformation, u32 Length, u32 FileInformationClass) {
     (void)FileHandle; (void)IoStatusBlock; (void)FileInformation; (void)Length; (void)FileInformationClass;
     return 0;
@@ -7451,6 +7542,17 @@ Result<> Win32ApiHle::initialize() {
     register_function("NTDLL.DLL", "RtlEnterCriticalSection", reinterpret_cast<void*>(&hle_enter_critical_section));
     register_function("NTDLL.DLL", "RtlLeaveCriticalSection", reinterpret_cast<void*>(&hle_leave_critical_section));
     register_function("NTDLL.DLL", "RtlDeleteCriticalSection", reinterpret_cast<void*>(&hle_delete_critical_section));
+    // Rtl string / image / version helpers
+    register_function("NTDLL.DLL", "RtlInitUnicodeString",            reinterpret_cast<void*>(&hle_rtl_init_unicode_string));
+    register_function("NTDLL.DLL", "RtlInitAnsiString",               reinterpret_cast<void*>(&hle_rtl_init_ansi_string));
+    register_function("NTDLL.DLL", "RtlFreeUnicodeString",            reinterpret_cast<void*>(&hle_rtl_free_unicode_string));
+    register_function("NTDLL.DLL", "RtlFreeAnsiString",               reinterpret_cast<void*>(&hle_rtl_free_ansi_string));
+    register_function("NTDLL.DLL", "RtlUnicodeStringToAnsiString",    reinterpret_cast<void*>(&hle_rtl_unicode_string_to_ansi_string));
+    register_function("NTDLL.DLL", "RtlAnsiStringToUnicodeString",    reinterpret_cast<void*>(&hle_rtl_ansi_string_to_unicode_string));
+    register_function("NTDLL.DLL", "RtlUnicodeStringToOemString",     reinterpret_cast<void*>(&hle_rtl_unicode_string_to_ansi_string));
+    register_function("NTDLL.DLL", "RtlImageNtHeader",                reinterpret_cast<void*>(&hle_rtl_image_nt_header));
+    register_function("NTDLL.DLL", "RtlGetVersion",                   reinterpret_cast<void*>(&hle_rtl_get_version));
+    register_function("NTDLL.DLL", "RtlZeroMemory",                   reinterpret_cast<void*>(&hle_rtl_zero_memory));
 
     // MSVCRT.DLL - the C runtime every mingw/MSVC binary imports.
     register_function("msvcrt.dll", "malloc",   reinterpret_cast<void*>(&hle_msvcrt_malloc));

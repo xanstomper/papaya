@@ -36,6 +36,8 @@ build reg_create_delete -ladvapi32
 build crt_runtime -lcomctl32
 # _vsnprintf real varargs formatting through the CRT HLE
 build vsnprintf_test
+# NTDLL Rtl string/image/version helpers
+build rtl_helpers -lntdll
 # RT_STRING resource loading via LoadStringA/W (links loadstring.rc)
 "$CC" -O1 -Wall -c "$REPO/tests/guests/loadstring.c" -o "$OUT/loadstring.o" -I.
 x86_64-w64-mingw32-windres "$REPO/tests/guests/loadstring.rc" -O coff -o "$OUT/loadstring_res.o"
