@@ -156,3 +156,7 @@ add_test(NAME RomGameLoopTest COMMAND test_rom_game_loop)
 add_test(NAME OrchestratorTest COMMAND test_orchestrator)
 add_test(NAME PeLoaderTest COMMAND test_pe_loader)
 add_test(NAME PythonDaemonTest COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon.py)
+
+if (PAPAYA_ENABLE_FUZZING)
+    add_subdirectory(fuzz)
+endif()

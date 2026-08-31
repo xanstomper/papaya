@@ -19,6 +19,15 @@ if (PAPAYA_ENABLE_ASAN)
     add_link_options(-fsanitize=address)
 endif()
 
+option(PAPAYA_ENABLE_FUZZING "Build the libFuzzer/ASan PE-loader fuzz harness (OFF by default; GCC uses an ASan+self-driver smoke mode, Clang uses -fsanitize=fuzzer)" OFF)
+if (PAPAYA_ENABLE_FUZZING)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        add_compile_options(-fsanitize=fuzzer-no-link)
+    endif()
+endif()
+
 # Find system libraries
 find_package(Threads REQUIRED)
 find_package(Vulkan QUIET)
