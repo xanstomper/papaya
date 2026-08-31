@@ -167,6 +167,11 @@ add_executable(test_dotnet_bridge test_dotnet_bridge.cpp)
 target_link_libraries(test_dotnet_bridge PRIVATE papaya-kernel)
 add_test(NAME DotnetBridgeTest COMMAND test_dotnet_bridge)
 
+# CPU translation-backend resolution (ARM64/Box64 groundwork).
+add_executable(test_cpu_backend test_cpu_backend.cpp)
+target_link_libraries(test_cpu_backend PRIVATE papaya-cpu)
+add_test(NAME CpuBackendTest COMMAND test_cpu_backend)
+
 if (PAPAYA_ENABLE_FUZZING)
     add_subdirectory(fuzz)
 endif()

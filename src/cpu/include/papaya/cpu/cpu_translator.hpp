@@ -63,6 +63,14 @@ public:
     CpuTranslationEngine get_engine() const { return engine_; }
     PageSizeManager& get_page_manager() { return page_manager_; }
 
+    // Resolves the translation backend for the current host: native-x86 when the
+    // guest ISA matches the host, else delegates to the best available external
+    // translator (Box64/JIT on ARM64). Returns true when a viable backend exists.
+    bool resolve_backend();
+
+    // Detects the presence of an external ARM x86->ARM64 translator (Box64/FEX).
+    static std::string detect_external_translator();
+
     // Generates environment variables for JIT execution on ARM (Box64 / FEX)
     std::vector<std::pair<std::string, std::string>> get_environment_overrides() const;
 

@@ -128,6 +128,39 @@ Result<> CpuTranslator::initialize() {
     return {};
 }
 
+// Translate-backend resolution (Tier-4 groundwork). On x86-64 the guest IS the
+// host: no translation needed. On ARM64 we delegate to the best installed
+// external x86->ARM64 translator (Box64/FEX) rather than reimplement a JIT —
+// return whether a viable backend resolves so callers can pick the fallback.
+bool CpuTranslator::resolve_backend() {
+    if (host_info_.is_x86_64) {
+        engine_ = CpuTranslationEngine::DirectHostX86;
+        return true;
+    }
+    // ARM64: delegate to an installed external translator.
+    if (!detect_external_translator().empty()) {
+        engine_ = CpuTranslationEngine::Box64Jit;
+        return true;
+    }
+    // No external translator on ARM: no viable backend yet (in-papaya JIT is a
+    // future phase; roadmap Phase 12).
+    engine_ = CpuTranslationEngine::Box64Jit;
+    return false;
+}
+
+std::string CpuTranslator::detect_external_translator() {
+    // Box64 and FEX are the mature x86->ARM64 translators; look for their
+    // binaries in the usual locations.
+    const char* names[] = {"box64", "box64.box64", "fex", "fex-elf-interpreter", nullptr};
+    for (int i = 0; names[i]; ++i) {
+        std::string path = std::string("/usr/local/bin/") + names[i];
+        if (access(path.c_str(), X_OK) == 0) return names[i];
+        path = std::string("/usr/bin/") + names[i];
+        if (access(path.c_str(), X_OK) == 0) return names[i];
+    }
+    return "";
+}
+
 void CpuTranslator::flush_instruction_cache(void* start, void* end) {
 #if defined(__GNUC__) || defined(__clang__)
     __builtin___clear_cache(reinterpret_cast<char*>(start), reinterpret_cast<char*>(end));
