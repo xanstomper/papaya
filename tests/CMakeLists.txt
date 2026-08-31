@@ -162,6 +162,11 @@ add_executable(test_vulkan_swapchain test_vulkan_swapchain.cpp)
 target_link_libraries(test_vulkan_swapchain PRIVATE papaya-gpu)
 add_test(NAME VulkanSwapchainTest COMMAND test_vulkan_swapchain)
 
+# .NET/Mono host bridge groundwork (no crash; clean unsupported handling).
+add_executable(test_dotnet_bridge test_dotnet_bridge.cpp)
+target_link_libraries(test_dotnet_bridge PRIVATE papaya-kernel)
+add_test(NAME DotnetBridgeTest COMMAND test_dotnet_bridge)
+
 if (PAPAYA_ENABLE_FUZZING)
     add_subdirectory(fuzz)
 endif()
