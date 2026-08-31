@@ -20,6 +20,7 @@ target_link_libraries(papaya-win32 PUBLIC
     papaya-common
     papaya-steam
     papaya-input
+    papaya-gpu
     X11
     GL GLX
 )

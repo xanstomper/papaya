@@ -4,6 +4,11 @@
 #include <cstring>
 #include <cstdlib>
 
+#ifdef PAPAYA_HAS_VULKAN
+#include "papaya/gpu/vulkan_swapchain.hpp"
+#include <mutex>
+#endif
+
 // Assigning to a function pointer with a conversion from void* would be a
 // pedantic warning; we build vtables of typed ms_abi function pointers.
 namespace papaya::win32 {
@@ -116,6 +121,31 @@ static D3DMS u64 sc_get_buffer(void* self, u64 index, u64 riid, void* bufp) {
 static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
     auto* sc = static_cast<SwapChain*>(self);
     (void)sync; (void)flags;
+#ifdef PAPAYA_HAS_VULKAN
+    // Opt-in real Vulkan present (PAPAYA_VULKAN=1): upload the CPU-swrast
+    // backbuffer into a Vulkan swapchain image and present it via the host GPU.
+    // Falls back to the X11 software blit below if Vulkan is unavailable.
+    static papaya::gpu::VulkanSwapchain g_vk;
+    static int vk_enabled = []() -> int { const char* e = getenv("PAPAYA_VULKAN"); return e && *e == '1'; }();
+    if (vk_enabled && sc->hwnd) {
+        if (!g_vk.is_ready()) {
+            auto* wm = &window_manager();
+            auto* w = wm->window_from_hwnd(sc->hwnd);
+            if (w) {
+                _XDisplay* disp = wm->display();
+                auto xwin = wm->xwindow_of(sc->hwnd);
+                g_vk.initialize(disp, xwin, sc->w, sc->h);
+            }
+        }
+        if (g_vk.is_ready() && sc->fb) {
+            u32 idx = g_vk.acquire();
+            if (idx != 0xFFFFFFFFu && g_vk.upload_rgba(sc->fb, sc->w, sc->h)) {
+                g_vk.present(idx);
+                return 0;
+            }
+        }
+    }
+#endif
     // Present = upload the swapchain framebuffer to the native window with no
     // redundant per-frame memcpy: the guest writes into the same buffer the
     // window presents (fb is shared with the window's surface on first use).
