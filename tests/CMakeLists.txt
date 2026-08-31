@@ -157,6 +157,11 @@ add_test(NAME OrchestratorTest COMMAND test_orchestrator)
 add_test(NAME PeLoaderTest COMMAND test_pe_loader)
 add_test(NAME PythonDaemonTest COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon.py)
 
+# D3D -> Vulkan presentation backend (no crash; clean unsupported handling).
+add_executable(test_vulkan_swapchain test_vulkan_swapchain.cpp)
+target_link_libraries(test_vulkan_swapchain PRIVATE papaya-gpu)
+add_test(NAME VulkanSwapchainTest COMMAND test_vulkan_swapchain)
+
 if (PAPAYA_ENABLE_FUZZING)
     add_subdirectory(fuzz)
 endif()
