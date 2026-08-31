@@ -54,13 +54,33 @@ static std::vector<unsigned char> read_file(const char* path) {
     return out;
 }
 
+static std::vector<unsigned char> build_pe_seed() {
+    // Minimal PE32+ skeleton: MZ + e_lfanew -> PE sig + COFF FileHeader
+    // (AMD64, 1 section) + PE32+ OptionalHeader (magic 0x020B) + 1 section
+    // header. Large enough to pass the "smaller than DOS header" gate and
+    // reach the NT-header / section parsing that random mutations target.
+    using papaya::u16;
+    using papaya::u32;
+    std::vector<unsigned char> b(512, 0);
+    b[0] = 'M'; b[1] = 'Z';
+    *reinterpret_cast<u32*>(b.data() + 0x3c) = 0x40;            // e_lfanew
+    // PE signature (at 0x40)
+    b[0x40] = 'P'; b[0x41] = 'E';
+    // COFF FileHeader (at 0x44)
+    *reinterpret_cast<u16*>(b.data() + 0x44) = 0x8664;          // Machine = AMD64
+    *reinterpret_cast<u16*>(b.data() + 0x48) = 1;               // NumberOfSections
+    *reinterpret_cast<u16*>(b.data() + 0x4A) = 0x00E0;          // SizeOfOptionalHeader (PE32+)
+    // PE32+ OptionalHeader (at 0x58)
+    *reinterpret_cast<u16*>(b.data() + 0x58) = 0x020B;          // Magic = PE32+
+    // Section header (at 0x138): Name ".text", VirtualSize 0x1000
+    b[0x138] = '.'; b[0x139] = 't'; b[0x13a] = 'e'; b[0x13b] = 'x'; b[0x13c] = 't';
+    *reinterpret_cast<u32*>(b.data() + 0x140) = 0x1000;         // Misc.VirtualSize
+    *reinterpret_cast<u32*>(b.data() + 0x144) = 0x1000;         // VirtualAddress
+    return b;
+}
+
 int main(int argc, char** argv) {
-    std::vector<unsigned char> buf = {
-        'M','Z', 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
-        0xff, 0xff, 0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        'P','E','\0','\0', 0x4c, 0x01, 0x01, 0x00
-    };
+    std::vector<unsigned char> buf = build_pe_seed();
     long iters = 4096;
     bool replay = (argc > 1);
     if (replay) { buf = read_file(argv[1]); if (buf.empty()) { iters = 0; } }
