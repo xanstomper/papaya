@@ -439,6 +439,96 @@ u32 Win32ApiHle::hle_get_system_directory_w(void* lpBuffer, u32 nSize) {
     return static_cast<u32>(i);
 }
 
+// ---- Date/time formatting (kernel32; ranked gap) ---------------------------
+// Writes "YYYY-MM-DD" / "HH:MM:SS" from the given SYSTEMTIME (or now when
+// lpDate/lpTime is null). Sufficient for games that display timestamps; the
+// custom-format-token path is the future work.
+static void write_w(uint16_t* dst, int cap, int& pos, const char* s) {
+    while (*s && pos < cap - 1) dst[pos++] = static_cast<uint16_t>(static_cast<unsigned char>(*s++));
+}
+static void write_num(uint16_t* dst, int cap, int& pos, int v, int pad) {
+    char tmp[16]; int n = 0;
+    if (v < 0) { if (pos < cap - 1) dst[pos++] = '-'; v = -v; }
+    do { tmp[n++] = static_cast<char>('0' + v % 10); v /= 10; } while (v);
+    while (n < pad && pos < cap - 1) { tmp[n++] = '0'; }
+    while (n > 0 && pos < cap - 1) dst[pos++] = static_cast<uint16_t>(tmp[--n]);
+}
+int Win32ApiHle::hle_get_date_format_w(u32 locale, u32 flags, const void* date, const wchar_t* fmt, wchar_t* out, int outsz) {
+    (void)locale; (void)flags; (void)fmt;
+    if (!out || outsz <= 0) return 0;
+    auto* st = static_cast<const u32*>(date);   // SYSTEMTIME: year,month,dow,day,hour,min,sec,ms
+    u32 year = st ? st[0] : 1970, month = st ? st[1] : 1, day = st ? st[3] : 1;
+    uint16_t* dst = reinterpret_cast<uint16_t*>(out);
+    int pos = 0;
+    write_num(dst, outsz, pos, static_cast<int>(year), 4);
+    write_w(dst, outsz, pos, "-");
+    write_num(dst, outsz, pos, static_cast<int>(month), 2);
+    write_w(dst, outsz, pos, "-");
+    write_num(dst, outsz, pos, static_cast<int>(day), 2);
+    dst[pos] = 0;
+    return pos;
+}
+int Win32ApiHle::hle_get_time_format_w(u32 locale, u32 flags, const void* time, const wchar_t* fmt, wchar_t* out, int outsz) {
+    (void)locale; (void)flags; (void)fmt;
+    if (!out || outsz <= 0) return 0;
+    auto* st = static_cast<const u32*>(time);
+    u32 hour = st ? st[4] : 0, min = st ? st[5] : 0, sec = st ? st[6] : 0;
+    uint16_t* dst = reinterpret_cast<uint16_t*>(out);
+    int pos = 0;
+    write_num(dst, outsz, pos, static_cast<int>(hour), 2);
+    write_w(dst, outsz, pos, ":");
+    write_num(dst, outsz, pos, static_cast<int>(min), 2);
+    write_w(dst, outsz, pos, ":");
+    write_num(dst, outsz, pos, static_cast<int>(sec), 2);
+    dst[pos] = 0;
+    return pos;
+}
+BOOL Win32ApiHle::hle_alloc_console() { return TRUE_VAL; }   // host stdout is the console
+BOOL Win32ApiHle::hle_free_console() { return TRUE_VAL; }
+void* Win32ApiHle::hle_get_console_window() { return reinterpret_cast<void*>(0x50001); }
+u64 Win32ApiHle::hle_ver_set_condition_mask(u64 mask, u32 type, unsigned char cond) {
+    (void)type;
+    return (mask & 0xF000000000000000ull) | (static_cast<u64>(cond & 0x7) << 48) | (mask & 0x00FFFFFFFFFFFFFFull);
+}
+BOOL Win32ApiHle::hle_verify_version_info_w(void* info, u32 type, u64 mask) {
+    // papaya reports a modern Windows 10 release; accept the requested check.
+    (void)info; (void)type; (void)mask;
+    return TRUE_VAL;
+}
+void* Win32ApiHle::hle_wow64_disable_fs_redirection() { return nullptr; }   // x64-native: no redirection
+void* Win32ApiHle::hle_wow64_revert_fs_redirection(void* oldval) { (void)oldval; return nullptr; }
+u32 Win32ApiHle::hle_search_path_w(u32 flags, const wchar_t* path, const wchar_t* file, const wchar_t* ext, wchar_t* buffer, wchar_t** filepart) {
+    (void)flags; (void)path; (void)ext;
+    if (!file || !buffer) return 0;
+    // Resolve the file name through the C: mapping (normalize handles the
+    // extended path forms); buffer receives the full resolved path.
+    std::string f = win_utf16_to_utf8(file);
+    std::string p;
+    {
+        std::string s(f);
+        std::replace(s.begin(), s.end(), '\\', '/');
+        bool had_ext = false;
+        while (s.rfind("//?/", 0) == 0) { s = s.substr(4); had_ext = true; }
+        if (s.size() >= 2 && std::isalpha(static_cast<unsigned char>(s[0])) && s[1] == ':') {
+            std::string stripped = s.substr(2);
+            while (!stripped.empty() && stripped[0] == '/') stripped.erase(0, 1);
+            if (access(s.c_str(), F_OK) != 0) s = stripped.empty() ? "." : (had_ext ? "/" + stripped : stripped);
+        } else if (had_ext && !s.empty() && s[0] != '/') {
+            s = "/" + s;
+        }
+        p = s;
+    }
+    uint16_t* dst = reinterpret_cast<uint16_t*>(buffer);
+    size_t i = 0;
+    while (i < p.size() && i + 1 < 260) { dst[i] = static_cast<uint16_t>(static_cast<unsigned char>(p[i])); ++i; }
+    dst[i] = 0;
+    if (filepart) {
+        size_t slash = p.find_last_of("/\\");
+        *filepart = reinterpret_cast<wchar_t*>(dst + (slash == std::string::npos ? 0 : slash + 1));
+    }
+    return static_cast<u32>(i);
+}
+
 HANDLE Win32ApiHle::hle_get_process_heap() {
     return reinterpret_cast<HANDLE>(0x1000);
 }
@@ -7446,6 +7536,16 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "IsBadStringPtrW",          reinterpret_cast<void*>(&hle_is_bad_string_ptr_w));
     register_function("KERNEL32.DLL", "GetTempPathW",             reinterpret_cast<void*>(&hle_get_temp_path_w));
     register_function("KERNEL32.DLL", "GetSystemDirectoryW",      reinterpret_cast<void*>(&hle_get_system_directory_w));
+    register_function("KERNEL32.DLL", "GetDateFormatW",           reinterpret_cast<void*>(&hle_get_date_format_w));
+    register_function("KERNEL32.DLL", "GetTimeFormatW",           reinterpret_cast<void*>(&hle_get_time_format_w));
+    register_function("KERNEL32.DLL", "AllocConsole",             reinterpret_cast<void*>(&hle_alloc_console));
+    register_function("KERNEL32.DLL", "FreeConsole",              reinterpret_cast<void*>(&hle_free_console));
+    register_function("KERNEL32.DLL", "GetConsoleWindow",         reinterpret_cast<void*>(&hle_get_console_window));
+    register_function("KERNEL32.DLL", "VerSetConditionMask",      reinterpret_cast<void*>(&hle_ver_set_condition_mask));
+    register_function("KERNEL32.DLL", "VerifyVersionInfoW",       reinterpret_cast<void*>(&hle_verify_version_info_w));
+    register_function("KERNEL32.DLL", "Wow64DisableWow64FsRedirection", reinterpret_cast<void*>(&hle_wow64_disable_fs_redirection));
+    register_function("KERNEL32.DLL", "Wow64RevertWow64FsRedirection",  reinterpret_cast<void*>(&hle_wow64_revert_fs_redirection));
+    register_function("KERNEL32.DLL", "SearchPathW",              reinterpret_cast<void*>(&hle_search_path_w));
 
     register_function("KERNEL32.DLL", "TlsAlloc", reinterpret_cast<void*>(&hle_tls_alloc));
     register_function("KERNEL32.DLL", "TlsFree", reinterpret_cast<void*>(&hle_tls_free));

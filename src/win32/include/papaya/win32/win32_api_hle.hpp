@@ -138,6 +138,17 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_is_bad_string_ptr_w(const void* ptr, u32 size);
     static PAPAYA_MS_ABI u32   hle_get_temp_path_w(u32 nBufferLength, wchar_t* lpBuffer);
     static PAPAYA_MS_ABI u32   hle_get_system_directory_w(void* lpBuffer, u32 nSize);
+    // Date/time + console + version + fs-redirection (ranked kernel32 gaps)
+    static PAPAYA_MS_ABI int   hle_get_date_format_w(u32 locale, u32 flags, const void* date, const wchar_t* fmt, wchar_t* out, int outsz);
+    static PAPAYA_MS_ABI int   hle_get_time_format_w(u32 locale, u32 flags, const void* time, const wchar_t* fmt, wchar_t* out, int outsz);
+    static PAPAYA_MS_ABI BOOL  hle_alloc_console();
+    static PAPAYA_MS_ABI BOOL  hle_free_console();
+    static PAPAYA_MS_ABI void* hle_get_console_window();
+    static PAPAYA_MS_ABI u64   hle_ver_set_condition_mask(u64 mask, u32 type, unsigned char cond);
+    static PAPAYA_MS_ABI BOOL  hle_verify_version_info_w(void* info, u32 type, u64 mask);
+    static PAPAYA_MS_ABI void* hle_wow64_disable_fs_redirection();
+    static PAPAYA_MS_ABI void* hle_wow64_revert_fs_redirection(void* oldval);
+    static PAPAYA_MS_ABI u32   hle_search_path_w(u32 flags, const wchar_t* path, const wchar_t* file, const wchar_t* ext, wchar_t* buffer, wchar_t** filepart);
     static PAPAYA_MS_ABI void* hle_heap_alloc(HANDLE hHeap, u32 dwFlags, size_t dwBytes);
     static PAPAYA_MS_ABI BOOL  hle_heap_free(HANDLE hHeap, u32 dwFlags, void* lpMem);
     static PAPAYA_MS_ABI void* hle_heap_realloc(HANDLE hHeap, u32 dwFlags, void* lpMem, size_t dwBytes);
