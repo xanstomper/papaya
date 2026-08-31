@@ -198,7 +198,17 @@ Result<> EmulatorRuntime::launch_game(std::string_view exe_path) {
     // Determine Execution Mode: Pure Papaya Native Engine / Win32 HLE Only (Zero Wine/Proton/Bottles)
     ExecutionMode mode = config_.execution_mode;
     if (mode == ExecutionMode::Auto) {
-        if (game_p.extension() == ".jar") {
+        // Tier-3 selectively-native routing: a game that ships its OWN runtime
+        // (Java JVM bundle, or a pure Godot PCK) does not need Win32 API
+        // translation at all — bridge the host runtime instead. Only games whose
+        // .exe IS the engine (Win32 runtime needs the HLE) stay native-in-process.
+        if (game_p.extension() == ".jar" || is_java) {
+            mode = ExecutionMode::NativeEngine;
+        } else if ((game_p.extension() == ".pck" || (is_godot && game_p.extension() == ".exe"))) {
+            // A Godot .exe whose data is in a separate .pck is still a Godot
+            // bundle; run it via the host Godot binary so we don't reimplement
+            // the engine. (Embedded-PCK Godot .exe without a separate .pck stays
+            // NativeWin32, which already runs it in-process.)
             mode = ExecutionMode::NativeEngine;
         } else {
             mode = ExecutionMode::NativeWin32;
