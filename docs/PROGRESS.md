@@ -81,6 +81,34 @@ invisible in scattered commits or a flat coverage percentage.
 each runtime, translate only what's imported), which Tier 3 now exercises. Next
 Tier-3 target: the Godot-Mono/.NET host for SlayTheSpire2.
 
+## Four competitive-parity subsystems (2026-08-31, all four landed)
+
+Verification: ctest 21/21 (was 19), guest suite 21/21, real coverage 883.
+
+1. **D3D->Vulkan present path (`c390224`).** VulkanSwapchain now real: creates a
+   VkSwapchainKHR, per-frame vkAcquireNextImageKHR (fence), upload_rgba() maps a
+   host-visible staging buffer + records a COPY buffer->image command, and
+   presents. Frames now render into the swapchain image (DXVK-style presentation
+   foundation; DXBC->SPIR-V shader translation is the remaining big phase).
+
+2. **GDI wide text (`5283b6b`).** CreateFontIndirectW/TextOutW/GetTextMetricsW/
+   GetTextExtentPoint32W (ranked gdi32 W-gaps) mapped onto the DC+block-glyph
+   rasterizer; strict gdi_text_w guest.
+
+3. **.NET/Mono host bridge groundwork (`06fb06e`).** DotnetBridge discovers +
+   dlopens the system libhostfxr and drives init_for_cmdline/run_app/close, so a
+   Godot-Mono game can boot via the host CLR instead of papaya reimplementing a
+   runtime. VERIFIED loads /usr/lib/dotnet/host/fxr/8.0.30/libhostfxr.so.
+
+4. **CPU translation-backend resolution (`00004a5`).** resolve_backend() picks
+   native-x86 when x86-64, else delegates to installed Box64/FEX on ARM64; +
+   external-translator detection + a null-pointer UB fix. Box64/FEX are mature
+   JITs, so papaya delegates rather than reimplementing a JIT (Phase 12).
+
+Honest remaining: STS2 (Godot-Mono) needs the GodotSharp/.NET-host glue on top
+of the DotnetBridge groundwork; D3D drawing (command-list + DXBC->SPIR-V) is
+the multi-year shader phase; ARM64 in-papaya JIT remains delegated to Box64/FEX.
+
 ## Hygiene standard (adopted)
 
 1. **Commit atomically per feature** but group tightly-related micro-batches into
