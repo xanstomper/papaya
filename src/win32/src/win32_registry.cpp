@@ -124,6 +124,27 @@ s32 registry_open_key(u32 root_handle, const char* path, bool create, void** out
 
 s32 registry_close_key(void* key) { (void)key; return 0; }
 
+s32 registry_delete_key(u32 root_handle, const char* path) {
+    if (!path || !*path) return -5;   // ERROR_ACCESS_DENIED: cannot delete a root
+    std::string p(path);
+    // If it is only a root handle path (e.g. "Software") we still must resolve
+    // against the correct root. Bail if the final component is empty.
+    // Walk to the parent node, then erase the last subkey component.
+    RegNode* root = &g_roots[root_of(root_handle)];
+    size_t last_slash = p.find_last_of('\\');
+    std::string parent_path = (last_slash == std::string::npos) ? "" : p.substr(0, last_slash);
+    std::string name = p.substr(last_slash == std::string::npos ? 0 : last_slash + 1);
+    RegNode* parent = root;
+    if (!parent_path.empty()) {
+        parent = path_node(root_handle, parent_path, false);
+        if (!parent) return -2;   // ERROR_FILE_NOT_FOUND
+    }
+    auto it = parent->subkeys.find(name);
+    if (it == parent->subkeys.end()) return -2;   // ERROR_FILE_NOT_FOUND
+    parent->subkeys.erase(it);
+    return 0;   // ERROR_SUCCESS
+}
+
 s32 registry_set_value(void* key, const char* name, u32 type, const void* data, u32 cb) {
     if (!key || !name) return -87;   // ERROR_INVALID_PARAMETER
     auto* n = static_cast<RegNode*>(key);

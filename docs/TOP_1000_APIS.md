@@ -38,17 +38,17 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 30 | kernel32.dll | CloseHandle | 335 | 0 | YES |
 | 31 | ucrtbase.dll | malloc | 324 | 2 |  |
 | 32 | kernel32.dll | WriteFile | 291 | 0 | YES |
-| 33 | kernel32.dll | WideCharToMultiByte | 283 | 0 | YES |
+| 33 | kernel32.dll | WideCharToMultiByte | 284 | 0 | YES |
 | 34 | user32.dll | LoadStringW | 280 | 0 |  |
 | 35 | kernel32.dll | GetCommandLineW | 264 | 0 | YES |
 | 36 | kernel32.dll | CreateFileW | 248 | 0 | YES |
 | 37 | ucrtbase.dll | __stdio_common_vswprintf | 224 | 2 |  |
 | 38 | ucrtbase.dll | memcpy | 220 | 2 |  |
-| 39 | advapi32.dll | RegCloseKey | 208 | 0 | YES |
+| 39 | advapi32.dll | RegCloseKey | 209 | 0 | YES |
 | 40 | ucrtbase.dll | _wcsicmp | 208 | 2 | YES |
 | 41 | kernel32.dll | GetStartupInfoW | 204 | 0 | YES |
 | 42 | kernel32.dll | GetStdHandle | 204 | 0 | YES |
-| 43 | kernel32.dll | MultiByteToWideChar | 199 | 0 | YES |
+| 43 | kernel32.dll | MultiByteToWideChar | 200 | 0 | YES |
 | 44 | ucrtbase.dll | __p___argv | 188 | 2 | YES |
 | 45 | ucrtbase.dll | _configure_narrow_argv | 188 | 2 | YES |
 | 46 | ucrtbase.dll | _get_initial_narrow_environment | 188 | 2 | YES |
@@ -63,16 +63,16 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 55 | kernel32.dll | WaitForSingleObject | 160 | 0 | YES |
 | 56 | ucrtbase.dll | realloc | 160 | 2 |  |
 | 57 | ucrtbase.dll | wcslen | 160 | 2 |  |
-| 58 | advapi32.dll | RegQueryValueExW | 156 | 0 | YES |
+| 58 | advapi32.dll | RegQueryValueExW | 157 | 0 | YES |
 | 59 | user32.dll | MessageBoxW | 156 | 0 | YES |
-| 60 | kernel32.dll | SetUnhandledExceptionFilter | 145 | 0 | YES |
+| 60 | kernel32.dll | SetUnhandledExceptionFilter | 146 | 0 | YES |
 | 61 | ucrtbase.dll | calloc | 144 | 2 |  |
 | 62 | ucrtbase.dll | wcschr | 144 | 2 |  |
 | 63 | ucrtbase.dll | _wcsdup | 144 | 2 | YES |
 | 64 | kernel32.dll | lstrcmpW | 141 | 0 | YES |
 | 65 | kernel32.dll | FindClose | 140 | 0 | YES |
 | 66 | user32.dll | ShowWindow | 138 | 0 | YES |
-| 67 | advapi32.dll | RegSetValueExW | 136 | 0 | YES |
+| 67 | advapi32.dll | RegSetValueExW | 137 | 0 | YES |
 | 68 | kernel32.dll | CreateEventW | 136 | 0 | YES |
 | 69 | kernel32.dll | GetModuleHandleA | 132 | 0 | YES |
 | 70 | kernel32.dll | IsBadStringPtrA | 132 | 0 | YES |
@@ -121,8 +121,8 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 113 | user32.dll | GetDC | 100 | 0 | YES |
 | 114 | user32.dll | ReleaseDC | 100 | 0 | YES |
 | 115 | ucrtbase.dll | wcstol | 100 | 2 |  |
-| 116 | kernel32.dll | EnterCriticalSection | 97 | 0 | YES |
-| 117 | kernel32.dll | LeaveCriticalSection | 97 | 0 | YES |
+| 116 | kernel32.dll | EnterCriticalSection | 98 | 0 | YES |
+| 117 | kernel32.dll | LeaveCriticalSection | 98 | 0 | YES |
 | 118 | user32.dll | LoadIconW | 96 | 0 |  |
 | 119 | ole32.dll | CoUninitialize | 96 | 0 | YES |
 | 120 | user32.dll | GetSystemMetrics | 96 | 0 | YES |
@@ -159,9 +159,9 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 151 | api-ms-win-crt-runtime-l1-1-0.dll | _configure_narrow_argv | 88 | 2 |  |
 | 152 | api-ms-win-crt-runtime-l1-1-0.dll | _initialize_narrow_environment | 88 | 2 |  |
 | 153 | ucrtbase.dll | __stdio_common_vfprintf | 88 | 2 |  |
-| 154 | user32.dll | BeginPaint | 86 | 0 | YES |
-| 155 | user32.dll | EndPaint | 86 | 0 | YES |
-| 156 | kernel32.dll | Sleep | 85 | 0 | YES |
+| 154 | kernel32.dll | Sleep | 86 | 0 | YES |
+| 155 | user32.dll | BeginPaint | 86 | 0 | YES |
+| 156 | user32.dll | EndPaint | 86 | 0 | YES |
 | 157 | user32.dll | wsprintfW | 84 | 0 |  |
 | 158 | kernel32.dll | GetFileSize | 84 | 0 | YES |
 | 159 | kernel32.dll | OpenProcess | 84 | 0 | YES |
@@ -169,7 +169,7 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 161 | ole32.dll | CoCreateInstance | 84 | 0 | YES |
 | 162 | user32.dll | GetWindowRect | 84 | 0 | YES |
 | 163 | ucrtbase.dll | _assert | 84 | 2 |  |
-| 164 | kernel32.dll | GetLastError | 81 | 0 | YES |
+| 164 | kernel32.dll | GetLastError | 82 | 0 | YES |
 | 165 | user32.dll | SetFocus | 80 | 0 | YES |
 | 166 | api-ms-win-crt-environment-l1-1-0.dll | getenv | 80 | 2 |  |
 | 167 | api-ms-win-crt-runtime-l1-1-0.dll | __p___argc | 80 | 2 |  |
@@ -190,7 +190,7 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 182 | user32.dll | GetParent | 72 | 0 |  |
 | 183 | user32.dll | RegisterClassExW | 72 | 0 | YES |
 | 184 | api-ms-win-crt-runtime-l1-1-0.dll | __p___argv | 72 | 2 |  |
-| 185 | kernel32.dll | TlsGetValue | 69 | 0 | YES |
+| 185 | kernel32.dll | TlsGetValue | 70 | 0 | YES |
 | 186 | user32.dll | DialogBoxParamW | 68 | 0 |  |
 | 187 | gdi32.dll | CreateCompatibleDC | 68 | 0 | YES |
 | 188 | kernel32.dll | GetModuleFileNameW | 68 | 0 | YES |
@@ -203,8 +203,8 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 195 | ucrtbase.dll | wcsstr | 68 | 2 |  |
 | 196 | vcruntime140.dll | __C_specific_handler | 68 | 2 |  |
 | 197 | ucrtbase.dll | wcspbrk | 68 | 2 | YES |
-| 198 | kernel32.dll | LoadLibraryA | 66 | 0 | YES |
-| 199 | kernel32.dll | DeleteCriticalSection | 65 | 0 | YES |
+| 198 | kernel32.dll | DeleteCriticalSection | 66 | 0 | YES |
+| 199 | kernel32.dll | LoadLibraryA | 66 | 0 | YES |
 | 200 | kernel32.dll | MulDiv | 65 | 0 | YES |
 | 201 | gdi32.dll | CreateFontIndirectW | 64 | 0 |  |
 | 202 | user32.dll | LoadAcceleratorsW | 64 | 0 |  |
@@ -257,9 +257,9 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 249 | ucrtbase.dll | _wfopen | 52 | 2 |  |
 | 250 | ucrtbase.dll | fclose | 52 | 2 |  |
 | 251 | ucrtbase.dll | wcstoul | 52 | 2 |  |
-| 252 | kernel32.dll | CreateFileMappingW | 49 | 0 | YES |
-| 253 | kernel32.dll | GetTempPathW | 49 | 0 | YES |
-| 254 | kernel32.dll | InitializeCriticalSection | 49 | 0 | YES |
+| 252 | kernel32.dll | InitializeCriticalSection | 50 | 0 | YES |
+| 253 | kernel32.dll | CreateFileMappingW | 49 | 0 | YES |
+| 254 | kernel32.dll | GetTempPathW | 49 | 0 | YES |
 | 255 | user32.dll | wsprintfA | 49 | 0 | YES |
 | 256 | user32.dll | GetWindow | 48 | 0 |  |
 | 257 | user32.dll | TrackPopupMenu | 48 | 0 |  |
@@ -277,9 +277,9 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 269 | user32.dll | GetDesktopWindow | 48 | 0 | YES |
 | 270 | user32.dll | MessageBoxA | 48 | 0 | YES |
 | 271 | ucrtbase.dll | _errno | 48 | 2 |  |
-| 272 | kernel32.dll | GetSystemDirectoryW | 45 | 0 | YES |
-| 273 | advapi32.dll | RegDeleteKeyW | 44 | 0 |  |
-| 274 | advapi32.dll | RegDeleteValueW | 44 | 0 |  |
+| 272 | advapi32.dll | RegDeleteKeyW | 45 | 0 | YES |
+| 273 | advapi32.dll | RegDeleteValueW | 45 | 0 | YES |
+| 274 | kernel32.dll | GetSystemDirectoryW | 45 | 0 | YES |
 | 275 | advapi32.dll | StartServiceCtrlDispatcherW | 44 | 0 |  |
 | 276 | comdlg32.dll | ChooseFontW | 44 | 0 |  |
 | 277 | comdlg32.dll | GetOpenFileNameW | 44 | 0 |  |
@@ -298,9 +298,9 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 290 | api-ms-win-crt-heap-l1-1-0.dll | free | 44 | 2 |  |
 | 291 | api-ms-win-crt-heap-l1-1-0.dll | malloc | 44 | 2 |  |
 | 292 | ucrtbase.dll | iswspace | 44 | 2 | YES |
-| 293 | advapi32.dll | CloseServiceHandle | 40 | 0 |  |
-| 294 | advapi32.dll | OpenSCManagerW | 40 | 0 |  |
-| 295 | advapi32.dll | RegCreateKeyW | 40 | 0 |  |
+| 293 | advapi32.dll | RegCreateKeyW | 41 | 0 | YES |
+| 294 | advapi32.dll | CloseServiceHandle | 40 | 0 |  |
+| 295 | advapi32.dll | OpenSCManagerW | 40 | 0 |  |
 | 296 | gdi32.dll | GetTextMetricsW | 40 | 0 |  |
 | 297 | user32.dll | GetDlgItemInt | 40 | 0 |  |
 | 298 | user32.dll | GetWindowTextLengthW | 40 | 0 |  |
@@ -357,7 +357,7 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 349 | api-ms-win-crt-heap-l1-1-0.dll | _callnewh | 36 | 2 |  |
 | 350 | api-ms-win-crt-stdio-l1-1-0.dll | fclose | 36 | 2 |  |
 | 351 | ucrtbase.dll | _stricmp | 36 | 2 |  |
-| 352 | kernel32.dll | VirtualProtect | 33 | 0 | YES |
+| 352 | kernel32.dll | VirtualProtect | 34 | 0 | YES |
 | 353 | advapi32.dll | OpenServiceW | 32 | 0 |  |
 | 354 | advapi32.dll | RegQueryValueW | 32 | 0 |  |
 | 355 | comctl32.dll | CreateStatusWindowW | 32 | 0 |  |
@@ -454,7 +454,7 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 446 | kernelbase.dll | WaitForSingleObject | 28 | 2 |  |
 | 447 | ucrtbase.dll | strcat | 28 | 2 |  |
 | 448 | ucrtbase.dll | wcstok | 28 | 2 | YES |
-| 449 | kernel32.dll | VirtualQuery | 25 | 0 | YES |
+| 449 | kernel32.dll | VirtualQuery | 26 | 0 | YES |
 | 450 | comctl32.dll | CreateToolbarEx | 24 | 0 |  |
 | 451 | comctl32.dll | InitCommonControlsEx | 24 | 0 |  |
 | 452 | gdi32.dll | CreateFontW | 24 | 0 |  |
@@ -526,111 +526,111 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 518 | ucrtbase.dll | _wsplitpath | 24 | 2 | YES |
 | 519 | ucrtbase.dll | fgetws | 24 | 2 | YES |
 | 520 | ucrtbase.dll | iswprint | 24 | 2 | YES |
-| 521 | msvcrt.dll | __iob_func | 21 | 0 | YES |
-| 522 | msvcrt.dll | calloc | 21 | 0 | YES |
-| 523 | msvcrt.dll | free | 21 | 0 | YES |
-| 524 | msvcrt.dll | fwrite | 21 | 0 | YES |
-| 525 | msvcrt.dll | malloc | 21 | 0 | YES |
-| 526 | msvcrt.dll | memcpy | 21 | 0 | YES |
-| 527 | msvcrt.dll | strlen | 21 | 0 | YES |
-| 528 | msvcrt.dll | strncmp | 21 | 0 | YES |
-| 529 | comdlg32.dll | FindTextW | 20 | 0 |  |
-| 530 | comdlg32.dll | GetFileTitleW | 20 | 0 |  |
-| 531 | comdlg32.dll | PrintDlgW | 20 | 0 |  |
-| 532 | comdlg32.dll | ReplaceTextW | 20 | 0 |  |
-| 533 | gdi32.dll | EndDoc | 20 | 0 |  |
-| 534 | gdi32.dll | EndPage | 20 | 0 |  |
-| 535 | gdi32.dll | SetMapMode | 20 | 0 |  |
-| 536 | gdi32.dll | StartDocW | 20 | 0 |  |
-| 537 | gdi32.dll | StartPage | 20 | 0 |  |
-| 538 | gdi32.dll | TextOutW | 20 | 0 |  |
-| 539 | kernel32.dll | CopyFileExW | 20 | 0 |  |
-| 540 | kernel32.dll | DeviceIoControl | 20 | 0 |  |
-| 541 | kernel32.dll | GetComputerNameW | 20 | 0 |  |
-| 542 | kernel32.dll | GetThreadContext | 20 | 0 |  |
-| 543 | kernel32.dll | GetWindowsDirectoryW | 20 | 0 |  |
-| 544 | kernel32.dll | SearchPathW | 20 | 0 |  |
-| 545 | kernel32.dll | VerifyVersionInfoW | 20 | 0 |  |
-| 546 | kernel32.dll | _lclose | 20 | 0 |  |
-| 547 | ntdll.dll | NtQuerySystemInformation | 20 | 0 |  |
-| 548 | ntdll.dll | RtlImageDirectoryEntryToData | 20 | 0 |  |
-| 549 | ole32.dll | CLSIDFromProgID | 20 | 0 |  |
-| 550 | shell32.dll | DragFinish | 20 | 0 |  |
-| 551 | user32.dll | AppendMenuW | 20 | 0 |  |
-| 552 | user32.dll | CharUpperBuffW | 20 | 0 |  |
-| 553 | user32.dll | CreateIcon | 20 | 0 |  |
-| 554 | user32.dll | DrawFrameControl | 20 | 0 |  |
-| 555 | user32.dll | GetDlgItemTextW | 20 | 0 |  |
-| 556 | user32.dll | GetDpiForWindow | 20 | 0 |  |
-| 557 | user32.dll | GetFocus | 20 | 0 |  |
-| 558 | user32.dll | GetIconInfo | 20 | 0 |  |
-| 559 | user32.dll | GetMessagePos | 20 | 0 |  |
-| 560 | user32.dll | IsDialogMessageW | 20 | 0 |  |
-| 561 | user32.dll | LoadImageA | 20 | 0 |  |
-| 562 | user32.dll | OffsetRect | 20 | 0 |  |
-| 563 | user32.dll | RegisterWindowMessageW | 20 | 0 |  |
-| 564 | user32.dll | RemoveMenu | 20 | 0 |  |
-| 565 | user32.dll | SendDlgItemMessageA | 20 | 0 |  |
-| 566 | advapi32.dll | AdjustTokenPrivileges | 20 | 0 | YES |
-| 567 | advapi32.dll | LookupPrivilegeValueW | 20 | 0 | YES |
-| 568 | gdi32.dll | CreateDIBSection | 20 | 0 | YES |
-| 569 | kernel32.dll | CreateEventA | 20 | 0 | YES |
-| 570 | kernel32.dll | FlsFree | 20 | 0 | YES |
-| 571 | kernel32.dll | GetDiskFreeSpaceExW | 20 | 0 | YES |
-| 572 | kernel32.dll | GetDriveTypeW | 20 | 0 | YES |
-| 573 | kernel32.dll | GetSystemInfo | 20 | 0 | YES |
-| 574 | kernel32.dll | GetTempFileNameA | 20 | 0 | YES |
-| 575 | kernel32.dll | GetTickCount64 | 20 | 0 | YES |
-| 576 | kernel32.dll | LCMapStringEx | 20 | 0 | YES |
-| 577 | kernel32.dll | OpenFile | 20 | 0 | YES |
-| 578 | kernel32.dll | ReadConsoleW | 20 | 0 | YES |
-| 579 | kernel32.dll | SetEnvironmentVariableW | 20 | 0 | YES |
-| 580 | kernel32.dll | SleepConditionVariableCS | 20 | 0 | YES |
-| 581 | kernel32.dll | Thread32First | 20 | 0 | YES |
-| 582 | kernel32.dll | Thread32Next | 20 | 0 | YES |
-| 583 | kernel32.dll | TryAcquireSRWLockExclusive | 20 | 0 | YES |
-| 584 | kernel32.dll | WakeConditionVariable | 20 | 0 | YES |
-| 585 | msvcrt.dll | wcslen | 20 | 0 | YES |
-| 586 | ntdll.dll | RtlNtStatusToDosError | 20 | 0 | YES |
-| 587 | ole32.dll | OleInitialize | 20 | 0 | YES |
-| 588 | ole32.dll | OleUninitialize | 20 | 0 | YES |
-| 589 | ole32.dll | PropVariantClear | 20 | 0 | YES |
-| 590 | shlwapi.dll | PathFileExistsW | 20 | 0 | YES |
-| 591 | user32.dll | ClipCursor | 20 | 0 | YES |
-| 592 | user32.dll | CloseClipboard | 20 | 0 | YES |
-| 593 | user32.dll | EmptyClipboard | 20 | 0 | YES |
-| 594 | user32.dll | GetCapture | 20 | 0 | YES |
-| 595 | user32.dll | GetForegroundWindow | 20 | 0 | YES |
-| 596 | user32.dll | GetWindowLongA | 20 | 0 | YES |
-| 597 | user32.dll | OpenClipboard | 20 | 0 | YES |
-| 598 | user32.dll | SetClipboardData | 20 | 0 | YES |
-| 599 | api-ms-win-crt-runtime-l1-1-0.dll | _get_narrow_winmain_command_line | 20 | 2 |  |
-| 600 | api-ms-win-crt-runtime-l1-1-0.dll | _invalid_parameter_noinfo_noreturn | 20 | 2 |  |
-| 601 | api-ms-win-crt-string-l1-1-0.dll | strcat_s | 20 | 2 |  |
-| 602 | api-ms-win-crt-string-l1-1-0.dll | strcpy | 20 | 2 |  |
-| 603 | dbghelp.dll | MiniDumpWriteDump | 20 | 2 |  |
-| 604 | kernelbase.dll | CloseHandle | 20 | 2 |  |
-| 605 | kernelbase.dll | CreateFileW | 20 | 2 |  |
-| 606 | kernelbase.dll | GetCommandLineW | 20 | 2 |  |
-| 607 | kernelbase.dll | GetSystemWow64Directory2W | 20 | 2 |  |
-| 608 | kernelbase.dll | MultiByteToWideChar | 20 | 2 |  |
-| 609 | kernelbase.dll | ReadFile | 20 | 2 |  |
-| 610 | kernelbase.dll | Wow64DisableWow64FsRedirection | 20 | 2 |  |
-| 611 | kernelbase.dll | Wow64RevertWow64FsRedirection | 20 | 2 |  |
-| 612 | ucrtbase.dll | feof | 20 | 2 |  |
-| 613 | ucrtbase.dll | fgets | 20 | 2 |  |
-| 614 | ucrtbase.dll | strtol | 20 | 2 |  |
-| 615 | vcruntime140.dll | _CxxThrowException | 20 | 2 |  |
-| 616 | vcruntime140.dll | __std_exception_copy | 20 | 2 |  |
-| 617 | vcruntime140.dll | __std_exception_destroy | 20 | 2 |  |
-| 618 | ucrtbase.dll | _wgetenv | 20 | 2 | YES |
-| 619 | msvcrt.dll | memset | 19 | 0 | YES |
-| 620 | user32.dll | DispatchMessageA | 18 | 0 | YES |
-| 621 | user32.dll | GetMessageA | 18 | 0 | YES |
-| 622 | gdi32.dll | Rectangle | 17 | 0 | YES |
-| 623 | kernel32.dll | GetThreadLocale | 17 | 0 | YES |
-| 624 | kernel32.dll | GlobalFree | 17 | 0 | YES |
-| 625 | msvcrt.dll | __C_specific_handler | 17 | 0 | YES |
+| 521 | msvcrt.dll | __iob_func | 22 | 0 | YES |
+| 522 | msvcrt.dll | calloc | 22 | 0 | YES |
+| 523 | msvcrt.dll | free | 22 | 0 | YES |
+| 524 | msvcrt.dll | fwrite | 22 | 0 | YES |
+| 525 | msvcrt.dll | malloc | 22 | 0 | YES |
+| 526 | msvcrt.dll | memcpy | 22 | 0 | YES |
+| 527 | msvcrt.dll | strlen | 22 | 0 | YES |
+| 528 | msvcrt.dll | strncmp | 22 | 0 | YES |
+| 529 | msvcrt.dll | wcslen | 21 | 0 | YES |
+| 530 | comdlg32.dll | FindTextW | 20 | 0 |  |
+| 531 | comdlg32.dll | GetFileTitleW | 20 | 0 |  |
+| 532 | comdlg32.dll | PrintDlgW | 20 | 0 |  |
+| 533 | comdlg32.dll | ReplaceTextW | 20 | 0 |  |
+| 534 | gdi32.dll | EndDoc | 20 | 0 |  |
+| 535 | gdi32.dll | EndPage | 20 | 0 |  |
+| 536 | gdi32.dll | SetMapMode | 20 | 0 |  |
+| 537 | gdi32.dll | StartDocW | 20 | 0 |  |
+| 538 | gdi32.dll | StartPage | 20 | 0 |  |
+| 539 | gdi32.dll | TextOutW | 20 | 0 |  |
+| 540 | kernel32.dll | CopyFileExW | 20 | 0 |  |
+| 541 | kernel32.dll | DeviceIoControl | 20 | 0 |  |
+| 542 | kernel32.dll | GetComputerNameW | 20 | 0 |  |
+| 543 | kernel32.dll | GetThreadContext | 20 | 0 |  |
+| 544 | kernel32.dll | GetWindowsDirectoryW | 20 | 0 |  |
+| 545 | kernel32.dll | SearchPathW | 20 | 0 |  |
+| 546 | kernel32.dll | VerifyVersionInfoW | 20 | 0 |  |
+| 547 | kernel32.dll | _lclose | 20 | 0 |  |
+| 548 | ntdll.dll | NtQuerySystemInformation | 20 | 0 |  |
+| 549 | ntdll.dll | RtlImageDirectoryEntryToData | 20 | 0 |  |
+| 550 | ole32.dll | CLSIDFromProgID | 20 | 0 |  |
+| 551 | shell32.dll | DragFinish | 20 | 0 |  |
+| 552 | user32.dll | AppendMenuW | 20 | 0 |  |
+| 553 | user32.dll | CharUpperBuffW | 20 | 0 |  |
+| 554 | user32.dll | CreateIcon | 20 | 0 |  |
+| 555 | user32.dll | DrawFrameControl | 20 | 0 |  |
+| 556 | user32.dll | GetDlgItemTextW | 20 | 0 |  |
+| 557 | user32.dll | GetDpiForWindow | 20 | 0 |  |
+| 558 | user32.dll | GetFocus | 20 | 0 |  |
+| 559 | user32.dll | GetIconInfo | 20 | 0 |  |
+| 560 | user32.dll | GetMessagePos | 20 | 0 |  |
+| 561 | user32.dll | IsDialogMessageW | 20 | 0 |  |
+| 562 | user32.dll | LoadImageA | 20 | 0 |  |
+| 563 | user32.dll | OffsetRect | 20 | 0 |  |
+| 564 | user32.dll | RegisterWindowMessageW | 20 | 0 |  |
+| 565 | user32.dll | RemoveMenu | 20 | 0 |  |
+| 566 | user32.dll | SendDlgItemMessageA | 20 | 0 |  |
+| 567 | advapi32.dll | AdjustTokenPrivileges | 20 | 0 | YES |
+| 568 | advapi32.dll | LookupPrivilegeValueW | 20 | 0 | YES |
+| 569 | gdi32.dll | CreateDIBSection | 20 | 0 | YES |
+| 570 | kernel32.dll | CreateEventA | 20 | 0 | YES |
+| 571 | kernel32.dll | FlsFree | 20 | 0 | YES |
+| 572 | kernel32.dll | GetDiskFreeSpaceExW | 20 | 0 | YES |
+| 573 | kernel32.dll | GetDriveTypeW | 20 | 0 | YES |
+| 574 | kernel32.dll | GetSystemInfo | 20 | 0 | YES |
+| 575 | kernel32.dll | GetTempFileNameA | 20 | 0 | YES |
+| 576 | kernel32.dll | GetTickCount64 | 20 | 0 | YES |
+| 577 | kernel32.dll | LCMapStringEx | 20 | 0 | YES |
+| 578 | kernel32.dll | OpenFile | 20 | 0 | YES |
+| 579 | kernel32.dll | ReadConsoleW | 20 | 0 | YES |
+| 580 | kernel32.dll | SetEnvironmentVariableW | 20 | 0 | YES |
+| 581 | kernel32.dll | SleepConditionVariableCS | 20 | 0 | YES |
+| 582 | kernel32.dll | Thread32First | 20 | 0 | YES |
+| 583 | kernel32.dll | Thread32Next | 20 | 0 | YES |
+| 584 | kernel32.dll | TryAcquireSRWLockExclusive | 20 | 0 | YES |
+| 585 | kernel32.dll | WakeConditionVariable | 20 | 0 | YES |
+| 586 | msvcrt.dll | memset | 20 | 0 | YES |
+| 587 | ntdll.dll | RtlNtStatusToDosError | 20 | 0 | YES |
+| 588 | ole32.dll | OleInitialize | 20 | 0 | YES |
+| 589 | ole32.dll | OleUninitialize | 20 | 0 | YES |
+| 590 | ole32.dll | PropVariantClear | 20 | 0 | YES |
+| 591 | shlwapi.dll | PathFileExistsW | 20 | 0 | YES |
+| 592 | user32.dll | ClipCursor | 20 | 0 | YES |
+| 593 | user32.dll | CloseClipboard | 20 | 0 | YES |
+| 594 | user32.dll | EmptyClipboard | 20 | 0 | YES |
+| 595 | user32.dll | GetCapture | 20 | 0 | YES |
+| 596 | user32.dll | GetForegroundWindow | 20 | 0 | YES |
+| 597 | user32.dll | GetWindowLongA | 20 | 0 | YES |
+| 598 | user32.dll | OpenClipboard | 20 | 0 | YES |
+| 599 | user32.dll | SetClipboardData | 20 | 0 | YES |
+| 600 | api-ms-win-crt-runtime-l1-1-0.dll | _get_narrow_winmain_command_line | 20 | 2 |  |
+| 601 | api-ms-win-crt-runtime-l1-1-0.dll | _invalid_parameter_noinfo_noreturn | 20 | 2 |  |
+| 602 | api-ms-win-crt-string-l1-1-0.dll | strcat_s | 20 | 2 |  |
+| 603 | api-ms-win-crt-string-l1-1-0.dll | strcpy | 20 | 2 |  |
+| 604 | dbghelp.dll | MiniDumpWriteDump | 20 | 2 |  |
+| 605 | kernelbase.dll | CloseHandle | 20 | 2 |  |
+| 606 | kernelbase.dll | CreateFileW | 20 | 2 |  |
+| 607 | kernelbase.dll | GetCommandLineW | 20 | 2 |  |
+| 608 | kernelbase.dll | GetSystemWow64Directory2W | 20 | 2 |  |
+| 609 | kernelbase.dll | MultiByteToWideChar | 20 | 2 |  |
+| 610 | kernelbase.dll | ReadFile | 20 | 2 |  |
+| 611 | kernelbase.dll | Wow64DisableWow64FsRedirection | 20 | 2 |  |
+| 612 | kernelbase.dll | Wow64RevertWow64FsRedirection | 20 | 2 |  |
+| 613 | ucrtbase.dll | feof | 20 | 2 |  |
+| 614 | ucrtbase.dll | fgets | 20 | 2 |  |
+| 615 | ucrtbase.dll | strtol | 20 | 2 |  |
+| 616 | vcruntime140.dll | _CxxThrowException | 20 | 2 |  |
+| 617 | vcruntime140.dll | __std_exception_copy | 20 | 2 |  |
+| 618 | vcruntime140.dll | __std_exception_destroy | 20 | 2 |  |
+| 619 | ucrtbase.dll | _wgetenv | 20 | 2 | YES |
+| 620 | msvcrt.dll | __C_specific_handler | 18 | 0 | YES |
+| 621 | user32.dll | DispatchMessageA | 18 | 0 | YES |
+| 622 | user32.dll | GetMessageA | 18 | 0 | YES |
+| 623 | gdi32.dll | Rectangle | 17 | 0 | YES |
+| 624 | kernel32.dll | GetThreadLocale | 17 | 0 | YES |
+| 625 | kernel32.dll | GlobalFree | 17 | 0 | YES |
 | 626 | advapi32.dll | ControlService | 16 | 0 |  |
 | 627 | advapi32.dll | CreateServiceW | 16 | 0 |  |
 | 628 | advapi32.dll | DeleteService | 16 | 0 |  |
@@ -750,22 +750,22 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 742 | ucrtbase.dll | iswdigit | 16 | 2 | YES |
 | 743 | ucrtbase.dll | iswxdigit | 16 | 2 | YES |
 | 744 | ucrtbase.dll | wcscspn | 16 | 2 | YES |
-| 745 | kernel32.dll | GetProcessId | 13 | 0 | YES |
-| 746 | msvcrt.dll | __getmainargs | 13 | 0 | YES |
-| 747 | msvcrt.dll | __initenv | 13 | 0 | YES |
-| 748 | msvcrt.dll | __set_app_type | 13 | 0 | YES |
-| 749 | msvcrt.dll | __setusermatherr | 13 | 0 | YES |
-| 750 | msvcrt.dll | _amsg_exit | 13 | 0 | YES |
-| 751 | msvcrt.dll | _cexit | 13 | 0 | YES |
-| 752 | msvcrt.dll | _commode | 13 | 0 | YES |
-| 753 | msvcrt.dll | _fmode | 13 | 0 | YES |
-| 754 | msvcrt.dll | _initterm | 13 | 0 | YES |
-| 755 | msvcrt.dll | _onexit | 13 | 0 | YES |
-| 756 | msvcrt.dll | abort | 13 | 0 | YES |
-| 757 | msvcrt.dll | exit | 13 | 0 | YES |
-| 758 | msvcrt.dll | fprintf | 13 | 0 | YES |
-| 759 | msvcrt.dll | signal | 13 | 0 | YES |
-| 760 | msvcrt.dll | vfprintf | 13 | 0 | YES |
+| 745 | msvcrt.dll | __getmainargs | 14 | 0 | YES |
+| 746 | msvcrt.dll | __initenv | 14 | 0 | YES |
+| 747 | msvcrt.dll | __set_app_type | 14 | 0 | YES |
+| 748 | msvcrt.dll | __setusermatherr | 14 | 0 | YES |
+| 749 | msvcrt.dll | _amsg_exit | 14 | 0 | YES |
+| 750 | msvcrt.dll | _cexit | 14 | 0 | YES |
+| 751 | msvcrt.dll | _commode | 14 | 0 | YES |
+| 752 | msvcrt.dll | _fmode | 14 | 0 | YES |
+| 753 | msvcrt.dll | _initterm | 14 | 0 | YES |
+| 754 | msvcrt.dll | _onexit | 14 | 0 | YES |
+| 755 | msvcrt.dll | abort | 14 | 0 | YES |
+| 756 | msvcrt.dll | exit | 14 | 0 | YES |
+| 757 | msvcrt.dll | fprintf | 14 | 0 | YES |
+| 758 | msvcrt.dll | signal | 14 | 0 | YES |
+| 759 | msvcrt.dll | vfprintf | 14 | 0 | YES |
+| 760 | kernel32.dll | GetProcessId | 13 | 0 | YES |
 | 761 | advapi32.dll | ConvertSidToStringSidW | 12 | 0 |  |
 | 762 | advapi32.dll | GetUserNameW | 12 | 0 |  |
 | 763 | advapi32.dll | IsTextUnicode | 12 | 0 |  |
@@ -872,94 +872,94 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 864 | kernel32.dll | GetLogicalDrives | 12 | 0 | YES |
 | 865 | kernel32.dll | InitializeConditionVariable | 12 | 0 | YES |
 | 866 | kernel32.dll | InterlockedPushEntrySList | 12 | 0 | YES |
-| 867 | kernel32.dll | OutputDebugStringW | 12 | 0 | YES |
-| 868 | kernel32.dll | SetEnvironmentVariableA | 12 | 0 | YES |
-| 869 | kernel32.dll | SleepEx | 12 | 0 | YES |
-| 870 | kernel32.dll | SystemTimeToTzSpecificLocalTime | 12 | 0 | YES |
-| 871 | ntdll.dll | NtQueryInformationFile | 12 | 0 | YES |
-| 872 | ntdll.dll | NtWriteFile | 12 | 0 | YES |
-| 873 | user32.dll | CreateCaret | 12 | 0 | YES |
-| 874 | user32.dll | DestroyCaret | 12 | 0 | YES |
-| 875 | user32.dll | GetClipboardData | 12 | 0 | YES |
-| 876 | user32.dll | GetWindowLongPtrA | 12 | 0 | YES |
-| 877 | user32.dll | IsWindow | 12 | 0 | YES |
-| 878 | user32.dll | PostMessageA | 12 | 0 | YES |
-| 879 | user32.dll | SetCaretPos | 12 | 0 | YES |
-| 880 | user32.dll | SetWindowLongPtrA | 12 | 0 | YES |
-| 881 | ws2_32.dll | freeaddrinfo | 12 | 0 | YES |
-| 882 | ws2_32.dll | getaddrinfo | 12 | 0 | YES |
-| 883 | api-ms-win-core-synch-l1-2-0.dll | WaitOnAddress | 12 | 2 |  |
-| 884 | api-ms-win-core-synch-l1-2-0.dll | WakeByAddressSingle | 12 | 2 |  |
-| 885 | api-ms-win-crt-convert-l1-1-0.dll | atoi | 12 | 2 |  |
-| 886 | api-ms-win-crt-convert-l1-1-0.dll | wcstoul | 12 | 2 |  |
-| 887 | api-ms-win-crt-filesystem-l1-1-0.dll | remove | 12 | 2 |  |
-| 888 | api-ms-win-crt-heap-l1-1-0.dll | realloc | 12 | 2 |  |
-| 889 | api-ms-win-crt-locale-l1-1-0.dll | ___lc_codepage_func | 12 | 2 |  |
-| 890 | api-ms-win-crt-locale-l1-1-0.dll | ___mb_cur_max_func | 12 | 2 |  |
-| 891 | api-ms-win-crt-locale-l1-1-0.dll | __pctype_func | 12 | 2 |  |
-| 892 | api-ms-win-crt-locale-l1-1-0.dll | setlocale | 12 | 2 |  |
-| 893 | api-ms-win-crt-runtime-l1-1-0.dll | _controlfp_s | 12 | 2 |  |
-| 894 | api-ms-win-crt-stdio-l1-1-0.dll | __stdio_common_vsnprintf_s | 12 | 2 |  |
-| 895 | api-ms-win-crt-stdio-l1-1-0.dll | __stdio_common_vswprintf | 12 | 2 |  |
-| 896 | api-ms-win-crt-stdio-l1-1-0.dll | _fileno | 12 | 2 |  |
-| 897 | api-ms-win-crt-stdio-l1-1-0.dll | _wfopen | 12 | 2 |  |
-| 898 | api-ms-win-crt-stdio-l1-1-0.dll | fgets | 12 | 2 |  |
-| 899 | api-ms-win-crt-stdio-l1-1-0.dll | fputs | 12 | 2 |  |
-| 900 | api-ms-win-crt-stdio-l1-1-0.dll | fputwc | 12 | 2 |  |
-| 901 | api-ms-win-crt-stdio-l1-1-0.dll | fread | 12 | 2 |  |
-| 902 | api-ms-win-crt-stdio-l1-1-0.dll | fseek | 12 | 2 |  |
-| 903 | api-ms-win-crt-stdio-l1-1-0.dll | fwrite | 12 | 2 |  |
-| 904 | api-ms-win-crt-stdio-l1-1-0.dll | setvbuf | 12 | 2 |  |
-| 905 | api-ms-win-crt-string-l1-1-0.dll | _strdup | 12 | 2 |  |
-| 906 | api-ms-win-crt-string-l1-1-0.dll | _stricmp | 12 | 2 |  |
-| 907 | api-ms-win-crt-string-l1-1-0.dll | strncmp | 12 | 2 |  |
-| 908 | api-ms-win-crt-string-l1-1-0.dll | wcscmp | 12 | 2 |  |
-| 909 | api-ms-win-crt-string-l1-1-0.dll | wcscpy_s | 12 | 2 |  |
-| 910 | api-ms-win-crt-string-l1-1-0.dll | wcsnlen | 12 | 2 |  |
-| 911 | api-ms-win-crt-time-l1-1-0.dll | _gmtime64_s | 12 | 2 |  |
-| 912 | api-ms-win-crt-utility-l1-1-0.dll | qsort | 12 | 2 |  |
-| 913 | dbghelp.dll | SymLoadModuleEx | 12 | 2 |  |
-| 914 | dbghelp.dll | SymRegisterFunctionEntryCallback64 | 12 | 2 |  |
-| 915 | kernelbase.dll | CreateEventW | 12 | 2 |  |
-| 916 | kernelbase.dll | DeleteFileW | 12 | 2 |  |
-| 917 | kernelbase.dll | FindClose | 12 | 2 |  |
-| 918 | kernelbase.dll | FindFirstFileW | 12 | 2 |  |
-| 919 | kernelbase.dll | FindNextFileW | 12 | 2 |  |
-| 920 | kernelbase.dll | GetSystemDirectoryW | 12 | 2 |  |
-| 921 | kernelbase.dll | LocalFree | 12 | 2 |  |
-| 922 | kernelbase.dll | MoveFileExW | 12 | 2 |  |
-| 923 | kernelbase.dll | RemoveDirectoryW | 12 | 2 |  |
-| 924 | kernelbase.dll | ResetEvent | 12 | 2 |  |
-| 925 | kernelbase.dll | SetCurrentDirectoryW | 12 | 2 |  |
-| 926 | kernelbase.dll | SetEvent | 12 | 2 |  |
-| 927 | kernelbase.dll | TerminateProcess | 12 | 2 |  |
-| 928 | kernelbase.dll | WaitForMultipleObjects | 12 | 2 |  |
-| 929 | kernelbase.dll | lstrcmpiW | 12 | 2 |  |
-| 930 | psapi.dll | GetModuleFileNameExW | 12 | 2 |  |
-| 931 | rpcrt4.dll | NdrServerCall2 | 12 | 2 |  |
-| 932 | rpcrt4.dll | RpcMgmtStopServerListening | 12 | 2 |  |
-| 933 | rpcrt4.dll | RpcServerListen | 12 | 2 |  |
-| 934 | rpcrt4.dll | RpcServerRegisterIf | 12 | 2 |  |
-| 935 | rpcrt4.dll | RpcServerUnregisterIf | 12 | 2 |  |
-| 936 | ucrtbase.dll | strtoul | 12 | 2 |  |
-| 937 | win32u.dll | NtUserMessageCall | 12 | 2 |  |
-| 938 | wininet.dll | HttpOpenRequestA | 12 | 2 |  |
-| 939 | wininet.dll | HttpQueryInfoA | 12 | 2 |  |
-| 940 | wininet.dll | HttpSendRequestA | 12 | 2 |  |
-| 941 | wininet.dll | InternetCloseHandle | 12 | 2 |  |
-| 942 | wininet.dll | InternetConnectA | 12 | 2 |  |
-| 943 | wininet.dll | InternetCrackUrlA | 12 | 2 |  |
-| 944 | wininet.dll | InternetOpenA | 12 | 2 |  |
-| 945 | ucrtbase.dll | _wcslwr | 12 | 2 | YES |
-| 946 | kernel32.dll | IsDBCSLeadByteEx | 11 | 0 | YES |
-| 947 | msvcrt.dll | ___lc_codepage_func | 11 | 0 | YES |
-| 948 | msvcrt.dll | ___mb_cur_max_func | 11 | 0 | YES |
-| 949 | msvcrt.dll | _errno | 11 | 0 | YES |
-| 950 | msvcrt.dll | _lock | 11 | 0 | YES |
-| 951 | msvcrt.dll | _unlock | 11 | 0 | YES |
-| 952 | msvcrt.dll | fputc | 11 | 0 | YES |
-| 953 | msvcrt.dll | localeconv | 11 | 0 | YES |
-| 954 | msvcrt.dll | strerror | 11 | 0 | YES |
+| 867 | kernel32.dll | IsDBCSLeadByteEx | 12 | 0 | YES |
+| 868 | kernel32.dll | OutputDebugStringW | 12 | 0 | YES |
+| 869 | kernel32.dll | SetEnvironmentVariableA | 12 | 0 | YES |
+| 870 | kernel32.dll | SleepEx | 12 | 0 | YES |
+| 871 | kernel32.dll | SystemTimeToTzSpecificLocalTime | 12 | 0 | YES |
+| 872 | msvcrt.dll | ___lc_codepage_func | 12 | 0 | YES |
+| 873 | msvcrt.dll | ___mb_cur_max_func | 12 | 0 | YES |
+| 874 | msvcrt.dll | _errno | 12 | 0 | YES |
+| 875 | msvcrt.dll | _lock | 12 | 0 | YES |
+| 876 | msvcrt.dll | _unlock | 12 | 0 | YES |
+| 877 | msvcrt.dll | fputc | 12 | 0 | YES |
+| 878 | msvcrt.dll | localeconv | 12 | 0 | YES |
+| 879 | msvcrt.dll | strerror | 12 | 0 | YES |
+| 880 | ntdll.dll | NtQueryInformationFile | 12 | 0 | YES |
+| 881 | ntdll.dll | NtWriteFile | 12 | 0 | YES |
+| 882 | user32.dll | CreateCaret | 12 | 0 | YES |
+| 883 | user32.dll | DestroyCaret | 12 | 0 | YES |
+| 884 | user32.dll | GetClipboardData | 12 | 0 | YES |
+| 885 | user32.dll | GetWindowLongPtrA | 12 | 0 | YES |
+| 886 | user32.dll | IsWindow | 12 | 0 | YES |
+| 887 | user32.dll | PostMessageA | 12 | 0 | YES |
+| 888 | user32.dll | SetCaretPos | 12 | 0 | YES |
+| 889 | user32.dll | SetWindowLongPtrA | 12 | 0 | YES |
+| 890 | ws2_32.dll | freeaddrinfo | 12 | 0 | YES |
+| 891 | ws2_32.dll | getaddrinfo | 12 | 0 | YES |
+| 892 | api-ms-win-core-synch-l1-2-0.dll | WaitOnAddress | 12 | 2 |  |
+| 893 | api-ms-win-core-synch-l1-2-0.dll | WakeByAddressSingle | 12 | 2 |  |
+| 894 | api-ms-win-crt-convert-l1-1-0.dll | atoi | 12 | 2 |  |
+| 895 | api-ms-win-crt-convert-l1-1-0.dll | wcstoul | 12 | 2 |  |
+| 896 | api-ms-win-crt-filesystem-l1-1-0.dll | remove | 12 | 2 |  |
+| 897 | api-ms-win-crt-heap-l1-1-0.dll | realloc | 12 | 2 |  |
+| 898 | api-ms-win-crt-locale-l1-1-0.dll | ___lc_codepage_func | 12 | 2 |  |
+| 899 | api-ms-win-crt-locale-l1-1-0.dll | ___mb_cur_max_func | 12 | 2 |  |
+| 900 | api-ms-win-crt-locale-l1-1-0.dll | __pctype_func | 12 | 2 |  |
+| 901 | api-ms-win-crt-locale-l1-1-0.dll | setlocale | 12 | 2 |  |
+| 902 | api-ms-win-crt-runtime-l1-1-0.dll | _controlfp_s | 12 | 2 |  |
+| 903 | api-ms-win-crt-stdio-l1-1-0.dll | __stdio_common_vsnprintf_s | 12 | 2 |  |
+| 904 | api-ms-win-crt-stdio-l1-1-0.dll | __stdio_common_vswprintf | 12 | 2 |  |
+| 905 | api-ms-win-crt-stdio-l1-1-0.dll | _fileno | 12 | 2 |  |
+| 906 | api-ms-win-crt-stdio-l1-1-0.dll | _wfopen | 12 | 2 |  |
+| 907 | api-ms-win-crt-stdio-l1-1-0.dll | fgets | 12 | 2 |  |
+| 908 | api-ms-win-crt-stdio-l1-1-0.dll | fputs | 12 | 2 |  |
+| 909 | api-ms-win-crt-stdio-l1-1-0.dll | fputwc | 12 | 2 |  |
+| 910 | api-ms-win-crt-stdio-l1-1-0.dll | fread | 12 | 2 |  |
+| 911 | api-ms-win-crt-stdio-l1-1-0.dll | fseek | 12 | 2 |  |
+| 912 | api-ms-win-crt-stdio-l1-1-0.dll | fwrite | 12 | 2 |  |
+| 913 | api-ms-win-crt-stdio-l1-1-0.dll | setvbuf | 12 | 2 |  |
+| 914 | api-ms-win-crt-string-l1-1-0.dll | _strdup | 12 | 2 |  |
+| 915 | api-ms-win-crt-string-l1-1-0.dll | _stricmp | 12 | 2 |  |
+| 916 | api-ms-win-crt-string-l1-1-0.dll | strncmp | 12 | 2 |  |
+| 917 | api-ms-win-crt-string-l1-1-0.dll | wcscmp | 12 | 2 |  |
+| 918 | api-ms-win-crt-string-l1-1-0.dll | wcscpy_s | 12 | 2 |  |
+| 919 | api-ms-win-crt-string-l1-1-0.dll | wcsnlen | 12 | 2 |  |
+| 920 | api-ms-win-crt-time-l1-1-0.dll | _gmtime64_s | 12 | 2 |  |
+| 921 | api-ms-win-crt-utility-l1-1-0.dll | qsort | 12 | 2 |  |
+| 922 | dbghelp.dll | SymLoadModuleEx | 12 | 2 |  |
+| 923 | dbghelp.dll | SymRegisterFunctionEntryCallback64 | 12 | 2 |  |
+| 924 | kernelbase.dll | CreateEventW | 12 | 2 |  |
+| 925 | kernelbase.dll | DeleteFileW | 12 | 2 |  |
+| 926 | kernelbase.dll | FindClose | 12 | 2 |  |
+| 927 | kernelbase.dll | FindFirstFileW | 12 | 2 |  |
+| 928 | kernelbase.dll | FindNextFileW | 12 | 2 |  |
+| 929 | kernelbase.dll | GetSystemDirectoryW | 12 | 2 |  |
+| 930 | kernelbase.dll | LocalFree | 12 | 2 |  |
+| 931 | kernelbase.dll | MoveFileExW | 12 | 2 |  |
+| 932 | kernelbase.dll | RemoveDirectoryW | 12 | 2 |  |
+| 933 | kernelbase.dll | ResetEvent | 12 | 2 |  |
+| 934 | kernelbase.dll | SetCurrentDirectoryW | 12 | 2 |  |
+| 935 | kernelbase.dll | SetEvent | 12 | 2 |  |
+| 936 | kernelbase.dll | TerminateProcess | 12 | 2 |  |
+| 937 | kernelbase.dll | WaitForMultipleObjects | 12 | 2 |  |
+| 938 | kernelbase.dll | lstrcmpiW | 12 | 2 |  |
+| 939 | psapi.dll | GetModuleFileNameExW | 12 | 2 |  |
+| 940 | rpcrt4.dll | NdrServerCall2 | 12 | 2 |  |
+| 941 | rpcrt4.dll | RpcMgmtStopServerListening | 12 | 2 |  |
+| 942 | rpcrt4.dll | RpcServerListen | 12 | 2 |  |
+| 943 | rpcrt4.dll | RpcServerRegisterIf | 12 | 2 |  |
+| 944 | rpcrt4.dll | RpcServerUnregisterIf | 12 | 2 |  |
+| 945 | ucrtbase.dll | strtoul | 12 | 2 |  |
+| 946 | win32u.dll | NtUserMessageCall | 12 | 2 |  |
+| 947 | wininet.dll | HttpOpenRequestA | 12 | 2 |  |
+| 948 | wininet.dll | HttpQueryInfoA | 12 | 2 |  |
+| 949 | wininet.dll | HttpSendRequestA | 12 | 2 |  |
+| 950 | wininet.dll | InternetCloseHandle | 12 | 2 |  |
+| 951 | wininet.dll | InternetConnectA | 12 | 2 |  |
+| 952 | wininet.dll | InternetCrackUrlA | 12 | 2 |  |
+| 953 | wininet.dll | InternetOpenA | 12 | 2 |  |
+| 954 | ucrtbase.dll | _wcslwr | 12 | 2 | YES |
 | 955 | kernel32.dll | DeleteFileA | 10 | 0 | YES |
 | 956 | msvcrt.dll | strcmp | 10 | 0 | YES |
 | 957 | msvcrt.dll | _wcsicmp | 9 | 0 |  |
@@ -970,22 +970,22 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 962 | msvcrt.dll | towupper | 9 | 0 |  |
 | 963 | msvcrt.dll | wcscspn | 9 | 0 |  |
 | 964 | msvcrt.dll | wcsspn | 9 | 0 |  |
-| 965 | kernel32.dll | GetUserDefaultLangID | 9 | 0 | YES |
-| 966 | kernel32.dll | LocalAlloc | 9 | 0 | YES |
-| 967 | advapi32.dll | ChangeServiceConfig2W | 8 | 0 |  |
-| 968 | advapi32.dll | CopySid | 8 | 0 |  |
-| 969 | advapi32.dll | CreateProcessWithLogonW | 8 | 0 |  |
-| 970 | advapi32.dll | EnumDependentServicesW | 8 | 0 |  |
-| 971 | advapi32.dll | EnumServicesStatusExW | 8 | 0 |  |
-| 972 | advapi32.dll | GetFileSecurityW | 8 | 0 |  |
-| 973 | advapi32.dll | GetLengthSid | 8 | 0 |  |
-| 974 | advapi32.dll | GetSecurityDescriptorOwner | 8 | 0 |  |
-| 975 | advapi32.dll | GetServiceDisplayNameW | 8 | 0 |  |
-| 976 | advapi32.dll | ImpersonateLoggedOnUser | 8 | 0 |  |
-| 977 | advapi32.dll | LookupAccountSidW | 8 | 0 |  |
-| 978 | advapi32.dll | QueryServiceConfigW | 8 | 0 |  |
-| 979 | advapi32.dll | QueryServiceStatus | 8 | 0 |  |
-| 980 | advapi32.dll | RegCreateKeyA | 8 | 0 |  |
+| 965 | advapi32.dll | RegCreateKeyA | 9 | 0 | YES |
+| 966 | kernel32.dll | GetUserDefaultLangID | 9 | 0 | YES |
+| 967 | kernel32.dll | LocalAlloc | 9 | 0 | YES |
+| 968 | advapi32.dll | ChangeServiceConfig2W | 8 | 0 |  |
+| 969 | advapi32.dll | CopySid | 8 | 0 |  |
+| 970 | advapi32.dll | CreateProcessWithLogonW | 8 | 0 |  |
+| 971 | advapi32.dll | EnumDependentServicesW | 8 | 0 |  |
+| 972 | advapi32.dll | EnumServicesStatusExW | 8 | 0 |  |
+| 973 | advapi32.dll | GetFileSecurityW | 8 | 0 |  |
+| 974 | advapi32.dll | GetLengthSid | 8 | 0 |  |
+| 975 | advapi32.dll | GetSecurityDescriptorOwner | 8 | 0 |  |
+| 976 | advapi32.dll | GetServiceDisplayNameW | 8 | 0 |  |
+| 977 | advapi32.dll | ImpersonateLoggedOnUser | 8 | 0 |  |
+| 978 | advapi32.dll | LookupAccountSidW | 8 | 0 |  |
+| 979 | advapi32.dll | QueryServiceConfigW | 8 | 0 |  |
+| 980 | advapi32.dll | QueryServiceStatus | 8 | 0 |  |
 | 981 | advapi32.dll | RegFlushKey | 8 | 0 |  |
 | 982 | advapi32.dll | RegisterServiceCtrlHandlerA | 8 | 0 |  |
 | 983 | advapi32.dll | StartServiceCtrlDispatcherA | 8 | 0 |  |
@@ -1007,4 +1007,4 @@ Ranking: number of binaries importing the symbol from real game executables unde
 | 999 | gdi32.dll | CreateDCW | 8 | 0 |  |
 | 1000 | gdi32.dll | CreateEllipticRgn | 8 | 0 |  |
 
-Unique (dll, symbol) imports observed: 2605; top 1000 shown; 562 of those not yet implemented.
+Unique (dll, symbol) imports observed: 2605; top 1000 shown; 558 of those not yet implemented.

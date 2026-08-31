@@ -3901,6 +3901,28 @@ long Win32ApiHle::hle_reg_delete_value_a(u64 hKey, const char* lpValueName) {
     if (hKey < 0x100) return -87;
     return registry_delete_value(reinterpret_cast<void*>(hKey), lpValueName ? lpValueName : "");
 }
+long Win32ApiHle::hle_reg_delete_value_w(u64 hKey, const wchar_t* lpValueName) {
+    if (hKey < 0x100) return -87;
+    std::string n = lpValueName ? wchar_to_utf8(lpValueName) : "";
+    return registry_delete_value(reinterpret_cast<void*>(hKey), n.c_str());
+}
+long Win32ApiHle::hle_reg_delete_key_a(u64 hKey, const char* lpSubKey) {
+    return registry_delete_key(static_cast<u32>(hKey), lpSubKey ? lpSubKey : "");
+}
+long Win32ApiHle::hle_reg_delete_key_w(u64 hKey, const wchar_t* lpSubKey) {
+    std::string s = lpSubKey ? wchar_to_utf8(lpSubKey) : "";
+    return registry_delete_key(static_cast<u32>(hKey), s.c_str());
+}
+long Win32ApiHle::hle_reg_create_key_a(u64 hKey, const char* lpSubKey, u64* phkResult) {
+    void* out = nullptr;
+    long r = registry_open_key(static_cast<u32>(hKey), lpSubKey ? lpSubKey : "", true, &out);
+    if (phkResult) *phkResult = reinterpret_cast<u64>(out);
+    return r;
+}
+long Win32ApiHle::hle_reg_create_key_w(u64 hKey, const wchar_t* lpSubKey, u64* phkResult) {
+    std::string s = lpSubKey ? wchar_to_utf8(lpSubKey) : "";
+    return hle_reg_create_key_a(hKey, s.c_str(), phkResult);
+}
 long Win32ApiHle::hle_reg_enum_value_a(u64 hKey, u32 dwIndex, char* lpName, u32* lpcchName,
                                        u32* lpType, u8* lpData, u32* lpcbData) {
     if (hKey < 0x100 || !lpName || !lpcchName) return -87;
@@ -7599,6 +7621,11 @@ Result<> Win32ApiHle::initialize() {
     register_function("ADVAPI32.dll", "RegSetValueExW",    reinterpret_cast<void*>(&hle_reg_set_value_ex_w));
     register_function("ADVAPI32.dll", "RegCloseKey",       reinterpret_cast<void*>(&hle_reg_close_key));
     register_function("ADVAPI32.dll", "RegDeleteValueA",   reinterpret_cast<void*>(&hle_reg_delete_value_a));
+    register_function("ADVAPI32.dll", "RegDeleteValueW",   reinterpret_cast<void*>(&hle_reg_delete_value_w));
+    register_function("ADVAPI32.dll", "RegDeleteKeyA",     reinterpret_cast<void*>(&hle_reg_delete_key_a));
+    register_function("ADVAPI32.dll", "RegDeleteKeyW",     reinterpret_cast<void*>(&hle_reg_delete_key_w));
+    register_function("ADVAPI32.dll", "RegCreateKeyA",     reinterpret_cast<void*>(&hle_reg_create_key_a));
+    register_function("ADVAPI32.dll", "RegCreateKeyW",     reinterpret_cast<void*>(&hle_reg_create_key_w));
     register_function("ADVAPI32.dll", "RegGetValueA",      reinterpret_cast<void*>(&hle_reg_get_value_a));
     register_function("ADVAPI32.dll", "RegGetValueW",      reinterpret_cast<void*>(&hle_reg_get_value_a));
     register_function("ADVAPI32.dll", "RegDisablePredefinedCache", reinterpret_cast<void*>(&hle_reg_disable_predefined_cache));

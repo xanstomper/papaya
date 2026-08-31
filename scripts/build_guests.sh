@@ -30,6 +30,8 @@ build wfopen_path
 build ucrt_wide
 # kernel32 file-mapping + string/misc batch
 build kernel32_mapfile
+# advapi32 registry create/delete-key + delete-value
+build reg_create_delete -ladvapi32
 # window / message pump suite
 build msgpump_test -luser32 -lgdi32
 build strgl_test   -luser32 -lgdi32

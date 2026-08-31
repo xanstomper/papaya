@@ -19,6 +19,10 @@ namespace papaya::win32 {
 // path uses '\\' separators; empty path opens the root itself.
 s32 registry_open_key(u32 root_handle, const char* path, bool create, void** out_key);
 s32 registry_close_key(void* key);
+// Delete a subkey (and its whole subtree) under root_handle at the given path.
+// Returns 0 (ERROR_SUCCESS), -2 (ERROR_FILE_NOT_FOUND) if absent, -5 (ACCESS
+// DENIED) if asked to delete a predefined root.
+s32 registry_delete_key(u32 root_handle, const char* path);
 // Set/query a REG_SZ / REG_DWORD value. type 1=REG_SZ, 4=REG_DWORD.
 s32 registry_set_value(void* key, const char* name, u32 type, const void* data, u32 cb);
 s32 registry_query_value(void* key, const char* name, u32* type_out, void* data, u32* cb_inout);

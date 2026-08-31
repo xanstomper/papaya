@@ -8,7 +8,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 
 | DLL | total | real | stub | callable | implemented% | callable% | status |
 |---|---:|---:|---:|---:|---:|---:|---|
-| advapi32.dll | 880 | 26 | 0 | 26 | 3% | 3% | LOW |
+| advapi32.dll | 880 | 31 | 0 | 31 | 4% | 4% | LOW |
 | bcrypt.dll | 76 | 1 | 65 | 66 | 1% | 87% | LOW |
 | comdlg32.dll | 38 | 0 | 0 | 0 | 0% | 0% | NONE |
 | crypt32.dll | 310 | 5 | 295 | 300 | 2% | 97% | LOW |
@@ -45,7 +45,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | xinput1_3.dll | 20 | 7 | 0 | 7 | 35% | 35% | PARTIAL |
 | xinput1_4.dll | 19 | 7 | 0 | 7 | 37% | 37% | PARTIAL |
 | xinput9_1_0.dll | 16 | 3 | 0 | 3 | 19% | 19% | LOW |
-| **TOTAL** | **13397** | **823** | **2172** | **2995** | **6%** | **22%** | |
+| **TOTAL** | **13397** | **828** | **2172** | **3000** | **6%** | **22%** | |
 
 ## Notes
 
