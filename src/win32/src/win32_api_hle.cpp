@@ -275,6 +275,157 @@ BOOL Win32ApiHle::hle_virtual_protect(void* lpAddress, size_t dwSize, u32 flNewP
     return (mprotect(lpAddress, dwSize, prot) == 0) ? TRUE_VAL : FALSE_VAL;
 }
 
+// Memory-mapped file support: CreateFileMapping -> MapViewOfFile ->
+// UnmapViewOfFile backed by host mmap over the guest fd (CreateFile HANDLE).
+// The fd handle from hle_create_file_a is stored directly; mappings are kept
+// so UnmapViewOfFile can munmap by base address. Note: guest "handle" is the
+// host fd int; hFile==(void*)-1 means anonymous (page-file backed) mapping.
+static std::mutex g_mmap_mutex;
+static std::unordered_map<void*, size_t> g_mmap_views;
+static std::unordered_map<HANDLE, size_t> g_mapping_sizes;  // hMapping -> bytes
+
+HANDLE Win32ApiHle::hle_create_file_mapping_a(void* hFile, void* lpFileMappingAttributes, u32 flProtect, u32 dwMaximumSizeHigh, u32 dwMaximumSizeLow, const char* lpName) {
+    (void)lpFileMappingAttributes; (void)flProtect; (void)lpName;
+    u64 size = (u64(dwMaximumSizeHigh) << 32) | dwMaximumSizeLow;
+    if (size == 0) {
+        // Size 0 => map the whole file: query its length.
+        if (hFile && hFile != reinterpret_cast<void*>(-1)) {
+            struct stat st{}; if (fstat(static_cast<int>(reinterpret_cast<uintptr_t>(hFile)), &st) == 0) size = static_cast<u64>(st.st_size);
+        }
+        if (size == 0) size = 4096;
+    }
+    // Return a tokenized handle: use the (fd if valid), else a synthetic id.
+    HANDLE h;
+    if (hFile && hFile != reinterpret_cast<void*>(-1)) h = hFile;
+    else h = reinterpret_cast<HANDLE>(0x2000 + (g_mapping_sizes.size() % 64));
+    {
+        std::lock_guard<std::mutex> lock(g_mmap_mutex);
+        g_mapping_sizes[h] = static_cast<size_t>(size);
+    }
+    return h;
+}
+
+HANDLE Win32ApiHle::hle_create_file_mapping_w(void* hFile, void* lpFileMappingAttributes, u32 flProtect, u32 dwMaximumSizeHigh, u32 dwMaximumSizeLow, const wchar_t* lpName) {
+    (void)lpName;
+    return hle_create_file_mapping_a(hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, nullptr);
+}
+
+void* Win32ApiHle::hle_map_view_of_file(void* hMappingObject, u32 dwDesiredAccess, u32 dwFileOffsetHigh, u32 dwFileOffsetLow, size_t dwNumberOfBytesToMap) {
+    (void)dwDesiredAccess;
+    u64 offset = (u64(dwFileOffsetHigh) << 32) | dwFileOffsetLow;
+    size_t bytes = dwNumberOfBytesToMap;
+    size_t mapping_size = 0;
+    HANDLE fd_handle = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_mmap_mutex);
+        auto it = g_mapping_sizes.find(hMappingObject);
+        if (it != g_mapping_sizes.end()) mapping_size = it->second;
+        fd_handle = hMappingObject;
+    }
+    int fd = -1;
+    bool anonymous = (reinterpret_cast<uintptr_t>(fd_handle) >= 0x2000);
+    if (!anonymous) fd = static_cast<int>(reinterpret_cast<uintptr_t>(fd_handle));
+    if (bytes == 0) bytes = (mapping_size > offset) ? mapping_size - static_cast<size_t>(offset) : mapping_size;
+
+    void* addr = nullptr;
+    if (anonymous) {
+        addr = mmap(nullptr, (bytes + 4095) & ~4095ul, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    } else {
+        void* base = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, static_cast<off_t>(offset));
+        addr = base;
+    }
+    if (addr == MAP_FAILED) { g_last_error = 8; return nullptr; }
+    {
+        std::lock_guard<std::mutex> lock(g_mmap_mutex);
+        g_mmap_views[addr] = bytes;
+    }
+    return addr;
+}
+
+void* Win32ApiHle::hle_map_view_of_file_ex(HANDLE hMappingObject, u32 dwDesiredAccess, u64 dwFileOffset, size_t dwNumberOfBytesToMap, void* lpBaseAddress, u32 dwFlags) {
+    (void)lpBaseAddress; (void)dwFlags;
+    return hle_map_view_of_file(hMappingObject, dwDesiredAccess,
+                                static_cast<u32>(dwFileOffset >> 32), static_cast<u32>(dwFileOffset & 0xFFFFFFFF),
+                                dwNumberOfBytesToMap);
+}
+
+BOOL Win32ApiHle::hle_unmap_view_of_file(void* lpBaseAddress) {
+    if (!lpBaseAddress) return FALSE_VAL;
+    size_t bytes = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_mmap_mutex);
+        auto it = g_mmap_views.find(lpBaseAddress);
+        if (it != g_mmap_views.end()) { bytes = it->second; g_mmap_views.erase(it); }
+    }
+    if (bytes > 0) munmap(lpBaseAddress, bytes);
+    return TRUE_VAL;
+}
+
+int Win32ApiHle::hle_lstrcmp_w(const wchar_t* a, const wchar_t* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    const uint16_t* A = reinterpret_cast<const uint16_t*>(a);
+    const uint16_t* B = reinterpret_cast<const uint16_t*>(b);
+    for (;;) { if (*A != *B) return (int)*A - (int)*B; if (*A == 0) return 0; ++A; ++B; }
+}
+int Win32ApiHle::hle_lstrcmpi_a(const char* a, const char* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    return strcasecmp(a, b);
+}
+int Win32ApiHle::hle_lstrcmpi_w(const wchar_t* a, const wchar_t* b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    const uint16_t* A = reinterpret_cast<const uint16_t*>(a);
+    const uint16_t* B = reinterpret_cast<const uint16_t*>(b);
+    for (;;) { uint16_t ca = (uint16_t)((*A >= 'A' && *A <= 'Z') ? *A + 32 : *A);
+               uint16_t cb = (uint16_t)((*B >= 'A' && *B <= 'Z') ? *B + 32 : *B);
+               if (ca != cb) return (int)ca - (int)cb; if (ca == 0) return 0; ++A; ++B; }
+}
+int Win32ApiHle::hle_mul_div(int nNumber, int nNumerator, int nDenominator) {
+    if (nDenominator == 0) { g_last_error = 11 /*DIVIDE_BY_ZERO*/; return -1; }
+    return static_cast<int>((static_cast<long long>(nNumber) * nNumerator) / nDenominator);
+}
+BOOL Win32ApiHle::hle_is_wow64_process(void* hProcess, void* lpfIsWow64Process) {
+    (void)hProcess;
+    if (lpfIsWow64Process) *static_cast<BOOL*>(lpfIsWow64Process) = FALSE_VAL;
+    return TRUE_VAL;   // x64-native, not running under WoW64
+}
+BOOL Win32ApiHle::hle_is_bad_string_ptr_a(const void* ptr, u32 size) {
+    if (!ptr) return TRUE_VAL;
+    if (size != 0) { return (memchr(ptr, 0, size) == nullptr) ? TRUE_VAL : FALSE_VAL; }
+    const char* p = static_cast<const char*>(ptr); const char* e = p + 4096;
+    while (p < e) { if (*p == 0) return FALSE_VAL; ++p; }
+    return TRUE_VAL;
+}
+BOOL Win32ApiHle::hle_is_bad_string_ptr_w(const void* ptr, u32 size) {
+    if (!ptr) return TRUE_VAL;
+    const uint16_t* p = static_cast<const uint16_t*>(ptr);
+    const uint16_t* e = p + (size ? size / 2 : 2048);
+    while (p < e) { if (*p == 0) return FALSE_VAL; ++p; }
+    return TRUE_VAL;
+}
+u32 Win32ApiHle::hle_get_temp_path_w(u32 nBufferLength, wchar_t* lpBuffer) {
+    const char* tmp = getenv("TMPDIR"); if (!tmp || !*tmp) tmp = "/tmp";
+    uint16_t* dst = reinterpret_cast<uint16_t*>(lpBuffer);
+    size_t i = 0;
+    while (tmp[i] && i + 1 < nBufferLength) { dst[i] = (uint16_t)(unsigned char)tmp[i]; ++i; }
+    if (nBufferLength > i) dst[i++] = 0;
+    return static_cast<u32>(i);
+}
+u32 Win32ApiHle::hle_get_system_directory_w(void* lpBuffer, u32 nSize) {
+    // Expose the papaya_prefix drive_c\windows as the system dir.
+    const char* sys = "C:\\windows";
+    uint16_t* dst = reinterpret_cast<uint16_t*>(lpBuffer);
+    size_t i = 0;
+    while (sys[i] && i + 1 < nSize) { dst[i] = (uint16_t)(unsigned char)sys[i]; ++i; }
+    if (i + 1 <= nSize) dst[i++] = 0;
+    return static_cast<u32>(i);
+}
+
 HANDLE Win32ApiHle::hle_get_process_heap() {
     return reinterpret_cast<HANDLE>(0x1000);
 }
@@ -6879,6 +7030,23 @@ Result<> Win32ApiHle::initialize() {
     register_function("KERNEL32.DLL", "HeapReAlloc", reinterpret_cast<void*>(&hle_heap_realloc));
     register_function("KERNEL32.DLL", "LocalAlloc", reinterpret_cast<void*>(&hle_local_alloc));
     register_function("KERNEL32.DLL", "LocalFree", reinterpret_cast<void*>(&hle_local_free));
+
+    // Memory-mapped files
+    register_function("KERNEL32.DLL", "CreateFileMappingA",       reinterpret_cast<void*>(&hle_create_file_mapping_a));
+    register_function("KERNEL32.DLL", "CreateFileMappingW",       reinterpret_cast<void*>(&hle_create_file_mapping_w));
+    register_function("KERNEL32.DLL", "MapViewOfFile",            reinterpret_cast<void*>(&hle_map_view_of_file));
+    register_function("KERNEL32.DLL", "MapViewOfFileEx",          reinterpret_cast<void*>(&hle_map_view_of_file_ex));
+    register_function("KERNEL32.DLL", "UnmapViewOfFile",          reinterpret_cast<void*>(&hle_unmap_view_of_file));
+    // String + misc
+    register_function("KERNEL32.DLL", "lstrcmpW",                 reinterpret_cast<void*>(&hle_lstrcmp_w));
+    register_function("KERNEL32.DLL", "lstrcmpiA",                reinterpret_cast<void*>(&hle_lstrcmpi_a));
+    register_function("KERNEL32.DLL", "lstrcmpiW",                reinterpret_cast<void*>(&hle_lstrcmpi_w));
+    register_function("KERNEL32.DLL", "MulDiv",                   reinterpret_cast<void*>(&hle_mul_div));
+    register_function("KERNEL32.DLL", "IsWow64Process",           reinterpret_cast<void*>(&hle_is_wow64_process));
+    register_function("KERNEL32.DLL", "IsBadStringPtrA",          reinterpret_cast<void*>(&hle_is_bad_string_ptr_a));
+    register_function("KERNEL32.DLL", "IsBadStringPtrW",          reinterpret_cast<void*>(&hle_is_bad_string_ptr_w));
+    register_function("KERNEL32.DLL", "GetTempPathW",             reinterpret_cast<void*>(&hle_get_temp_path_w));
+    register_function("KERNEL32.DLL", "GetSystemDirectoryW",      reinterpret_cast<void*>(&hle_get_system_directory_w));
 
     register_function("KERNEL32.DLL", "TlsAlloc", reinterpret_cast<void*>(&hle_tls_alloc));
     register_function("KERNEL32.DLL", "TlsFree", reinterpret_cast<void*>(&hle_tls_free));

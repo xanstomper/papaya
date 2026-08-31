@@ -122,6 +122,22 @@ public:
     static PAPAYA_MS_ABI BOOL  hle_virtual_free(void* lpAddress, size_t dwSize, u32 dwFreeType);
     static PAPAYA_MS_ABI BOOL  hle_virtual_protect(void* lpAddress, size_t dwSize, u32 flNewProtect, u32* lpflOldProtect);
     static PAPAYA_MS_ABI HANDLE hle_get_process_heap();
+    // File mapping (CreateFileMapping / MapViewOfFile / UnmapViewOfFile)
+    static PAPAYA_MS_ABI HANDLE hle_create_file_mapping_a(void* hFile, void* lpFileMappingAttributes, u32 flProtect, u32 dwMaximumSizeHigh, u32 dwMaximumSizeLow, const char* lpName);
+    static PAPAYA_MS_ABI HANDLE hle_create_file_mapping_w(void* hFile, void* lpFileMappingAttributes, u32 flProtect, u32 dwMaximumSizeHigh, u32 dwMaximumSizeLow, const wchar_t* lpName);
+    static PAPAYA_MS_ABI void* hle_map_view_of_file(void* hMappingObject, u32 dwDesiredAccess, u32 dwFileOffsetHigh, u32 dwFileOffsetLow, size_t dwNumberOfBytesToMap);
+    static PAPAYA_MS_ABI void* hle_map_view_of_file_ex(HANDLE hMappingObject, u32 dwDesiredAccess, u64 dwFileOffset, size_t dwNumberOfBytesToMap, void* lpBaseAddress, u32 dwFlags);
+    static PAPAYA_MS_ABI BOOL  hle_unmap_view_of_file(void* lpBaseAddress);
+    // String / misc
+    static PAPAYA_MS_ABI int   hle_lstrcmp_w(const wchar_t* a, const wchar_t* b);
+    static PAPAYA_MS_ABI int   hle_lstrcmpi_a(const char* a, const char* b);
+    static PAPAYA_MS_ABI int   hle_lstrcmpi_w(const wchar_t* a, const wchar_t* b);
+    static PAPAYA_MS_ABI int   hle_mul_div(int nNumber, int nNumerator, int nDenominator);
+    static PAPAYA_MS_ABI BOOL  hle_is_wow64_process(void* hProcess, void* lpfIsWow64Process);
+    static PAPAYA_MS_ABI BOOL  hle_is_bad_string_ptr_a(const void* ptr, u32 size);
+    static PAPAYA_MS_ABI BOOL  hle_is_bad_string_ptr_w(const void* ptr, u32 size);
+    static PAPAYA_MS_ABI u32   hle_get_temp_path_w(u32 nBufferLength, wchar_t* lpBuffer);
+    static PAPAYA_MS_ABI u32   hle_get_system_directory_w(void* lpBuffer, u32 nSize);
     static PAPAYA_MS_ABI void* hle_heap_alloc(HANDLE hHeap, u32 dwFlags, size_t dwBytes);
     static PAPAYA_MS_ABI BOOL  hle_heap_free(HANDLE hHeap, u32 dwFlags, void* lpMem);
     static PAPAYA_MS_ABI void* hle_heap_realloc(HANDLE hHeap, u32 dwFlags, void* lpMem, size_t dwBytes);

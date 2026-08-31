@@ -27,7 +27,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | gdi32.dll | 970 | 35 | 0 | 35 | 4% | 4% | LOW |
 | imm32.dll | 149 | 6 | 0 | 6 | 4% | 4% | LOW |
 | iphlpapi.dll | 359 | 2 | 347 | 349 | 1% | 97% | LOW |
-| kernel32.dll | 1745 | 264 | 0 | 264 | 15% | 15% | LOW |
+| kernel32.dll | 1745 | 278 | 0 | 278 | 16% | 16% | LOW |
 | msvcrt.dll | 1423 | 192 | 0 | 192 | 13% | 13% | LOW |
 | ntdll.dll | 2344 | 15 | 0 | 15 | 1% | 1% | LOW |
 | ole32.dll | 539 | 16 | 0 | 16 | 3% | 3% | LOW |
@@ -45,7 +45,7 @@ Generated from the real mingw-w64 import libraries on this host (37 game-facing 
 | xinput1_3.dll | 20 | 7 | 0 | 7 | 35% | 35% | PARTIAL |
 | xinput1_4.dll | 19 | 7 | 0 | 7 | 37% | 37% | PARTIAL |
 | xinput9_1_0.dll | 16 | 3 | 0 | 3 | 19% | 19% | LOW |
-| **TOTAL** | **13397** | **809** | **2172** | **2981** | **6%** | **22%** | |
+| **TOTAL** | **13397** | **823** | **2172** | **2995** | **6%** | **22%** | |
 
 ## Notes
 
