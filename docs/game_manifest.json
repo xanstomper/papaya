@@ -1,0 +1,141 @@
+[
+  {
+    "game": "BillsMustBePaid",
+    "engine": "unity",
+    "bridge": "host-native-inprocess",
+    "pack": "D3D/IL2CPP",
+    "exe": "Bills Must Be Paid.exe",
+    "top_dlls": [
+      "kernel32.dll",
+      "unityplayer.dll"
+    ]
+  },
+  {
+    "game": "BuckshotRoulette",
+    "engine": "raw-win32",
+    "bridge": "host-native-inprocess",
+    "pack": "win32",
+    "exe": "Buckshot Roulette.exe",
+    "top_dlls": [
+      "advapi32.dll",
+      "avrt.dll",
+      "bcrypt.dll",
+      "crypt32.dll",
+      "dinput8.dll",
+      "dwmapi.dll",
+      "dwrite.dll",
+      "gdi32.dll",
+      "imm32.dll",
+      "iphlpapi.dll",
+      "kernel32.dll",
+      "ole32.dll",
+      "oleaut32.dll",
+      "opengl32.dll",
+      "shell32.dll",
+      "shlwapi.dll",
+      "steam_api64.dll",
+      "user32.dll",
+      "winmm.dll",
+      "ws2_32.dll",
+      "wsock32.dll"
+    ]
+  },
+  {
+    "game": "DwarfFortress",
+    "engine": "unknown",
+    "bridge": "n/a",
+    "pack": "n/a",
+    "exe": "?",
+    "top_dlls": []
+  },
+  {
+    "game": "DwarfFortressAI",
+    "engine": "unknown",
+    "bridge": "n/a",
+    "pack": "n/a",
+    "exe": "?",
+    "top_dlls": []
+  },
+  {
+    "game": "How to Fish",
+    "engine": "raw-win32",
+    "bridge": "host-native-inprocess",
+    "pack": "win32",
+    "exe": "How to Fish.exe",
+    "top_dlls": [
+      "kernel32.dll",
+      "unityplayer.dll"
+    ]
+  },
+  {
+    "game": "Mindustry",
+    "engine": "unknown",
+    "bridge": "n/a",
+    "pack": "n/a",
+    "exe": "?",
+    "top_dlls": []
+  },
+  {
+    "game": "RiskOfRain2",
+    "engine": "raw-win32",
+    "bridge": "host-native-inprocess",
+    "pack": "win32",
+    "exe": "Risk of Rain 2.exe",
+    "top_dlls": [
+      "kernel32.dll",
+      "unityplayer.dll"
+    ]
+  },
+  {
+    "game": "SlayTheSpire2",
+    "engine": "godot-mono",
+    "bridge": "host-native-inprocess(+CLR)",
+    "pack": "DLL",
+    "exe": "SlayTheSpire2.exe",
+    "top_dlls": [
+      "advapi32.dll",
+      "api-ms-win-core-synch-l1-2-0.dll",
+      "api-ms-win-crt-convert-l1-1-0.dll",
+      "api-ms-win-crt-environment-l1-1-0.dll",
+      "api-ms-win-crt-filesystem-l1-1-0.dll",
+      "api-ms-win-crt-heap-l1-1-0.dll",
+      "api-ms-win-crt-locale-l1-1-0.dll",
+      "api-ms-win-crt-math-l1-1-0.dll",
+      "api-ms-win-crt-multibyte-l1-1-0.dll",
+      "api-ms-win-crt-private-l1-1-0.dll",
+      "api-ms-win-crt-runtime-l1-1-0.dll",
+      "api-ms-win-crt-stdio-l1-1-0.dll",
+      "api-ms-win-crt-string-l1-1-0.dll",
+      "api-ms-win-crt-time-l1-1-0.dll",
+      "api-ms-win-crt-utility-l1-1-0.dll",
+      "avrt.dll",
+      "bcrypt.dll",
+      "crypt32.dll",
+      "dwmapi.dll",
+      "dwrite.dll",
+      "gdi32.dll",
+      "imm32.dll",
+      "iphlpapi.dll",
+      "kernel32.dll",
+      "ntdll.dll",
+      "ole32.dll",
+      "oleaut32.dll",
+      "shcore.dll",
+      "shell32.dll",
+      "shlwapi.dll",
+      "uiautomationcore.dll",
+      "user32.dll",
+      "winmm.dll",
+      "ws2_32.dll",
+      "wsock32.dll"
+    ]
+  },
+  {
+    "game": "TheoTown",
+    "engine": "java-jvm",
+    "bridge": "engine-bridge(JVM)",
+    "pack": "JAR",
+    "exe": "TheoTown.exe",
+    "top_dlls": []
+  }
+]
