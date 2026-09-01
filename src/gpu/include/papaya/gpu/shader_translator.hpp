@@ -217,6 +217,11 @@ bool sm4_decode(std::span<const u32> stream, std::vector<DecodedInstruction>& ou
 // lies for unsupported opcodes.
 bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out);
 
+// Complete standalone shader: #version 310 es + precision + global
+// declarations (uniforms, vec4 registers) + void main() { body }.
+// Compilable with glslang (validated in tests when GLSLANG_VALIDATOR is set).
+bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out);
+
 // FourCC helper ('SHEX' = 0x58454853 little-endian).
 inline u32 fourcc(char a, char b, char c, char d) {
     return static_cast<u32>(a) | (static_cast<u32>(b) << 8) |

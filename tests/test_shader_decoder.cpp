@@ -13,12 +13,14 @@
 #include "papaya/gpu/shader_translator.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 
 using papaya::gpu::sm4_decode;
 using papaya::gpu::sm4_emit_glsl;
+using papaya::gpu::sm4_emit_glsl_shader;
 using papaya::gpu::sm4_opcode_info;
 using papaya::gpu::sm4_opcode_name;
 using papaya::gpu::ShaderOpcode;
@@ -243,10 +245,10 @@ int main() {
         std::string gls;
         if (!sm4_emit_glsl({cins.data(), cins.size()}, gls)) return 32;
         const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
-        if (!has("if (any(v0.xxxx != vec4(0.0))) {")) return 33;
+        if (!has("if (any(notEqual(v0.xxxx, vec4(0.0)))) {")) return 33;
         if (!has("} else {")) return 34;
         if (!has("for (;;) {")) return 35;
-        if (!has("if (any(v0.yyyy != vec4(0.0))) break;")) return 36;
+        if (!has("if (any(notEqual(v0.yyyy, vec4(0.0)))) break;")) return 36;
         if (!has("discard;")) return 37;
         if (!has("continue;")) return 42;
         if (!has("    r0 = v0;") || !has("    r0 = v1;")) return 38;   // indented body
@@ -272,6 +274,12 @@ int main() {
     cb.push_back(operand(0x08, 2, 3, 0));              // CB reg, order 2
     cb.push_back(0);                                   // buffer 0
     cb.push_back(16);                                  // 16 vec4s
+    cb.push_back(inst(0x68, 2));                       // dcl_temps 4 (r0..r3)
+    cb.push_back(4);
+    cb.push_back(inst(0x59, 4));                       // dcl_constantbuffer cb1[8]
+    cb.push_back(operand(0x08, 2, 3, 0));
+    cb.push_back(1);
+    cb.push_back(8);
     cb.push_back(inst(0x36, 6));                       // mov r2.xyz, cb0[4].xyz
     cb.push_back(operand(0x00, 1, 3, 0x7));            // TEMP r2, mask .xyz
     cb.push_back(2);
@@ -289,14 +297,14 @@ int main() {
     cb.push_back(2);
     std::vector<DecodedInstruction> cbins;
     if (!sm4_decode({cb.data(), cb.size()}, cbins)) return 43;
-    if (cbins.size() != 3) return 44;
+    if (cbins.size() != 5) return 44;  // 2x dcl_cb + dcl_temps + mov + add
     {
         std::string gls;
         if (!sm4_emit_glsl({cbins.data(), cbins.size()}, gls)) return 45;
         const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
-        if (!has("uniform vec4 cb0[16];")) return 46;
-        if (!has("r2.xyz = cb0[4].xyz;")) return 47;
-        if (!has("r3.xy = (cb0[4].xy + cb1[2].xy);")) return 48;
+        if (!has("uniform cb0_b { vec4 data[16]; } cb0;")) return 46;
+        if (!has("r2.xyz = cb0.data[4].xyz;")) return 47;
+        if (!has("r3.xy = (cb0.data[4].xy + cb1.data[2].xy);")) return 48;
     }
 
     // --- textures (Stage 3b) ---
@@ -304,6 +312,12 @@ int main() {
     // sample r0.xyzw, v0.xy, t0, s0
     // ld r1.xyzw, v1.xyzw, t0
     std::vector<u32> tx;
+    tx.push_back(inst(0x5F, 3));                       // dcl_input v0
+    tx.push_back(operand(0x01, 1, 3, 0xF)); tx.push_back(0);
+    tx.push_back(inst(0x5F, 3));                       // dcl_input v1
+    tx.push_back(operand(0x01, 1, 3, 0xF)); tx.push_back(1);
+    tx.push_back(inst(0x68, 2));                       // dcl_temps 2 (r0, r1)
+    tx.push_back(2);
     tx.push_back(inst(0x58, 4, 3));                    // dcl_resource: type 2D = 3
     tx.push_back(operand(0x07, 1, 3, 0));              // RESOURCE t0
     tx.push_back(0);
@@ -351,6 +365,13 @@ int main() {
     // sample_grad r4, v5.xy, t0, s0, v6.xy, v7.xy
     // sample_c r5, v8.xy, t1, s1, v9.x
     std::vector<u32> sv;
+    for (u32 vi = 2; vi <= 9; ++vi) {                 // dcl_input v2..v9
+        sv.push_back(inst(0x5F, 3));
+        sv.push_back(operand(0x01, 1, 3, 0xF));
+        sv.push_back(vi);
+    }
+    sv.push_back(inst(0x68, 2));                       // dcl_temps 6 (r0..r5)
+    sv.push_back(6);
     sv.push_back(inst(0x58, 4, 3));                    // dcl_resource t0
     sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(0); sv.push_back(0x55555555);
     sv.push_back(inst(0x5A, 3));                       // dcl_sampler s0 (default)
@@ -412,6 +433,33 @@ int main() {
     std::vector<DecodedInstruction> scins;
     if (!sm4_decode({sc.data(), sc.size()}, scins)) return 64;
     if (sm4_emit_glsl({scins.data(), scins.size()}, junk)) return 65;
+
+    // --- glslang validation (when GLSLANG_VALIDATOR is set) ---
+    // Every complete-shader emission above must COMPILE to SPIR-V with the
+    // real compiler: prove the emitted GLSL is not just string-matched.
+    if (const char* validator = std::getenv("GLSLANG_VALIDATOR"); validator && *validator) {
+        int n = 0;
+        const struct { std::vector<DecodedInstruction>* ins; const char* name; } cases[] = {
+            { &gins, "alu" }, { &cins, "flow" }, { &cbins, "cb" },
+            { &txins, "textures" }, { &svins, "variants" },
+        };
+        for (const auto& c : cases) {
+            std::string gls;
+            if (!sm4_emit_glsl_shader({c.ins->data(), c.ins->size()}, gls)) return 66 + n;
+            const std::string frag = std::string("/tmp/papaya_") + c.name + ".frag";
+            const std::string spv = std::string("/tmp/papaya_") + c.name + ".spv";
+            if (FILE* f = std::fopen(frag.c_str(), "w")) { std::fputs(gls.c_str(), f); std::fclose(f); }
+            const std::string cmd = std::string(validator) + " -V -S frag -o " + spv + " " + frag +
+                                    " >/tmp/papaya_glslang.log 2>&1";
+            if (std::system(cmd.c_str()) != 0) {
+                std::printf("fail: glslang rejected %s shader\n%s\n---log---\n", c.name, gls.c_str());
+                FILE* f = std::fopen("/tmp/papaya_glslang.log", "r");
+                if (f) { char buf[512]; while (std::fgets(buf, sizeof buf, f)) std::fputs(buf, stdout); std::fclose(f); }
+                return 66 + n;
+            }
+            ++n;
+        }
+    }
 
     std::printf("ok: decode+info+emit+control flow+cb+textures, malformed/unsupported rejected\n");
     return 0;

@@ -138,7 +138,7 @@ bool dxbc_to_glsl(std::span<const u8> data, std::string& out) {
     if (2u + count > c.shader_bytecode.size()) return false;
     std::vector<DecodedInstruction> decoded;
     if (!sm4_decode({c.shader_bytecode.data() + 2, count}, decoded)) return false;
-    return sm4_emit_glsl({decoded.data(), decoded.size()}, out);
+    return sm4_emit_glsl_shader({decoded.data(), decoded.size()}, out);
 }
 
 // ---- SM4/SM5 instruction decoder -------------------------------------------
@@ -393,7 +393,7 @@ std::string reg_ref(const DecodedOperand& op) {
 bool cb_expr(const DecodedOperand& op, std::string& out) {
     if (op.reg_type != 0x08 || op.rel.size() != 0 || op.indices.size() != 2)
         return false;
-    out += "cb" + std::to_string(op.indices[0]) + "[" + std::to_string(op.indices[1]) + "]";
+    out += "cb" + std::to_string(op.indices[0]) + ".data[" + std::to_string(op.indices[1]) + "]";
     return true;
 }
 
@@ -475,13 +475,33 @@ std::string pad(int indent) { return std::string(static_cast<size_t>(indent) * 4
 
 } // namespace
 
-bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) {
-    out.clear();
-    out += "// papaya sm4->glsl (Stage 2c/2d/3: ALU + control flow + textures)\n";
+// EmitMode: kAll = body-only output (legacy), kDecl = declarations only,
+// kBody = statements only (used by the complete-shader wrapper).
+enum class EmitMode { kAll, kDecl, kBody };
+
+static bool sm4_dcl_like(ShaderOpcode op) {
+    switch (op) {
+        case ShaderOpcode::DclTemps:
+        case ShaderOpcode::DclInput:
+        case ShaderOpcode::DclOutput:
+        case ShaderOpcode::DclGlobalFlags:
+        case ShaderOpcode::DclConstantBuffer:
+        case ShaderOpcode::DclSampler:
+        case ShaderOpcode::DclResource:
+        case ShaderOpcode::DclIndexableTemp:
+        case ShaderOpcode::DclIndexRange:
+        case ShaderOpcode::DclOutputTopology:
+        case ShaderOpcode::DclInputPrimitive:
+        case ShaderOpcode::DclVerticesOut:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool emit_sm4_stream(std::span<const DecodedInstruction> insns, std::string& out,
+        EmitMode mode, u32* res_type, bool* sam_cmp, bool* shadow_used) {
     int indent = 0;
-    u32 res_type[16] = {};       // tN -> resource type (from dcl_resource aux bits)
-    bool sam_cmp[16] = {};       // sN -> comparison sampler mode (dcl_sampler aux)
-    bool shadow_used[16] = {};   // tN sampled via comparison (sample_c)
     auto line = [&](std::string s) { out += pad(indent) + s + "\n"; };
     for (const auto& pre : insns)   // pre-scan: comparison sampling needs shadows
         if (pre.opcode == ShaderOpcode::SampleC && pre.operands.size() >= 3) {
@@ -489,6 +509,8 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             if (tidx < 16) shadow_used[tidx] = true;
         }
     for (const auto& ins : insns) {
+        if (mode == EmitMode::kDecl && !sm4_dcl_like(ins.opcode)) continue;
+        if (mode == EmitMode::kBody && sm4_dcl_like(ins.opcode)) continue;
         switch (ins.opcode) {
             case ShaderOpcode::DclTemps: {
                 const u32 count = ins.raw_words.empty() ? 0 : ins.raw_words[0];
@@ -534,21 +556,29 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 const u32 tidx = ins.operands[0].reg_index();
                 if (tidx >= 16) return false;
                 res_type[tidx] = rtype;
-                out += "uniform " + std::string(decl) + " t" + std::to_string(tidx) + ";\n";
+                // ES 3.x -> SPIR-V requires explicit sampler bindings.
+                out += "layout(binding = " + std::to_string(tidx) + ") uniform " +
+                       std::string(decl) + " t" + std::to_string(tidx) + ";\n";
                 if (shadow_used[tidx]) {
                     if (rtype != 3) return false;   // shadow only for sampler2D
-                    out += "uniform sampler2DShadow t" + std::to_string(tidx) + "_shadow;\n";
+                    out += "layout(binding = " + std::to_string(tidx) + ") uniform " +
+                           "sampler2DShadow t" + std::to_string(tidx) + "_shadow;\n";
                 }
                 break;
             }
             case ShaderOpcode::DclConstantBuffer: {
                 // dcl_constantbuffer cbN[M]: operand idx0 = buffer, idx1 = size
-                // in vec4 registers -> uniform vec4 cbN[M];
+                // in vec4 registers. Vulkan/SPIR-V requires UBOs (no plain
+                // non-opaque uniforms): std140 vec4 array (16-byte stride
+                // matches D3D cbuffer registers). Bindings 16+ avoid sampler
+                // bindings (0-15).
                 if (ins.operands.size() != 1 || ins.operands[0].indices.size() != 2)
                     return false;
                 const u32 buf = ins.operands[0].indices[0];
                 const u32 size = ins.operands[0].indices[1];
-                out += "uniform vec4 cb" + std::to_string(buf) + "[" + std::to_string(size) + "];\n";
+                out += "layout(std140, binding = " + std::to_string(16 + buf) + ") " +
+                       "uniform cb" + std::to_string(buf) + "_b { vec4 data[" +
+                       std::to_string(size) + "]; } cb" + std::to_string(buf) + ";\n";
                 break;
             }
             case ShaderOpcode::Mov:
@@ -743,7 +773,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
                 if (!src_expr(ins.operands[0], cond, "")) return false;
-                line("if (any(" + cond + " != vec4(0.0))) {");
+                line("if (any(notEqual(" + cond + ", vec4(0.0)))) {");
                 ++indent;
                 break;
             }
@@ -775,14 +805,14 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
                 if (!src_expr(ins.operands[0], cond, "")) return false;
-                line("if (any(" + cond + " != vec4(0.0))) break;");
+                line("if (any(notEqual(" + cond + ", vec4(0.0)))) break;");
                 break;
             }
             case ShaderOpcode::Continuec: {
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
                 if (!src_expr(ins.operands[0], cond, "")) return false;
-                line("if (any(" + cond + " != vec4(0.0))) continue;");
+                line("if (any(notEqual(" + cond + ", vec4(0.0)))) continue;");
                 break;
             }
             case ShaderOpcode::Discard:
@@ -795,7 +825,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
                 if (!src_expr(ins.operands[0], cond, "")) return false;
-                line("if (any(" + cond + " != vec4(0.0))) return;");
+                line("if (any(notEqual(" + cond + ", vec4(0.0)))) return;");
                 break;
             }
             case ShaderOpcode::Switch:
@@ -811,6 +841,40 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 return false;   // unsupported opcode: caller falls back
         }
     }
+    return true;
+}
+
+bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) {
+    out.clear();
+    out += "// papaya sm4->glsl (Stage 2c/2d/3: ALU + control flow + textures)\n";
+    u32 res_type[16] = {};
+    bool sam_cmp[16] = {};
+    bool shadow_used[16] = {};
+    return emit_sm4_stream(insns, out, EmitMode::kAll, res_type, sam_cmp, shadow_used);
+}
+
+bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out) {
+    out.clear();
+    out += "#version 310 es\n";   // must be the first line in ES-profile shaders
+    out += "// papaya sm4->glsl (complete shader)\n";
+    out += "precision highp float;\n";
+    out += "precision highp int;\n";
+    out += "precision highp sampler2D;\n";
+    out += "precision highp sampler3D;\n";
+    out += "precision highp samplerCube;\n";
+    out += "precision highp sampler2DArray;\n";
+    out += "precision highp sampler2DShadow;\n";
+    out += "precision highp samplerCubeShadow;\n";
+    out += "\n";
+    u32 res_type[16] = {};       // state shared between the decl and body passes
+    bool sam_cmp[16] = {};
+    bool shadow_used[16] = {};
+    if (!emit_sm4_stream(insns, out, EmitMode::kDecl, res_type, sam_cmp, shadow_used))
+        return false;
+    out += "\nvoid main() {\n";
+    if (!emit_sm4_stream(insns, out, EmitMode::kBody, res_type, sam_cmp, shadow_used))
+        return false;
+    out += "}\n";
     return true;
 }
 

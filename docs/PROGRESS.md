@@ -201,11 +201,28 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   pipeline-layout binding. test_d3d11_shaders drives the REAL ms_abi vtable
   with a real DXBC blob and asserts the GLSL, plus garbage-bytecode refusal.
   ctest 24/24, guest suite 21/21.
+- Stage 3e (done, verified): complete compilable shaders + REAL compiler
+  validation. `sm4_emit_glsl_shader()` emits a standalone shader (#version
+  310 es + precision (incl. samplers) + global declarations + void main()).
+  cbuffers became std140 UBOs (`uniform cbN_b { vec4 data[M]; } cbN;`, UBO
+  bindings 16+ to avoid sampler bindings 0-15) and samplers carry
+  layout(binding=N) — both required by glslang's Vulkan/SPIR-V profile. The
+  emitter also now produces GLSL ES-valid conditions (any(notEqual(..))) and
+  passes per-pass state (resource types, comparison samplers, shadow usage)
+  between the declaration and body passes. Validation: built glslang
+  (KhronosGroup/glslang, ENABLE_OPT=OFF) and made the tests shell out to it
+  when GLSLANG_VALIDATOR is set (scripts/verify_shader_glsl.sh). ALL FIVE
+  emitted shaders (ALU, control flow, cbuffers, textures, sample variants +
+  shadow) COMPILE to SPIR-V with zero errors. The compiler caught real bugs
+  this round: #version placement, missing sampler binding/precision, vector
+  != operator (ES forbids it), plain uniforms (Vulkan forbids them). This is
+  the first end-to-end acceptance: DXBC -> GLSL -> SPIR-V, compiler-verified.
+  ctest 24/24, guest suite 21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
-  resinfo/gather + 3D/array sample variants, then wiring the emitted GLSL
-  into glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan
-  pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline
-  stages).
+  resinfo/gather + 3D/array sample variants + DCL input-signature coupling
+  (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->
+  Vulkan pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline
+  stages, descriptors from the UBO/sampler bindings the emitter now emits).
 
 ## Hygiene standard (adopted)
 

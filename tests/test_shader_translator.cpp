@@ -7,6 +7,7 @@
 #include "papaya/gpu/shader_translator.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -132,25 +133,32 @@ int main() {
         return blob;
     };
 
-    // dcl_input v0; dcl_output o0; dcl_temps 2;
-    // mov r0, v0;  add o0, r0, l(1,2,3,4)
-    auto inst = [](u32 op, u32 len) { return ((len & 0x1Fu) << 24) | (op & 0xFFu); };
+    // dcl_input v0; dcl_output o0; dcl_temps 2; dcl_resource t0 (2D);
+    // dcl_sampler s0;
+    // mov r0, v0;  sample r1, v0.xy, t0, s0;  add o0, r0, r1
+    auto inst = [](u32 op, u32 len, u32 flags = 0) {
+        return ((len & 0x1Fu) << 24) | ((flags & 0x7u) << 11) | (op & 0xFFu);
+    };
     auto opd = [](u32 rt, u32 order, u32 dim, u32 mask, u32 sw) {
         return (rt << 12) | ((order & 3) << 20) | (dim & 3) | ((mask & 0xF) << 4) | sw;
     };
     auto swz = [](u32 x, u32 y, u32 z, u32 w) { return (x&3)<<4 | (y&3)<<6 | (z&3)<<8 | (w&3)<<10; };
-    auto fw = [](float f) { u32 x; std::memcpy(&x, &f, 4); return x; };
     const u32 kIdentity = swz(0, 1, 2, 3);
     std::vector<u32> stream = {
         inst(0x5F, 3), opd(1, 1, 3, 0xF, 0), 0,                   // dcl_input v0
         inst(0x65, 3), opd(2, 1, 3, 0xF, 0), 0,                   // dcl_output o0
         inst(0x68, 2), 2,                                        // dcl_temps 2
+        inst(0x58, 4, 3), opd(7, 1, 3, 0, 0), 0, 0x55555555,     // dcl_resource t0 (2D)
+        inst(0x5A, 3), opd(6, 1, 3, 0, 0), 0,                    // dcl_sampler s0
         inst(0x36, 5), opd(0, 1, 3, 0xF, 0), 0,
         opd(1, 1, 3, 0, kIdentity), 0,                           // mov r0, v0
-        inst(0x00, 10), opd(2, 1, 3, 0xF, 0), 0,
+        inst(0x45, 9), opd(0, 1, 3, 0xF, 0), 1,                  // sample r1, v0.xy, t0, s0
+        opd(1, 1, 3, 0, kIdentity), 0,
+        opd(7, 1, 3, 0, 0), 0,
+        opd(6, 1, 3, 0, 0), 0,
+        inst(0x00, 7), opd(2, 1, 3, 0xF, 0), 0,                  // add o0, r0, r1
         opd(0, 1, 3, 0, kIdentity), 0,
-        opd(4, 0, 3, 0, kIdentity),                               // immconst
-        fw(1.0f), fw(2.0f), fw(3.0f), fw(4.0f),                  // add o0, r0, l(1,2,3,4)
+        opd(0, 1, 3, 0, kIdentity), 1,
     };
     std::vector<u32> shdr = { 0x3000, static_cast<u32>(stream.size()) };
     shdr.insert(shdr.end(), stream.begin(), stream.end());
@@ -160,11 +168,40 @@ int main() {
         std::printf("fail: dxbc_to_glsl rejected valid shader\n"); return 8;
     }
     const auto has = [&](const char* s) { return glsl.find(s) != std::string::npos; };
-    if (!has("vec4 v0;") || !has("vec4 o0;") || !has("vec4 r0;") || !has("vec4 r1;")) {
-        std::printf("fail: missing declarations\n%s\n", glsl.c_str()); return 9;
+    if (!has("#version 310 es") || !has("void main()")) {
+        std::printf("fail: not a complete shader\n%s\n", glsl.c_str()); return 9;
     }
-    if (!has("r0 = v0;") || !has("o0 = (r0 + vec4(1.0, 2.0, 3.0, 4.0));")) {
-        std::printf("fail: wrong body\n%s\n", glsl.c_str()); return 10;
+    if (!has("vec4 v0;") || !has("vec4 o0;") || !has("vec4 r0;") || !has("vec4 r1;") ||
+        !has("uniform sampler2D t0;")) {
+        std::printf("fail: missing declarations\n%s\n", glsl.c_str()); return 10;
+    }
+    if (!has("r0 = v0;") || !has("r1 = texture(t0, v0.xy);") ||
+        !has("o0 = (r0 + r1);")) {
+        std::printf("fail: wrong body\n%s\n", glsl.c_str()); return 11;
+    }
+
+    // When GLSLANG_VALIDATOR is set (scripts/verify_shader_glsl.sh), prove the
+    // emitted shader COMPILES: glslang must produce SPIR-V with no errors.
+    if (const char* validator = std::getenv("GLSLANG_VALIDATOR"); validator && *validator) {
+        const char* frag = "/tmp/papaya_test_shader.frag";
+        const char* spv = "/tmp/papaya_test_shader.spv";
+        {
+            FILE* f = std::fopen(frag, "w");
+            if (f) { std::fputs(glsl.c_str(), f); std::fclose(f); }
+        }
+        std::string cmd = std::string(validator) + " -V -S frag -o " + spv + " " + frag +
+                          " >/tmp/papaya_glslang.log 2>&1";
+        const int rc = std::system(cmd.c_str());
+        bool has_spv = false;
+        if (FILE* f = std::fopen(spv, "rb")) {
+            has_spv = std::fseek(f, 0, SEEK_END) == 0 && std::ftell(f) > 0;
+            std::fclose(f);
+        }
+        if (rc != 0 || !has_spv) {
+            std::printf("fail: glslang rejected emitted shader (rc=%d)\n%s\n", rc,
+                        glsl.c_str());
+            return 12;
+        }
     }
 
     // Unsupported opcode inside a container must fail the whole translation.
