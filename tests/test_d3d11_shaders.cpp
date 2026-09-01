@@ -17,6 +17,9 @@ using papaya::win32::d3d11_context_pipeline_snapshot;
 using papaya::win32::d3d11_input_layout_count;
 using papaya::win32::d3d11_input_layout_element;
 using papaya::win32::d3d11_shader_get_spirv;
+using papaya::win32::d3d11_context_vertex_data;
+using papaya::win32::d3d11_context_draw_vertices;
+#include "papaya/gpu/vulkan_swapchain.hpp"
 using papaya::u8;
 using papaya::u32;
 using papaya::u64;
@@ -172,6 +175,42 @@ int main() {
     // Snapshot returns nulls from a null context.
     d3d11_context_pipeline_snapshot(nullptr, &got_vs, &got_ps, &got_layout);
     if (got_vs || got_ps || got_layout) { std::printf("fail: null ctx snapshot\n"); return 13; }
+
+    // ---- vertex input capture: CreateBuffer/Map/Unmap/IASetVertexBuffers ----
+    using create_buffer_t = D3DMS long (*)(void*, void*, void*);
+    using map_t = D3DMS long (*)(void*, void*, u32, u32, u32, void*);
+    using unmap_t = D3DMS void (*)(void*, void*, u32);
+    using ia_vb_t = D3DMS void (*)(void*, u32, u32, void**, u32*, u32*);
+    auto create_buffer = reinterpret_cast<create_buffer_t>(vtbl[3]);
+    auto map = reinterpret_cast<map_t>(ctx_vtbl[14]);
+    auto unmap = reinterpret_cast<unmap_t>(ctx_vtbl[15]);
+    auto ia_set_vb = reinterpret_cast<ia_vb_t>(ctx_vtbl[18]);
+    u32 buf_desc[6] = { 36, 0, 2, 0, 0, 0 };   // ByteWidth=36, BindFlags=VB
+    struct Mapped { void* p0; void* p1; void* p2; } mapped{};
+    void* vbuf = nullptr;
+    if (create_buffer(dev, buf_desc, &vbuf) != 0 || !vbuf) { std::printf("fail: CreateBuffer\n"); return 14; }
+    if (map(ctx, vbuf, 0, 0, 0, &mapped) != 0 || !mapped.p0) { std::printf("fail: Map\n"); return 15; }
+    const float tri[9] = { 0.0f, 0.5f, 0.0f, 0.5f, -0.5f, 0.0f, -0.5f, -0.5f, 0.0f };
+    std::memcpy(mapped.p0, tri, sizeof(tri));
+    unmap(ctx, vbuf, 0);
+    void* bufs[1] = { vbuf };
+    u32 strides[1] = { 12 }, offsets[1] = { 0 };
+    ia_set_vb(ctx, 0, 1, bufs, strides, offsets);
+
+    const u8* vdata = nullptr;
+    u32 vcount = 0, vstride = 0, voffset = 0;
+    d3d11_context_vertex_data(ctx, &vdata, &vcount, &vstride, &voffset);
+    if (!vdata || vcount != 3 || vstride != 12 || voffset != 0) {
+        std::printf("fail: vertex capture (%u, %u)\n", vcount, vstride); return 16;
+    }
+    float got[3];
+    std::memcpy(got, vdata, sizeof(got));
+    if (got[0] != 0.0f || got[1] != 0.5f) { std::printf("fail: vertex data\n"); return 17; }
+
+    // Draw glue: with an uninitialized swapchain it must refuse cleanly.
+    papaya::gpu::VulkanSwapchain no_swapchain;
+    if (d3d11_context_draw_vertices(ctx, &no_swapchain)) { std::printf("fail: draw without swapchain\n"); return 18; }
+    if (d3d11_context_draw_vertices(ctx, nullptr)) { std::printf("fail: draw null swapchain\n"); return 19; }
 
     std::printf("ok: shader + input-layout + pipeline-state through real vtables, garbage refused\n");
     return 0;

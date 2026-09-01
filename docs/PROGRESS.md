@@ -310,6 +310,21 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   before initialization; the rendered-frame acceptance stays on the
   offscreen path (Stage 4e). ctest 27/27, guest suite 21/21, glslang
   validation green.
+- Stage 4g (done, verified): win32 draw glue. The D3D11 layer now captures
+  the vertex input a real app sets up: ID3D11Device::CreateBuffer (vtbl 3,
+  D3D11_BUFFER_DESC), ID3D11DeviceContext::Map/Unmap (14/15, the guest
+  writes into the host storage), and IASetVertexBuffers (18, slot 0:
+  buffer + stride + offset). `d3d11_context_vertex_data` hands the captured
+  data out; `d3d11_context_draw_vertices` builds the PipelineSpec from the
+  snapshotted state (VS/PS SPIR-V, input layout -> vertex input via
+  pipeline_map with the IASetVertexBuffers stride honored, bound vertex
+  buffer) and drives VulkanSwapchain::render_and_present. sc_present now
+  tries the GPU pipeline path first when PAPAYA_VULKAN=1 and falls back to
+  the CPU upload blit (resource-using shaders come back false until Stage
+  3f's resource binds). Verified through the REAL vtables: CreateBuffer/
+  Map/Unmap/IASetVertexBuffers roundtrip triangle vertices into the
+  snapshot getter, and draw_vertices refuses cleanly with an uninitialized
+  swapchain. ctest 27/27, guest suite 21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

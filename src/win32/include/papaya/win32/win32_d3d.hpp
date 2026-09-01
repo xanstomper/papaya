@@ -57,4 +57,16 @@ u32 d3d11_input_layout_count(void* layout);
 const char* d3d11_input_layout_element(void* layout, u32 i, u32* semantic_index,
                                        u32* format);
 
+// Vertex input captured from CreateBuffer/Map/Unmap/IASetVertexBuffers.
+void d3d11_context_vertex_data(void* ctx, const u8** data, u32* count, u32* stride,
+                               u32* offset);
+
+// Render the bound translated pipeline into the given VulkanSwapchain and
+// present it: builds the PipelineSpec from the context snapshot (VS/PS SPIR-V,
+// input layout -> vertex input, bound vertex buffer). Returns false when the
+// state is incomplete (no bound/complied shaders, no vertices, swapchain not
+// ready, shaders using resources) - the caller then falls back to the CPU
+// blit path. No-op false when built without Vulkan.
+bool d3d11_context_draw_vertices(void* ctx, void* swapchain);
+
 } // namespace papaya::win32
