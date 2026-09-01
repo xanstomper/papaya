@@ -218,6 +218,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   != operator (ES forbids it), plain uniforms (Vulkan forbids them). This is
   the first end-to-end acceptance: DXBC -> GLSL -> SPIR-V, compiler-verified.
   ctest 24/24, guest suite 21/21, glslang validation green.
+- Stage 4a (done, verified): real COM vtable layouts + pipeline-state
+  plumbing. Extraction from wine's d3d11.idl/dxgi.idl (byte-exact with the
+  Windows SDK) exposed that the CONTEXT vtable was missing the 4 inherited
+  ID3D11DeviceChild methods: OMSetRenderTargets is 33 (was 29),
+  ClearRenderTargetView 49 (was 46), RSSetViewports 43 (was 40), ClearState
+  111, Flush 112; VSSetShader = 11, PSSetShader = 9, IASetInputLayout = 17;
+  swapchain GetDesc was 7 (real 12), Present/GetBuffer already correct.
+  Fixed all slots, filled Draw/DrawIndexed no-ops, and added
+  CreateInputLayout (device 11) capturing D3D11_INPUT_ELEMENT_DESC arrays
+  (semantics+formats) plus VSSetShader/PSSetShader/IASetInputLayout binding
+  into a pipeline snapshot (d3d11_context_pipeline_snapshot) for the future
+  Vulkan pipeline builder. The d3d clear guest was updated from the old
+  wrong offsets (46/29) to the real Windows ones (49/33). Verified:
+  test_d3d11_shaders drives CreateInputLayout + the three setter slots
+  through the REAL vtables and checks the snapshot; guests 21/21.
+  ctest 24/24, guest suite 21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

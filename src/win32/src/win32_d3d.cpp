@@ -21,7 +21,9 @@ struct D3DContext;
 struct SwapChain;
 struct RenderTargetView;
 struct D3DShader;
+struct D3DInputLayout;
 
+using msabi_void6 = u64 (*)(void*, u64, u64, u64, u64, u64);
 using msabi_void4 = u64 (*)(void*, u64, u64, u64);
 using msabi_void3 = u64 (*)(void*, u64, u64);
 using msabi_void2 = u64 (*)(void*, u64);
@@ -49,10 +51,26 @@ struct D3DObject {
 struct D3DDevice : D3DObject {
     D3DContext* ctx{nullptr};
 };
+struct D3DInputLayoutElement {
+    u32 format{0};          // DXGI_FORMAT (e.g. 6 = R32G32B32_FLOAT)
+    u32 semantic_index{0};
+    u32 slot{0};
+    u32 offset{0};
+    u32 step_class{0};      // D3D11_INPUT_PER_VERTEX_DATA / _PER_INSTANCE_DATA
+    u32 step_rate{0};
+    std::string semantic;
+};
+struct D3DInputLayout : D3DObject {
+    std::vector<D3DInputLayoutElement> elements;
+};
 struct D3DContext : D3DObject {
     // last render targets for ClearRenderTargetView
     void* rtv{nullptr};
     float clear_color[4]{0,0,0,0};
+    // pipeline state captured for the future Vulkan pipeline builder
+    D3DShader* vs{nullptr};
+    D3DShader* ps{nullptr};
+    D3DInputLayout* input_layout{nullptr};
 };
 struct SwapChain : D3DObject {
     void* hwnd{nullptr};
@@ -82,6 +100,51 @@ static D3DMS u64 dev_create_shader(void* self, u64 code, u64 len, u64 linkage, u
     }
     if (out) *reinterpret_cast<void**>(out) = shader;
     return 0; // S_OK
+}
+
+static D3DMS u64 dev_create_input_layout(void* self, u64 descs, u64 num_elements,
+        u64 shader_code, u64 code_len, u64 out) {
+    (void)self; (void)shader_code; (void)code_len;
+    auto* layout = new D3DInputLayout();
+    const u8* p = reinterpret_cast<const u8*>(descs);
+    for (u64 i = 0; i < num_elements && p; ++i) {
+        // D3D11_INPUT_ELEMENT_DESC (x64): LPCSTR SemanticName(8) + 6 x UINT.
+        D3DInputLayoutElement e;
+        const char* sem = *reinterpret_cast<const char* const*>(p);
+        u32 v[6];
+        std::memcpy(v, p + 8, sizeof(v));
+        if (sem) { std::string s(sem); if (s.size() < 256) e.semantic = std::move(s); }
+        e.semantic_index = v[0];
+        e.format = v[1];
+        e.slot = v[2];
+        e.offset = v[3];
+        e.step_class = v[4];
+        e.step_rate = v[5];
+        layout->elements.push_back(std::move(e));
+        p += 32;
+    }
+    if (out) *reinterpret_cast<void**>(out) = layout;
+    return 0; // S_OK
+}
+
+static D3DMS u64 ctx_ps_set_shader(void* self, u64 shader, u64 instances, u64 count) {
+    (void)instances; (void)count;
+    static_cast<D3DContext*>(self)->ps = static_cast<D3DShader*>(reinterpret_cast<void*>(shader));
+    return 0;
+}
+static D3DMS u64 ctx_vs_set_shader(void* self, u64 shader, u64 instances, u64 count) {
+    (void)instances; (void)count;
+    static_cast<D3DContext*>(self)->vs = static_cast<D3DShader*>(reinterpret_cast<void*>(shader));
+    return 0;
+}
+static D3DMS u64 ctx_ia_set_input_layout(void* self, u64 layout) {
+    static_cast<D3DContext*>(self)->input_layout =
+            static_cast<D3DInputLayout*>(reinterpret_cast<void*>(layout));
+    return 0;
+}
+static D3DMS u64 ctx_draw(void* self, u64 count, u64 start) { (void)self;(void)count;(void)start; return 0; }
+static D3DMS u64 ctx_draw_indexed(void* self, u64 count, u64 start, u64 base) {
+    (void)self;(void)count;(void)start;(void)base; return 0;
 }
 
 // ---- ID3D11Device methods ----------------------------------------------------
@@ -214,35 +277,49 @@ void* build_device_vtbl() {
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
     v[9]=reinterpret_cast<void*>(&dev_create_render_target_view);
+    v[11]=reinterpret_cast<void*>(&dev_create_input_layout);   // CreateInputLayout
     v[12]=reinterpret_cast<void*>(&dev_create_shader);   // CreateVertexShader
     v[15]=reinterpret_cast<void*>(&dev_create_shader);   // CreatePixelShader
     // all other slots default null; guest calling them would fault, so fill no-ops
     return v;
 }
-// ID3D11DeviceContext: 29=OMSetRenderTargets, 40=RSSetViewports, 46=ClearRenderTargetView,
-// 102=Flush, 97=ClearState. Draw/shader slots -> noop.
+// ID3D11DeviceContext vtable (authoritative order from wine d3d11.idl, matches
+// the Windows SDK): IUnknown 0-2, ID3D11DeviceChild 3-6 (GetDevice, GetPrivate-
+// Data, SetPrivateData, SetPrivateDataInterface), then the context methods:
+// 9=PSSetShader, 11=VSSetShader, 12=DrawIndexed, 13=Draw, 17=IASetInputLayout,
+// 18=IASetVertexBuffers, 33=OMSetRenderTargets, 43=RSSetViewports,
+// 49=ClearRenderTargetView, 111=ClearState, 112=Flush.
 void* build_context_vtbl() {
     auto* v = static_cast<void**>(calloc(128, sizeof(void*)));
     v[0]=reinterpret_cast<void*>(&thunk_query_interface);
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
-    v[29]=reinterpret_cast<void*>(&ctx_om_set_render_targets);
-    v[40]=reinterpret_cast<void*>(&ctx_rsset_viewports);
-    v[46]=reinterpret_cast<void*>(&ctx_clear_render_target_view);
-    v[97]=reinterpret_cast<void*>(&ctx_clear_state);
-    v[102]=reinterpret_cast<void*>(&ctx_flush);
+    v[9]=reinterpret_cast<void*>(&ctx_ps_set_shader);
+    v[11]=reinterpret_cast<void*>(&ctx_vs_set_shader);
+    v[12]=reinterpret_cast<void*>(&ctx_draw_indexed);
+    v[13]=reinterpret_cast<void*>(&ctx_draw);
+    v[17]=reinterpret_cast<void*>(&ctx_ia_set_input_layout);
+    v[18]=reinterpret_cast<void*>(&ctx_noop);   // IASetVertexBuffers
+    v[33]=reinterpret_cast<void*>(&ctx_om_set_render_targets);
+    v[43]=reinterpret_cast<void*>(&ctx_rsset_viewports);
+    v[49]=reinterpret_cast<void*>(&ctx_clear_render_target_view);
+    v[111]=reinterpret_cast<void*>(&ctx_clear_state);
+    v[112]=reinterpret_cast<void*>(&ctx_flush);
     return v;
 }
-// IDXGISwapChain: 8=Present, 9=GetBuffer, 7=GetDesc, 10=SetFullscreenState, 13=ResizeBuffers.
+// IDXGISwapChain (authoritative order from wine dxgi.idl): IUnknown 0-2,
+// IDXGIObject 3-6 (private-data + GetParent), IDXGIDeviceSubObject 7=GetDevice,
+// 8=Present, 9=GetBuffer, 10=SetFullscreenState, 11=GetFullscreenState,
+// 12=GetDesc, 13=ResizeBuffers.
 void* build_swapchain_vtbl() {
     auto* v = static_cast<void**>(calloc(32, sizeof(void*)));
     v[0]=reinterpret_cast<void*>(&thunk_query_interface);
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
-    v[7]=reinterpret_cast<void*>(&sc_get_desc);
     v[8]=reinterpret_cast<void*>(&sc_present);
     v[9]=reinterpret_cast<void*>(&sc_get_buffer);
     v[10]=reinterpret_cast<void*>(&sc_set_fullscreen);
+    v[12]=reinterpret_cast<void*>(&sc_get_desc);
     v[13]=reinterpret_cast<void*>(&sc_resize_buffers);
     return v;
 }
@@ -294,6 +371,27 @@ void* d3d11_swapchain_get_buffer(void* swapchain, u32 index) {
 
 void d3d11_clear_rtv(void* rtv, const float rgba[4]) {
     ctx_clear_render_target_view(g_context, rtv, rgba);
+}
+
+void d3d11_context_pipeline_snapshot(void* ctx, void** vs, void** ps, void** layout) {
+    auto* c = static_cast<D3DContext*>(ctx);
+    if (vs) *vs = c ? c->vs : nullptr;
+    if (ps) *ps = c ? c->ps : nullptr;
+    if (layout) *layout = c ? c->input_layout : nullptr;
+}
+
+u32 d3d11_input_layout_count(void* layout) {
+    auto* l = static_cast<D3DInputLayout*>(layout);
+    return l ? static_cast<u32>(l->elements.size()) : 0;
+}
+
+// Returns the semantic name; fills semantic_index/format when non-null.
+const char* d3d11_input_layout_element(void* layout, u32 i, u32* semantic_index, u32* format) {
+    auto* l = static_cast<D3DInputLayout*>(layout);
+    if (!l || i >= l->elements.size()) return nullptr;
+    if (semantic_index) *semantic_index = l->elements[i].semantic_index;
+    if (format) *format = l->elements[i].format;
+    return l->elements[i].semantic.c_str();
 }
 
 const char* d3d11_shader_get_glsl(void* shader, bool* translated) {

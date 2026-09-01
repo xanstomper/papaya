@@ -44,4 +44,13 @@ void d3d11_clear_rtv(void* rtv, const float rgba[4]);
 // consumers and tests). Returns nullptr for null shaders.
 const char* d3d11_shader_get_glsl(void* shader, bool* translated);
 
+// Capture the pipeline state currently bound to the context: the VS/PS
+// shader objects and the input layout (for the Vulkan pipeline builder).
+void d3d11_context_pipeline_snapshot(void* ctx, void** vs, void** ps, void** layout);
+
+// Input-layout introspection (elements captured from D3D11_INPUT_ELEMENT_DESC).
+u32 d3d11_input_layout_count(void* layout);
+const char* d3d11_input_layout_element(void* layout, u32 i, u32* semantic_index,
+                                       u32* format);
+
 } // namespace papaya::win32

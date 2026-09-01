@@ -25,7 +25,9 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s){
   HRESULT hr=fn(0,0,0,0,0,0,7,&scd,&swap,&dev,&fl,&ctx);
   if(hr!=0||!swap||!dev||!ctx){printf("FAIL create hr=0x%lx swap=%p dev=%p ctx=%p\n",(unsigned long)hr,swap,dev,ctx);return 3;}
   void** ctxv=*(void***)ctx; void** swapv=*(void***)swap;
-  pClear=(void*)ctxv[46]; pOMSetRT=(void*)ctxv[29];
+  /* ID3D11DeviceContext slots per d3d11.idl (IUnknown 0-2 + ID3D11DeviceChild 3-6):
+     33 = OMSetRenderTargets, 49 = ClearRenderTargetView. */
+  pClear=(void*)ctxv[49]; pOMSetRT=(void*)ctxv[33];
   pPresent=(void*)swapv[8]; pGetBuf=(void*)swapv[9];
   if(!pClear||!pOMSetRT||!pPresent){printf("FAIL vtbl\n");return 4;}
   void* rtv=0; HRESULT gb=pGetBuf(swap,0,0,&rtv);

@@ -13,6 +13,9 @@
 
 using papaya::win32::d3d11_create_device;
 using papaya::win32::d3d11_shader_get_glsl;
+using papaya::win32::d3d11_context_pipeline_snapshot;
+using papaya::win32::d3d11_input_layout_count;
+using papaya::win32::d3d11_input_layout_element;
 using papaya::u8;
 using papaya::u32;
 using papaya::u64;
@@ -117,6 +120,49 @@ int main() {
         std::printf("fail: null shader\n"); return 8;
     }
 
-    std::printf("ok: CreatePixelShader/CreateVertexShader DXBC->GLSL through vtable, garbage refused\n");
+    // ---- pipeline-state plumbing through the real context vtables ----
+    // ID3D11DeviceContext (per d3d11.idl): 9=PSSetShader, 11=VSSetShader,
+    // 17=IASetInputLayout; ID3D11Device: 11=CreateInputLayout.
+    void** ctx_vtbl = *reinterpret_cast<void***>(ctx);
+    using set_shader_t = D3DMS void (*)(void*, void*, void*, u32);
+    using set_layout_t = D3DMS void (*)(void*, void*);
+    using create_layout_t = D3DMS long (*)(void*, void*, u32, void*, u64, void*);
+
+    // CreateInputLayout: POSITION (R32G32B32_FLOAT) + TEXCOORD (R32G32_FLOAT).
+    struct D3D11_INPUT_ELEMENT_DESC {
+        const char* name;
+        u32 index, format, slot, offset, klass, rate;
+    } descs[2] = {
+        { "POSITION", 0, 6, 0, 0, 0, 0 },        // 6 = DXGI_FORMAT_R32G32B32_FLOAT
+        { "TEXCOORD", 0, 16, 0, 12, 0, 0 },      // 16 = DXGI_FORMAT_R32G32_FLOAT
+    };
+    void* layout = nullptr;
+    auto create_input_layout = reinterpret_cast<create_layout_t>(vtbl[11]);
+    if (create_input_layout(dev, descs, 2, blob.data(), blob.size(), &layout) != 0 || !layout)
+        { std::printf("fail: CreateInputLayout\n"); return 9; }
+    if (d3d11_input_layout_count(layout) != 2) { std::printf("fail: layout count\n"); return 10; }
+    u32 sem_idx = 99, fmt = 99;
+    const char* sem = d3d11_input_layout_element(layout, 0, &sem_idx, &fmt);
+    if (!sem || std::strcmp(sem, "POSITION") != 0 || sem_idx != 0 || fmt != 6)
+        { std::printf("fail: layout element 0 (%s, %u, %u)\n", sem ? sem : "?", sem_idx, fmt); return 11; }
+
+    // Bind the pipeline state through the context vtables.
+    auto ps_set_shader = reinterpret_cast<set_shader_t>(ctx_vtbl[9]);
+    auto vs_set_shader = reinterpret_cast<set_shader_t>(ctx_vtbl[11]);
+    auto ia_set_layout = reinterpret_cast<set_layout_t>(ctx_vtbl[17]);
+    ps_set_shader(ctx, shader, nullptr, 0);
+    vs_set_shader(ctx, vs, nullptr, 0);
+    ia_set_layout(ctx, layout);
+
+    void *got_vs = nullptr, *got_ps = nullptr, *got_layout = nullptr;
+    d3d11_context_pipeline_snapshot(ctx, &got_vs, &got_ps, &got_layout);
+    if (got_ps != shader || got_vs != vs || got_layout != layout) {
+        std::printf("fail: pipeline snapshot mismatch\n"); return 12;
+    }
+    // Snapshot returns nulls from a null context.
+    d3d11_context_pipeline_snapshot(nullptr, &got_vs, &got_ps, &got_layout);
+    if (got_vs || got_ps || got_layout) { std::printf("fail: null ctx snapshot\n"); return 13; }
+
+    std::printf("ok: shader + input-layout + pipeline-state through real vtables, garbage refused\n");
     return 0;
 }
