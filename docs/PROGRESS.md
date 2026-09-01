@@ -120,12 +120,20 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   real 32-byte element layout + semantic names). Bounds-checked; bad magic /
   truncated fail cleanly. Tested with a synthetic-but-valid DXBC blob
   (chunks=2, bytecode, 1 input sig "POSITION"). ctest 22/22.
-- Stage 2a (done, verified): `sm4_decode()` — SM4/SM5 instruction decoder
-  (instruction token: length/opcode-type/opcode; extended-opcode token for
-  MOV/MUL-class ops; operand tokens: reg type, mask, swizzle, indexables with
-  absolute/relative addressing). Malformed streams (bad length) fail cleanly.
-  Base opcodes 0x1..0x1D + extended MOV/MUL decoded; rest read as Unknown.
-  Tested with synthetic ADD + extended-MOV streams; ctest 23/23.
+- Stage 2 (done, verified, replaces the earlier partial decoder): full SM4/SM5
+  instruction decoder. The encoding is the REAL on-disk token format, taken
+  from wine vkd3d-shader `tpf.c` (wine-mirror/wine @ 9226b10, the field-
+  validated parser, byte-exact with native fxc): instruction token = length
+  (24-28) | flags (11-13) | opcode (0-7); operand token = reg type (12-19),
+  index order (20-21), addressing (22-23/25-26/28-29), extended (31).
+  `scripts/gen_sm4_opcodes.py` generates the full 222-opcode table
+  (`src/gpu/src/sm4_opcodes.inc`) straight from that reference source; every
+  opcode has asm name + dst/src arity. Decoder handles absolute + relative
+  indexing, immconst registers, instruction modifiers, DCL payload words, and
+  rejects malformed streams. The earlier partial decoder (Stage 2a) used an
+  off-by-one opcode table and the wrong bit layout; corrected here.
+  Verified: `test_shader_decoder` — MOV/ADD+immconst/dcl_temps/relative
+  addressing decode, info lookup, malformed rejection. ctest 23/23.
 - Stage 2 (next): wire the compiler-lib backend and the D3D11-state->Vulkan
   pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
 

@@ -11,6 +11,7 @@
 // that crashes the parser (bounds-checked).
 
 #include "papaya/gpu/shader_translator.hpp"
+#include <algorithm>
 #include <cstring>
 
 namespace papaya::gpu {
@@ -127,108 +128,204 @@ bool dxbc_parse(std::span<const u8> data, DxbcContainer& out) {
     return !out.chunks.empty();
 }
 
-// ---- SM4/SM5 instruction decoder --------------------------------------------
-// D3D11 shader instruction token layout:
-//   bits 0-4:  instruction length (in u32 tokens, incl. the opcode token)
-//   bits 5-7:  opcode type (0x3 = pure, 0x4 = has extended opcode, 0x5 = has
-//              extended opcode + global flags)
-//   bits 8-18: opcode (11 bits)
-// Bit 0 of the extended-opcode token holds "extended is a custom op".
-// Operand token layout:
-//   bits 0-1:  num indexables-1 (number of index registers following)
-//   bits 16-19: register type (D3D10_SB_OPERAND_TYPE)
-//   bits 24-31: operand mode + flags
-// After the operand header, an indexable operand has an index (u32) possibly
-// with additional index tokens; our decode covers the common TEMP/INPUT/OUTPUT
-// fixed-register forms.
+// ---- SM4/SM5 instruction decoder -------------------------------------------
+// Encoding (real on-disk values, wine vkd3d-shader tpf.c, verified byte-exact
+// against native fxc output by wine's CI):
+//   instruction token: opcode bits 0-7, flags bits 11-13, length bits 24-28
+//   (length counts u32 tokens INCLUDING the opcode token), bit 31 = an
+//   instruction modifier token follows (chain while bit 31 set).
+//   operand token: dimension bits 0-1, write mask bits 4-7 / swizzle bits 4-11,
+//   register type bits 12-19, index order bits 20-21 (>=1 means indices follow),
+//   addressing bits 22-23/25-26/28-29 (bit1 set = relative, bit0 = pre-offset),
+//   bit 31 = extended-operand token (modifier+precision) follows.
 namespace {
 
-bool op_have_ext(u32 type) { return type == 0x4 || type == 0x5; }
+struct Sm4OpcodeRow {
+    u32 opcode;
+    const char* name;
+    u8 dst_count;
+    u8 src_count;
+};
 
-ShaderOpcode to_opcode(u32 raw_opcode, bool extended_custom) {
-    // Base opcode space (SM4): 0x1..0x1D.
-    switch (raw_opcode) {
-        case 0x01: return ShaderOpcode::Add;    case 0x02: return ShaderOpcode::And;
-        case 0x03: return ShaderOpcode::Break;  case 0x04: return ShaderOpcode::Breakc;
-        case 0x05: return ShaderOpcode::Call;   case 0x06: return ShaderOpcode::Callc;
-        case 0x07: return ShaderOpcode::Case;   case 0x08: return ShaderOpcode::Continue;
-        case 0x09: return ShaderOpcode::Continuec; case 0x0A: return ShaderOpcode::Cut;
-        case 0x0B: return ShaderOpcode::Discard; case 0x0C: return ShaderOpcode::Default;
-        case 0x0D: return ShaderOpcode::Div;    case 0x0E: return ShaderOpcode::Dp2;
-        case 0x0F: return ShaderOpcode::Dp3;    case 0x10: return ShaderOpcode::Dp4;
-        case 0x11: return ShaderOpcode::Else;   case 0x12: return ShaderOpcode::Emit;
-        case 0x13: return ShaderOpcode::EmitThenCut; case 0x14: return ShaderOpcode::EndIf;
-        case 0x15: return ShaderOpcode::EndLoop; case 0x16: return ShaderOpcode::EndSwitch;
-        case 0x17: return ShaderOpcode::Eq;     case 0x18: return ShaderOpcode::Exp;
-        case 0x19: return ShaderOpcode::Frc;    case 0x1A: return ShaderOpcode::FtoI;
-        case 0x1B: return ShaderOpcode::FtoU;   case 0x1C: return ShaderOpcode::Ge;
-        case 0x1D: return ShaderOpcode::IAdd;
-        default: break;
-    }
-    // Extended opcode space (0x58 MOV, 0x5A MUL are the common NOP-adjacent
-    // ones games hit; the full SM4/SM5 table is large and belongs to Stage 3).
-    if (!extended_custom) {
-        switch (raw_opcode) {
-            case 0x58: return ShaderOpcode::Mov;
-            case 0x5A: return ShaderOpcode::Mul;
-            default: break;
+static const Sm4OpcodeRow kSm4OpcodeRows[] = {
+#include "sm4_opcodes.inc"
+};
+static constexpr size_t kSm4OpcodeRowsSize = sizeof(kSm4OpcodeRows) / sizeof(kSm4OpcodeRows[0]);
+
+const Sm4OpcodeRow* find_opcode_row(u32 raw) {
+    // The .inc table is sorted by opcode value.
+    struct Cmp {
+        bool operator()(u32 value, const Sm4OpcodeRow& row) const { return value < row.opcode; }
+        bool operator()(const Sm4OpcodeRow& row, u32 value) const { return row.opcode < value; }
+    };
+    const auto* it = std::lower_bound(kSm4OpcodeRows, kSm4OpcodeRows + kSm4OpcodeRowsSize, raw, Cmp{});
+    if (it == kSm4OpcodeRows + kSm4OpcodeRowsSize || it->opcode != raw) return nullptr;
+    return it;
+}
+
+// Read one operand at stream[p..end); advances p. depth bounds the recursion
+// used by relative-addressing operands (an operand token inside an operand).
+bool parse_operand(std::span<const u32> s, size_t& p, size_t end, DecodedOperand& op, int depth) {
+    if (depth > 3 || p >= end) return false;
+    const u32 t = s[p++];
+    op.reg_type = (t >> 12) & 0xFFu;
+    op.order = (t >> 20) & 0x3u;
+    op.dimension = t & 0x3u;
+    op.mask = (t >> 4) & 0xFu;        // dest write mask
+    op.swizzle = (t >> 4) & 0xFFu;    // src swizzle (4 x 2 bits)
+
+    for (u32 k = 0; k < op.order; ++k) {
+        if (p >= end) return false;
+        const u32 addr = (t >> (22 + 3 * k)) & 0x3u;   // shift0=22, shift1=25, shift2=28
+        if (addr & 0x2u) {
+            // Relative addressing: optional pre-offset u32, then a src operand.
+            Sm4RelIndex rel{};
+            if (addr & 0x1u) { rel.offset = s[p++]; if (p > end) return false; }
+            DecodedOperand base;
+            if (!parse_operand(s, p, end, base, depth + 1)) return false;
+            rel.reg_type = base.reg_type;
+            rel.reg_index = base.reg_index();
+            op.rel.push_back(rel);
+        } else {
+            op.indices.push_back(s[p++]);
         }
     }
-    return ShaderOpcode::Unknown;
+
+    if (t & 0x80000000u) {
+        // Extended-operand token: modifier + precision (+ optional 2nd-order).
+        if (p >= end) return false;
+        const u32 ext = s[p++];
+        op.extended_type = ext & 0x3Fu;
+        op.modifier = (ext >> 6) & 0xFFu;
+        if ((ext & 0x80000000u) && p < end) ++p;   // second-order extended token
+    }
+
+    if (op.reg_type == static_cast<u32>(Sm4RegType::ImmConst) ||
+        op.reg_type == static_cast<u32>(Sm4RegType::ImmConst64)) {
+        u32 words;
+        switch (op.dimension) {
+            case 0: words = op.reg_type == static_cast<u32>(Sm4RegType::ImmConst64) ? 2u : 1u; break;
+            case 1: words = 2u; break;
+            case 2: words = 3u; break;
+            default: words = 4u; break;
+        }
+        if (p + words > end) return false;
+        for (u32 k = 0; k < words; ++k) op.imm.push_back(s[p++]);
+    }
+    return true;
+}
+
+// Opcodes whose operands are plain register operands with fixed arity.
+bool is_plain_alu(u32 raw) {
+    if (const auto* row = find_opcode_row(raw)) return row->dst_count + row->src_count > 0;
+    return false;
+}
+
+// DCL opcodes that name a register operand (dcl_resource t0, dcl_input v0, ...);
+// the rest (dcl_temps, dcl_global_flags, dcl_thread_group, ...) carry plain
+// count/enum payload words.
+bool dcl_has_operand(u32 raw) {
+    switch (raw) {
+        case 0x58: case 0x59: case 0x5A: case 0x5B:       // resource/cbuffer/sampler/index_range
+        case 0x5F: case 0x60: case 0x61: case 0x62:        // dcl_input[_[sg][vi]v, ps, ...]
+        case 0x63: case 0x64: case 0x65: case 0x66:
+        case 0x67:                                        // dcl_output[_[sg][vi]v]
+        case 0x8F:                                        // dcl_stream
+        case 0x9C: case 0x9D: case 0x9E:                  // uav typed/raw/structured
+        case 0x9F: case 0xA0: case 0xA1: case 0xA2:       // tgsm/raw/structured dcls
+            return true;
+        default:
+            return false;
+    }
 }
 
 } // namespace
+
+const Sm4OpcodeInfo* sm4_opcode_info(u32 raw_opcode) {
+    const auto* row = find_opcode_row(raw_opcode);
+    if (!row) return nullptr;
+    static thread_local Sm4OpcodeInfo info;   // tiny; fine for lookup
+    info.opcode = row->opcode;
+    info.name = row->name;
+    info.dst_count = row->dst_count;
+    info.src_count = row->src_count;
+    return &info;
+}
+
+const char* sm4_opcode_name(ShaderOpcode opcode) {
+    if (opcode == ShaderOpcode::Unknown) return "";
+    const auto* row = find_opcode_row(static_cast<u32>(opcode));
+    return row ? row->name : "";
+}
 
 bool sm4_decode(std::span<const u32> stream, std::vector<DecodedInstruction>& out) {
     out.clear();
     size_t i = 0;
     while (i < stream.size()) {
-        u32 token = stream[i];
-        u32 len = token & 0x1F;
-        u32 type = (token >> 5) & 0x7;
-        u32 opcode_raw = (token >> 8) & 0x7FF;
+        const u32 token = stream[i];
+        const u32 raw = token & 0xFFu;
+        const u32 len = (token >> 24) & 0x1Fu;
         if (len == 0 || i + len > stream.size()) return false;   // malformed
 
         DecodedInstruction ins{};
+        ins.opcode_raw = raw;
+        ins.flags = (token >> 11) & 0x7u;
+        ins.length = len;
         ins.token_offset = static_cast<u32>(i);
-        size_t p = i + 1;   // operand tokens start after the opcode token
-        bool extended_custom = false;
-        if (op_have_ext(type)) {
-            // Next token: extended opcode (bits 0-5) or custom-op mask.
-            if (p >= stream.size()) return false;
-            ins.extended = true;
-            u32 ext = stream[p];
-            opcode_raw = (ext >> 6) & 0xFFFFF;   // extended opcode (20 bits)
-            extended_custom = (ext & 0x1) != 0;
-            ++p;
-        }
-        ins.opcode = to_opcode(opcode_raw, extended_custom);
+        ins.opcode = find_opcode_row(raw) ? static_cast<ShaderOpcode>(raw) : ShaderOpcode::Unknown;
 
-        // Any remaining tokens within `len` are operands (each 1+ tokens).
-        while (p < i + len && p < stream.size()) {
-            u32 op = stream[p];
-            DecodedOperand opd{};
-            opd.reg_type = (op >> 16) & 0xF;
-            u32 num_ind = ((op >> 0) & 0x3) + 1;
-            opd.mask = (op >> 4) & 0xF;         // component write/read mask
-            opd.swizzle = (op >> 8) & 0xFF;     // raw swizzle bits (sometimes)
-            ++p;
-            // Indexables: an index token (u32) per declared indexable, plus for
-            // relative addressing a register token. We capture the first index
-            // value; tolerate malformed (bounds-checked).
-            for (u32 k = 0; k < num_ind && p < i + len && p < stream.size(); ++k) {
-                if ((op >> 8) & 0x100) {        // RELATIVE addressing: index token
-                    // skip the relative register operand token (1+ words)
-                    ++p;
-                } else {
-                    opd.reg_index = stream[p];
-                    ++p;
-                }
-            }
-            ins.operands.push_back(std::move(opd));
+        const size_t end = i + len;   // length is authoritative (incl. opcode token)
+        size_t p = i + 1;
+
+        // Instruction modifier tokens (chain: each has bit 31 set except the last).
+        u32 prev = token;
+        while (p < end && (prev & 0x80000000u)) {
+            prev = stream[p++];
+            ins.modifier_tokens.push_back(prev);
         }
+
+        // Special payload shapes (mirrors vkd3d-shader's opcode readers).
+        if (raw == static_cast<u32>(ShaderOpcode::ShaderData)) {
+            // icb payload: register slot u32 + vec4-aligned data words.
+            while (p < end) ins.raw_words.push_back(stream[p++]);
+            out.push_back(std::move(ins));
+            i = end;
+            continue;
+        }
+        if (raw == static_cast<u32>(ShaderOpcode::DclTemps) ||
+            raw == static_cast<u32>(ShaderOpcode::DclIndexableTemp)) {
+            // dcl_temps / dcl_indexable_temp: plain count words, no operand.
+            while (p < end) ins.raw_words.push_back(stream[p++]);
+            out.push_back(std::move(ins));
+            i = end;
+            continue;
+        }
+
+        // DCL-family opcodes carry one dst operand then semantic/count words.
+        if (dcl_has_operand(raw) && p < end) {
+            DecodedOperand op;
+            if (!parse_operand(stream, p, end, op, 0)) return false;
+            ins.operands.push_back(std::move(op));
+        }
+
+        // Plain ALU: fixed dst+src operand count from the opcode table.
+        if (is_plain_alu(raw)) {
+            const auto* info = sm4_opcode_info(raw);
+            const u32 operands = static_cast<u32>(info->dst_count) + info->src_count;
+            for (u32 k = 0; k < operands; ++k) {
+                if (p >= end) return false;
+                DecodedOperand op;
+                if (!parse_operand(stream, p, end, op, 0)) return false;
+                ins.operands.push_back(std::move(op));
+            }
+        } else {
+            // Everything else (nop/ret/control flow/unknown/DCL payloads):
+            // consume whatever remains inside the instruction length as raw words.
+            while (p < end) ins.raw_words.push_back(stream[p++]);
+        }
+
         out.push_back(std::move(ins));
-        i += len;
+        i = end;
     }
     return !out.empty();
 }
