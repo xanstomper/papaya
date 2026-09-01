@@ -178,10 +178,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   fxc output always does); everything else is refused honestly. Verified:
   decode+emit of dcl_resource/sampler + sample + ld yields the exact expected
   GLSL, and a 1D resource is refused. ctest 23/23, guest suite 21/21.
-- Stage 3 (next): switch/case (int value representation), sample variants
-  (sample_b/lod/grad/c), integer ops, and wiring the emitted GLSL into
-  glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan pipeline
-  mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
+- Stage 3c (done, verified): sample variants + comparison sampling.
+  sample_b/sample_lod emit texture()/textureLod() with a scalar bias/lod
+  (replicated-swizzle operands read via their single component, as fxc
+  emits); sample_grad emits textureGrad(uv, ddx.xy, ddy.xy); sample_c emits
+  vec4(texture(tN_shadow, vec3(uv.xy, ref))) (scalar result replicated) using
+  a sampler2DShadow declared from dcl_sampler's comparison mode (opcode bits
+  11-14) via a pre-scan, with the plain sampler2D kept for non-comparison
+  uses of the same texture. sample_c against a default sampler is refused.
+  All variants are 2D-only for now (honest). Verified: exact GLSL strings for
+  all four variants + shadow declaration, refusal of comparison-with-default-
+  sampler. ctest 23/23, guest suite 21/21.
+- Stage 3 (next): switch/case (int value representation), integer ops,
+  resinfo/gather + 3D/array sample variants, then wiring the emitted GLSL
+  into glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan
+  pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline
+  stages).
 
 ## Hygiene standard (adopted)
 

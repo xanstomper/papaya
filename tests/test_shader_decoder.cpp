@@ -343,6 +343,76 @@ int main() {
     if (!sm4_decode({tx1d.data(), tx1d.size()}, tx1)) return 55;
     if (sm4_emit_glsl({tx1.data(), tx1.size()}, junk)) return 56;
 
+    // --- sample variants (Stage 3c) ---
+    // dcl_resource t0, 2D;  dcl_sampler s0 (default);  dcl_resource t1, 2D;
+    // dcl_sampler s1 (comparison)
+    // sample_b r2, v2.xy, t0, s0, l(0.5)
+    // sample_lod r3, v3.xy, t0, s0, v4.x
+    // sample_grad r4, v5.xy, t0, s0, v6.xy, v7.xy
+    // sample_c r5, v8.xy, t1, s1, v9.x
+    std::vector<u32> sv;
+    sv.push_back(inst(0x58, 4, 3));                    // dcl_resource t0
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(0); sv.push_back(0x55555555);
+    sv.push_back(inst(0x5A, 3));                       // dcl_sampler s0 (default)
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(0);
+    sv.push_back(inst(0x58, 4, 3));                    // dcl_resource t1
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(1); sv.push_back(0x55555555);
+    sv.push_back(inst(0x5A, 3, 1));                    // dcl_sampler s1 (comparison)
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(1);
+    // sample_b
+    sv.push_back(inst(0x4A, 11));
+    sv.push_back(operand(0x00, 1, 3, 0xF)); sv.push_back(2);         // dst r2
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(2);  // v2
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(0);          // t0
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(0);          // s0
+    sv.push_back(operand(0x04, 0, 0)); sv.push_back(fbits(0.5f));   // bias l(0.5)
+    // sample_lod
+    sv.push_back(inst(0x48, 11));
+    sv.push_back(operand(0x00, 1, 3, 0xF)); sv.push_back(3);         // dst r3
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(3);  // v3
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(0);          // t0
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(0);          // s0
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0)); sv.push_back(4);  // v4.x
+    // sample_grad
+    sv.push_back(inst(0x49, 13));
+    sv.push_back(operand(0x00, 1, 3, 0xF)); sv.push_back(4);         // dst r4
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(5);  // v5
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(0);          // t0
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(0);          // s0
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(6);  // v6
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(7);  // v7
+    // sample_c
+    sv.push_back(inst(0x46, 11));
+    sv.push_back(operand(0x00, 1, 3, 0xF)); sv.push_back(5);         // dst r5
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); sv.push_back(8);  // v8
+    sv.push_back(operand(0x07, 1, 3, 0)); sv.push_back(1);          // t1
+    sv.push_back(operand(0x06, 1, 3, 0)); sv.push_back(1);          // s1
+    sv.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0)); sv.push_back(9);  // v9.x
+    std::vector<DecodedInstruction> svins;
+    if (!sm4_decode({sv.data(), sv.size()}, svins)) return 57;
+    {
+        std::string gls;
+        if (!sm4_emit_glsl({svins.data(), svins.size()}, gls)) return 58;
+        const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
+        if (!has("uniform sampler2DShadow t1_shadow;")) return 59;
+        if (!has("r2 = texture(t0, v2.xy, vec4(0.5).x);")) return 60;
+        if (!has("r3 = textureLod(t0, v3.xy, v4.x);")) return 61;
+        if (!has("r4 = textureGrad(t0, v5.xy, v6.xy, v7.xy);")) return 62;
+        if (!has("r5 = vec4(texture(t1_shadow, vec3(v8.xy, v9.x)));")) return 63;
+    }
+    // sample_c with a default (non-comparison) sampler must be refused
+    std::vector<u32> sc = {
+        inst(0x58, 4, 3), operand(0x07, 1, 3, 0), 0, 0x55555555,
+        inst(0x5A, 3), operand(0x06, 1, 3, 0), 0,                       // s0 default
+        inst(0x46, 11), operand(0x00, 1, 3, 0xF), 0,
+        operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3), 0,
+        operand(0x07, 1, 3, 0), 0,
+        operand(0x06, 1, 3, 0), 0,
+        operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0), 0 };    // ref
+    std::vector<DecodedInstruction> scins;
+    if (!sm4_decode({sc.data(), sc.size()}, scins)) return 64;
+    if (sm4_emit_glsl({scins.data(), scins.size()}, junk)) return 65;
+
     std::printf("ok: decode+info+emit+control flow+cb+textures, malformed/unsupported rejected\n");
     return 0;
 }

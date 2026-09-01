@@ -426,6 +426,38 @@ bool src_expr(const DecodedOperand& op, std::string& out, const std::string& sli
 
 const DecodedOperand& dst_of(const DecodedInstruction& ins) { return ins.operands[0]; }
 
+bool swizzle_identity(u32 sw) {
+    return (sw & 0x3) == 0 && ((sw >> 2) & 0x3) == 1 &&
+           ((sw >> 4) & 0x3) == 2 && ((sw >> 6) & 0x3) == 3;
+}
+
+// Texture uv/address operands must read components x,y (fxc always emits
+// identity or xy-first swizzles here); unused components are unconstrained.
+bool uv_ok(const DecodedOperand& op) {
+    return (op.swizzle & 0x3u) == 0 && ((op.swizzle >> 2) & 0x3u) == 1;
+}
+
+// Scalar extra args (bias/lod/ref): fxc emits a replicated swizzle (xxxx...);
+// emit a single-component read of that component.
+bool scalar_expr(const DecodedOperand& op, std::string& out) {
+    const u32 comp = op.swizzle & 0x3u;
+    for (int i = 1; i < 4; ++i)
+        if (((op.swizzle >> (2 * i)) & 0x3u) != comp) return false;   // must be replicated
+    if (op.modifier || !op.rel.empty()) return false;
+    out += ".";
+    out += "xyzw"[comp];
+    std::string base;
+    if (op.reg_type == 0x04 || op.reg_type == 0x05) {       // immconst scalar
+        if (op.imm.empty()) return false;
+        base = "vec4(" + fstr([](u32 w) { float f; std::memcpy(&f, &w, 4); return f; }(op.imm[0])) + ")";
+    } else {
+        base = reg_ref(op);
+        if (base.empty()) return false;
+    }
+    out = base + out;
+    return true;
+}
+
 std::string pad(int indent) { return std::string(static_cast<size_t>(indent) * 4, ' '); }
 
 } // namespace
@@ -434,8 +466,15 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
     out.clear();
     out += "// papaya sm4->glsl (Stage 2c/2d/3: ALU + control flow + textures)\n";
     int indent = 0;
-    u32 res_type[16] = {};   // tN -> resource type (from dcl_resource aux bits)
+    u32 res_type[16] = {};       // tN -> resource type (from dcl_resource aux bits)
+    bool sam_cmp[16] = {};       // sN -> comparison sampler mode (dcl_sampler aux)
+    bool shadow_used[16] = {};   // tN sampled via comparison (sample_c)
     auto line = [&](std::string s) { out += pad(indent) + s + "\n"; };
+    for (const auto& pre : insns)   // pre-scan: comparison sampling needs shadows
+        if (pre.opcode == ShaderOpcode::SampleC && pre.operands.size() >= 3) {
+            const u32 tidx = pre.operands[2].reg_index();
+            if (tidx < 16) shadow_used[tidx] = true;
+        }
     for (const auto& ins : insns) {
         switch (ins.opcode) {
             case ShaderOpcode::DclTemps: {
@@ -455,13 +494,20 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             // SM4 declarations that do not change the ALU body: the runtime
             // binds resources/samplers/global flags from the DXBC container.
             case ShaderOpcode::DclGlobalFlags:
-            case ShaderOpcode::DclSampler:
             case ShaderOpcode::DclIndexableTemp:
             case ShaderOpcode::DclIndexRange:
             case ShaderOpcode::DclOutputTopology:
             case ShaderOpcode::DclInputPrimitive:
             case ShaderOpcode::DclVerticesOut:
                 break;
+            case ShaderOpcode::DclSampler: {
+                // dcl_sampler sN: comparison mode in opcode bits 11-14 (aux).
+                if (ins.operands.size() != 1) return false;
+                const u32 sidx = ins.operands[0].reg_index();
+                if (sidx >= 16) return false;
+                sam_cmp[sidx] = (ins.aux & 0xFu) == 0x1;
+                break;
+            }
             case ShaderOpcode::DclResource: {
                 // dcl_resource tN, <type>: resource type in opcode bits 11-14
                 // (aux bits 0-3). GLSL ES 3.0-style sampler declarations.
@@ -476,6 +522,10 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 if (tidx >= 16) return false;
                 res_type[tidx] = rtype;
                 out += "uniform " + std::string(decl) + " t" + std::to_string(tidx) + ";\n";
+                if (shadow_used[tidx]) {
+                    if (rtype != 3) return false;   // shadow only for sampler2D
+                    out += "uniform sampler2DShadow t" + std::to_string(tidx) + "_shadow;\n";
+                }
                 break;
             }
             case ShaderOpcode::DclConstantBuffer: {
@@ -598,11 +648,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 const u32 rtype = res_type[tidx];
                 const bool vec2_coords = rtype == 3;   // sampler2D
                 if (rtype != 3 && rtype != 5 && rtype != 6 && rtype != 8) return false;
-                // uv must read components x,y (identity or xy-first swizzle).
-                if ((uvo.swizzle & 0x3u) != 0 || ((uvo.swizzle >> 2) & 0x3u) != 1 ||
-                    !((uvo.swizzle & 0x3) == 0 && ((uvo.swizzle >> 2) & 0x3) == 1 &&
-                      ((uvo.swizzle >> 4) & 0x3) == 2 && ((uvo.swizzle >> 6) & 0x3) == 3))
-                    return false;
+                if (!uv_ok(uvo)) return false;
                 std::string uv;
                 if (!src_expr(uvo, uv, vec2_coords ? ".xy" : ".xyz")) return false;
                 line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
@@ -615,15 +661,68 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 const DecodedOperand& ao = ins.operands[1];
                 const u32 tidx = ins.operands[2].reg_index();
                 if (tidx >= 16 || res_type[tidx] != 3) return false;   // 2D only
-                if ((ao.swizzle & 0x3u) != 0 || ((ao.swizzle >> 2) & 0x3u) != 1 ||
-                    !((ao.swizzle & 0x3) == 0 && ((ao.swizzle >> 2) & 0x3) == 1 &&
-                      ((ao.swizzle >> 4) & 0x3) == 2 && ((ao.swizzle >> 6) & 0x3) == 3))
-                    return false;
+                if (!uv_ok(ao)) return false;
                 std::string af;
                 if (!src_expr(ao, af, "")) return false;   // full vec4 address
                 line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
                      " = texelFetch(t" + std::to_string(tidx) + ", ivec2(" + af +
                      ".xy), int(" + af + ".z));");
+                break;
+            }
+            case ShaderOpcode::SampleB:
+            case ShaderOpcode::SampleLod:
+            case ShaderOpcode::SampleGrad:
+            case ShaderOpcode::SampleC: {
+                // sample_* dst, uv, tN, sN [, bias|lod|ref [, ddx, ddy]]
+                // 2D only for the variants; comparison uses a shadow sampler.
+                if (ins.operands.size() < 4) return false;
+                const DecodedOperand& uvo = ins.operands[1];
+                const u32 tidx = ins.operands[2].reg_index();
+                const u32 sidx = ins.operands[3].reg_index();
+                if (tidx >= 16 || sidx >= 16 || res_type[tidx] != 3) return false;
+                if (!uv_ok(uvo)) return false;
+                std::string uv;
+                if (!src_expr(uvo, uv, ".xy")) return false;
+                std::string call;
+                switch (ins.opcode) {
+                    case ShaderOpcode::SampleB: {
+                        if (ins.operands.size() < 5) return false;
+                        std::string bias;
+                        if (!scalar_expr(ins.operands[4], bias)) return false;
+                        call = "texture(t" + std::to_string(tidx) + ", " + uv + ", " + bias + ")";
+                        break;
+                    }
+                    case ShaderOpcode::SampleLod: {
+                        if (ins.operands.size() < 5) return false;
+                        std::string lod;
+                        if (!scalar_expr(ins.operands[4], lod)) return false;
+                        call = "textureLod(t" + std::to_string(tidx) + ", " + uv + ", " + lod + ")";
+                        break;
+                    }
+                    case ShaderOpcode::SampleGrad: {
+                        if (ins.operands.size() < 6) return false;
+                        if (!swizzle_identity(ins.operands[4].swizzle) ||
+                            !swizzle_identity(ins.operands[5].swizzle)) return false;
+                        std::string ddx, ddy;
+                        if (!src_expr(ins.operands[4], ddx, ".xy") ||
+                            !src_expr(ins.operands[5], ddy, ".xy")) return false;
+                        call = "textureGrad(t" + std::to_string(tidx) + ", " + uv + ", " +
+                               ddx + ", " + ddy + ")";
+                        break;
+                    }
+                    case ShaderOpcode::SampleC: {
+                        if (ins.operands.size() < 5) return false;
+                        if (!sam_cmp[sidx]) return false;   // comparison sampler required
+                        std::string ref;
+                        if (!scalar_expr(ins.operands[4], ref)) return false;
+                        call = "vec4(texture(t" + std::to_string(tidx) + "_shadow, vec3(" +
+                               uv + ", " + ref + ")))";   // scalar result replicated
+                        break;
+                    }
+                    default:
+                        return false;
+                }
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + call + ";");
                 break;
             }
             case ShaderOpcode::If: {
