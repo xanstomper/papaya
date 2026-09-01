@@ -151,6 +151,11 @@ add_executable(test_pipeline_map test_pipeline_map.cpp)
 target_link_libraries(test_pipeline_map PRIVATE papaya-gpu)
 add_test(NAME PipelineMapTest COMMAND test_pipeline_map)
 
+# In-process DXBC -> SPIR-V via glslang (Stage 4c).
+add_executable(test_shader_compile test_shader_compile.cpp)
+target_link_libraries(test_shader_compile PRIVATE papaya-gpu)
+add_test(NAME ShaderCompileTest COMMAND test_shader_compile)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)

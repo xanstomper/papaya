@@ -44,6 +44,10 @@ void d3d11_clear_rtv(void* rtv, const float rgba[4]);
 // consumers and tests). Returns nullptr for null shaders.
 const char* d3d11_shader_get_glsl(void* shader, bool* translated);
 
+// SPIR-V words produced by the in-process glslang compile (nullptr when the
+// build lacks glslang or the shader is outside the supported subset).
+const u32* d3d11_shader_get_spirv(void* shader, u32* word_count);
+
 // Capture the pipeline state currently bound to the context: the VS/PS
 // shader objects and the input layout (for the Vulkan pipeline builder).
 void d3d11_context_pipeline_snapshot(void* ctx, void** vs, void** ps, void** layout);

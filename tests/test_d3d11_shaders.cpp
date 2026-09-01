@@ -16,6 +16,7 @@ using papaya::win32::d3d11_shader_get_glsl;
 using papaya::win32::d3d11_context_pipeline_snapshot;
 using papaya::win32::d3d11_input_layout_count;
 using papaya::win32::d3d11_input_layout_element;
+using papaya::win32::d3d11_shader_get_spirv;
 using papaya::u8;
 using papaya::u32;
 using papaya::u64;
@@ -97,6 +98,15 @@ int main() {
         std::strstr(glsl, "o0 = (r0 + vec4(1.0, 2.0, 3.0, 4.0));") == nullptr) {
         std::printf("fail: bad GLSL\n%s\n", glsl); return 4;
     }
+
+    // The shader object also carries in-process compiled SPIR-V (glslang).
+#ifdef PAPAYA_HAS_GLSLANG
+    u32 spv_words = 0;
+    const u32* spv = d3d11_shader_get_spirv(shader, &spv_words);
+    if (!spv || spv_words < 16 || spv[0] != 0x07230203u) {
+        std::printf("fail: no SPIR-V on shader object\n"); return 5;
+    }
+#endif
 
     // Same call through CreateVertexShader (slot 12).
     auto create_vertex_shader = reinterpret_cast<create_shader_t>(vtbl[12]);

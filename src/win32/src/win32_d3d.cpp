@@ -2,6 +2,7 @@
 #include "papaya/win32/win32_window.hpp"
 #include "papaya/common/logger.hpp"
 #include "papaya/gpu/shader_translator.hpp"
+#include "papaya/gpu/shader_compile.hpp"
 #include <cstring>
 #include <cstdlib>
 #include <string>
@@ -85,21 +86,35 @@ struct RenderTargetView : D3DObject {
 struct D3DShader : D3DObject {
     std::string glsl;      // emitted GLSL from the DXBC->GLSL translation
     bool translated{false}; // false when outside the supported emission subset
+    std::vector<u32> spirv;  // in-process GLSL->SPIR-V when glslang is linked
+    bool compiled{false};    // spirv ready for the Vulkan pipeline builder
 };
 
 D3DDevice*  g_device  = nullptr;
 D3DContext* g_context = nullptr;
 SwapChain*  g_swap    = nullptr;
 
-static D3DMS u64 dev_create_shader(void* self, u64 code, u64 len, u64 linkage, u64 out) {
+static D3DMS u64 dev_create_shader_impl(void* self, u64 code, u64 len, u64 linkage,
+        u64 out, u32 stage) {
     (void)self; (void)linkage;
     auto* shader = new D3DShader();
     if (code && len) {
         const auto* bytes = reinterpret_cast<const u8*>(code);
         shader->translated = papaya::gpu::dxbc_to_glsl({bytes, len}, shader->glsl);
+        if (shader->translated) {
+            std::string err;
+            shader->compiled =
+                    papaya::gpu::compile_glsl_to_spirv(shader->glsl, stage, shader->spirv, err);
+        }
     }
     if (out) *reinterpret_cast<void**>(out) = shader;
     return 0; // S_OK
+}
+static D3DMS u64 dev_create_vertex_shader(void* self, u64 code, u64 len, u64 linkage, u64 out) {
+    return dev_create_shader_impl(self, code, len, linkage, out, papaya::gpu::kStageVertex);
+}
+static D3DMS u64 dev_create_pixel_shader(void* self, u64 code, u64 len, u64 linkage, u64 out) {
+    return dev_create_shader_impl(self, code, len, linkage, out, papaya::gpu::kStageFragment);
 }
 
 static D3DMS u64 dev_create_input_layout(void* self, u64 descs, u64 num_elements,
@@ -278,8 +293,8 @@ void* build_device_vtbl() {
     v[2]=reinterpret_cast<void*>(&thunk_release);
     v[9]=reinterpret_cast<void*>(&dev_create_render_target_view);
     v[11]=reinterpret_cast<void*>(&dev_create_input_layout);   // CreateInputLayout
-    v[12]=reinterpret_cast<void*>(&dev_create_shader);   // CreateVertexShader
-    v[15]=reinterpret_cast<void*>(&dev_create_shader);   // CreatePixelShader
+    v[12]=reinterpret_cast<void*>(&dev_create_vertex_shader);   // CreateVertexShader
+    v[15]=reinterpret_cast<void*>(&dev_create_pixel_shader);    // CreatePixelShader
     // all other slots default null; guest calling them would fault, so fill no-ops
     return v;
 }
@@ -392,6 +407,18 @@ const char* d3d11_input_layout_element(void* layout, u32 i, u32* semantic_index,
     if (semantic_index) *semantic_index = l->elements[i].semantic_index;
     if (format) *format = l->elements[i].format;
     return l->elements[i].semantic.c_str();
+}
+
+// SPIR-V words produced by the glslang-backed compile (nullptr when the host
+// build lacks glslang or the shader is outside the supported subset).
+const u32* d3d11_shader_get_spirv(void* shader, u32* word_count) {
+    auto* s = static_cast<D3DShader*>(shader);
+    if (!s || !s->compiled) {
+        if (word_count) *word_count = 0;
+        return nullptr;
+    }
+    if (word_count) *word_count = static_cast<u32>(s->spirv.size());
+    return s->spirv.data();
 }
 
 const char* d3d11_shader_get_glsl(void* shader, bool* translated) {

@@ -250,6 +250,19 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   VkFormat values, append-aligned + per-instance vertex math, descriptor
   layout + collision check, depth-format refusal. ctest 25/25, guest suite
   21/21, glslang validation green.
+- Stage 4c (done, verified): in-process GLSL -> SPIR-V via the glslang
+  LIBRARY. `shader_compile` links glslang statically (CMake option
+  PAPAYA_GLSLANG_ROOT + SPIRV-Headers; without it the API refuses cleanly):
+  compile_glsl_to_spirv() drives glslang's C++ API (ES 3.10, Vulkan client,
+  SPIR-V 1.0) and dxbc_to_spirv() closes the whole chain in one process:
+  DXBC container -> decode -> GLSL -> SPIR-V words (168 words for the test
+  shader). The D3D11 shader objects now carry the compiled SPIR-V
+  (d3d11_shader_get_spirv), with CreateVertexShader compiled as vertex stage
+  and CreatePixelShader as fragment stage, so the Vulkan pipeline builder
+  gets VkShaderModule-ready binaries directly from Create*Shader. test_
+  shader_compile (26th ctest): SPIR-V magic + word count for fragment and
+  vertex, clean refusal for garbage bytecode and for missing-glslang builds.
+  ctest 26/26, guest suite 21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->
