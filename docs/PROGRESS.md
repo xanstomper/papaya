@@ -146,10 +146,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   decode+emit of dcl_input/dcl_output/dcl_temps/mov/mul+immconst/add.sat
   yields exact expected GLSL lines, and an ld instruction is refused.
   ctest 23/23, guest suite 21/21.
-- Stage 3 (next): control flow (if/else/loop/switch/break/continue), texture
-  loads/samples, constant-buffer indexing, and wiring the emitted GLSL into
-  glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan pipeline
-  mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
+- Stage 2d (done, verified): control-flow emission. `sm4_emit_glsl()` now emits
+  if/else/endif (any(cond != vec4(0.0))), for(;;) loops, break/continue (+
+  conditioned breakc/continuec), discard, retc, with proper indentation. SM4
+  declarations that don't change the ALU body (dcl_globalFlags, cbuffer,
+  sampler, resource, indexable_temp, topology/primitive dcls) are consumed as
+  inert. switch/case is REFUSED (not silently dropped): the all-vec4-f32
+  representation cannot express an integer switch faithfully. cb-register
+  reads are refused until constant-buffer support lands (Stage 3), instead of
+  emitting undefined identifiers. Verified: decode+emit of if/else/loop/
+  breakc/continue/discard yields the expected GLSL, and switch fails cleanly.
+  ctest 23/23, guest suite 21/21.
+- Stage 3 (next): switch/case (int value representation), texture loads/
+  samples + resource binding, constant-buffer indexing, integer ops, and
+  wiring the emitted GLSL into glslang (SPIRV-Cross/DXC) for SPIR-V; then
+  D3D11-state->Vulkan pipeline mapping (OMSetRenderTargets->attachments,
+  shaders->pipeline stages).
 
 ## Hygiene standard (adopted)
 

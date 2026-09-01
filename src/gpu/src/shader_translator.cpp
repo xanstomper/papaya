@@ -370,8 +370,7 @@ std::string reg_ref(const DecodedOperand& op) {
         case 0x02: return "o" + std::to_string(op.reg_index());
         case 0x06: return "s" + std::to_string(op.reg_index());
         case 0x07: return "t" + std::to_string(op.reg_index());
-        case 0x08: return "cb" + std::to_string(op.reg_index());
-        default: return std::string();
+        default: return std::string();   // cb/other indexed classes: Stage 3
     }
 }
 
@@ -413,11 +412,15 @@ bool src_expr(const DecodedOperand& op, std::string& out) {
 
 const DecodedOperand& dst_of(const DecodedInstruction& ins) { return ins.operands[0]; }
 
+std::string pad(int indent) { return std::string(static_cast<size_t>(indent) * 4, ' '); }
+
 } // namespace
 
 bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) {
     out.clear();
-    out += "// papaya sm4->glsl (Stage 2c, ALU subset)\n";
+    out += "// papaya sm4->glsl (Stage 2c/2d: ALU subset + control flow)\n";
+    int indent = 0;
+    auto line = [&](std::string s) { out += pad(indent) + s + "\n"; };
     for (const auto& ins : insns) {
         switch (ins.opcode) {
             case ShaderOpcode::DclTemps: {
@@ -434,8 +437,17 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 if (ins.operands.size() != 1) return false;
                 out += "vec4 o" + std::to_string(ins.operands[0].reg_index()) + ";\n";
                 break;
-            case ShaderOpcode::DclSampler:   // unused in the ALU body
+            // SM4 declarations that do not change the ALU body: the runtime
+            // binds resources/cbuffers/global flags from the DXBC container.
+            case ShaderOpcode::DclGlobalFlags:
+            case ShaderOpcode::DclConstantBuffer:
+            case ShaderOpcode::DclSampler:
             case ShaderOpcode::DclResource:
+            case ShaderOpcode::DclIndexableTemp:
+            case ShaderOpcode::DclIndexRange:
+            case ShaderOpcode::DclOutputTopology:
+            case ShaderOpcode::DclInputPrimitive:
+            case ShaderOpcode::DclVerticesOut:
                 break;
             case ShaderOpcode::Mov:
             case ShaderOpcode::Add:
@@ -460,7 +472,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                     default: return false;
                 }
                 if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
-                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";");
                 break;
             }
             case ShaderOpcode::Movc: {
@@ -468,8 +480,8 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 std::string cond, a, b;
                 if (!src_expr(ins.operands[1], cond) || !src_expr(ins.operands[2], a) ||
                     !src_expr(ins.operands[3], b)) return false;
-                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
-                       " = mix(" + b + ", " + a + ", clamp(" + cond + ", 0.0, 1.0));\n";
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                     " = mix(" + b + ", " + a + ", clamp(" + cond + ", 0.0, 1.0));");
                 break;
             }
             case ShaderOpcode::Dp2:
@@ -481,7 +493,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 static const char* kComp[3] = {"xy", "xyz", "xyzw"};
                 const int n = static_cast<int>(ins.opcode) - static_cast<int>(ShaderOpcode::Dp2) + 2;
                 const std::string body = "dot(" + a + "." + kComp[n - 2] + ", " + b + "." + kComp[n - 2] + ")";
-                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";");
                 break;
             }
             case ShaderOpcode::Eq:
@@ -495,8 +507,8 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                         ins.opcode == ShaderOpcode::Eq ? "equal" :
                         ins.opcode == ShaderOpcode::Ge ? "greaterThanEqual" :
                         ins.opcode == ShaderOpcode::Lt ? "lessThan" : "notEqual";
-                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
-                       " = vec4(" + fn + "(" + a + ", " + b + "));\n";
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                     " = vec4(" + fn + "(" + a + ", " + b + "));");
                 break;
             }
             case ShaderOpcode::Exp:
@@ -531,27 +543,77 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                     default: return false;
                 }
                 if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
-                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";");
                 break;
             }
-            case ShaderOpcode::Ret:
-            case ShaderOpcode::Retc:
-            case ShaderOpcode::Nop:
-            case ShaderOpcode::If:
+            case ShaderOpcode::If: {
+                // if (cond != 0.0) {   (nonzero condition, per SM4 semantics)
+                if (ins.operands.size() < 1) return false;
+                std::string cond;
+                if (!src_expr(ins.operands[0], cond)) return false;
+                line("if (any(" + cond + " != vec4(0.0))) {");
+                ++indent;
+                break;
+            }
             case ShaderOpcode::Else:
+                --indent;
+                line("} else {");
+                ++indent;
+                break;
             case ShaderOpcode::EndIf:
+                --indent;
+                line("}");
+                break;
             case ShaderOpcode::Loop:
+                line("for (;;) {");
+                ++indent;
+                break;
             case ShaderOpcode::EndLoop:
+                --indent;
+                line("}");
+                break;
             case ShaderOpcode::Break:
-            case ShaderOpcode::Breakc:
+                line("break;");
+                break;
             case ShaderOpcode::Continue:
-            case ShaderOpcode::Continuec:
+                line("continue;");
+                break;
+            case ShaderOpcode::Breakc: {
+                // if (cond != 0.0) break;   (Z/NZ flag at bit 18: NZ by default)
+                if (ins.operands.size() < 1) return false;
+                std::string cond;
+                if (!src_expr(ins.operands[0], cond)) return false;
+                line("if (any(" + cond + " != vec4(0.0))) break;");
+                break;
+            }
+            case ShaderOpcode::Continuec: {
+                if (ins.operands.size() < 1) return false;
+                std::string cond;
+                if (!src_expr(ins.operands[0], cond)) return false;
+                line("if (any(" + cond + " != vec4(0.0))) continue;");
+                break;
+            }
             case ShaderOpcode::Discard:
+                line("discard;");
+                break;
+            case ShaderOpcode::Ret:
+                // implicit end of the shader; nothing to emit
+                break;
+            case ShaderOpcode::Retc: {
+                if (ins.operands.size() < 1) return false;
+                std::string cond;
+                if (!src_expr(ins.operands[0], cond)) return false;
+                line("if (any(" + cond + " != vec4(0.0))) return;");
+                break;
+            }
             case ShaderOpcode::Switch:
             case ShaderOpcode::Case:
             case ShaderOpcode::Default:
             case ShaderOpcode::EndSwitch:
-                // Control flow: recognized, not emitted (Stage 3 will emit it).
+                // switch/case needs an integer switch value; our current
+                // all-vec4-f32 representation cannot express it faithfully.
+                return false;
+            case ShaderOpcode::Nop:
                 break;
             default:
                 return false;   // unsupported opcode: caller falls back

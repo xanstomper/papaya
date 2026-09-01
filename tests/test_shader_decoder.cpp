@@ -27,7 +27,7 @@ using papaya::gpu::DecodedInstruction;
 using papaya::gpu::DecodedOperand;
 using papaya::u32;
 
-static u32 inst(u32 opcode, u32 len, u32 flags = 0) {
+static u32 inst(u32 opcode, u32 len = 0, u32 flags = 0) {
     return ((len & 0x1Fu) << 24) | ((flags & 0x7u) << 11) | (opcode & 0xFFu);
 }
 static u32 operand(u32 reg_type, u32 order = 1, u32 dim = 3, u32 mask = 0,
@@ -204,6 +204,65 @@ int main() {
     std::string junk;
     if (sm4_emit_glsl({lins.data(), lins.size()}, junk)) return 30;
 
-    std::printf("ok: mov/add/dcl_temps/relative decode, info table, GLSL emit, malformed rejected\n");
+    // --- GLSL control flow (Stage 2d) ---
+    // if (v0.x) { r0 = v0; } else { r0 = v1; }
+    // loop { if (v0.y) break; continue; }
+    // discard;  ret
+    std::vector<u32> cf;
+    cf.push_back(inst(0x5F, 3));                       // dcl_input v0
+    cf.push_back(operand(0x01, 1, 3, 0xF)); cf.push_back(0);
+    cf.push_back(inst(0x5F, 3));                       // dcl_input v1
+    cf.push_back(operand(0x01, 1, 3, 0xF)); cf.push_back(1);
+    cf.push_back(inst(0x68, 2));                       // dcl_temps 1
+    cf.push_back(1);
+    cf.push_back(inst(0x1F, 3));                       // if v0.x
+    cf.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0));
+    cf.push_back(0);
+    cf.push_back(inst(0x36, 5));                       // mov r0, v0
+    cf.push_back(operand(0x00, 1, 3, 0xF)); cf.push_back(0);
+    cf.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); cf.push_back(0);
+    cf.push_back(inst(0x12, 1));                          // else
+    cf.push_back(inst(0x36, 5));                       // mov r0, v1
+    cf.push_back(operand(0x00, 1, 3, 0xF)); cf.push_back(0);
+    cf.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3)); cf.push_back(1);
+    cf.push_back(inst(0x15, 1));                          // endif
+    cf.push_back(inst(0x30, 1));                          // loop
+    cf.push_back(inst(0x03, 3));                       // breakc v0.y
+    cf.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(1, 1, 1, 1));
+    cf.push_back(0);
+    cf.push_back(inst(0x07, 1));                          // continue
+    cf.push_back(inst(0x16, 1));                          // endloop
+    cf.push_back(inst(0x0D, 3));                       // discard v0.x
+    cf.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0));
+    cf.push_back(0);
+    cf.push_back(inst(0x3E, 1));                          // ret
+
+    std::vector<DecodedInstruction> cins;
+    if (!sm4_decode({cf.data(), cf.size()}, cins)) return 31;
+    {
+        std::string gls;
+        if (!sm4_emit_glsl({cins.data(), cins.size()}, gls)) return 32;
+        const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
+        if (!has("if (any(v0.xxxx != vec4(0.0))) {")) return 33;
+        if (!has("} else {")) return 34;
+        if (!has("for (;;) {")) return 35;
+        if (!has("if (any(v0.yyyy != vec4(0.0))) break;")) return 36;
+        if (!has("discard;")) return 37;
+        if (!has("continue;")) return 42;
+        if (!has("    r0 = v0;") || !has("    r0 = v1;")) return 38;   // indented body
+    }
+    // switch must be refused, not silently dropped
+    std::vector<u32> sw = { inst(0x4C, 3) };           // switch v0.x
+    sw.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 0, 0, 0));
+    sw.push_back(0);
+    sw.push_back(inst(0x06, 3));                       // case 5: immconst
+    sw.push_back(operand(0x04, 0, 0));                 // scalar imm
+    sw.push_back(5);
+    sw.push_back(inst(0x17, 1));                          // endswitch
+    std::vector<DecodedInstruction> sins;
+    if (!sm4_decode({sw.data(), sw.size()}, sins)) return 39;
+    if (sm4_emit_glsl({sins.data(), sins.size()}, junk)) return 40;
+
+    std::printf("ok: decode+info+emit+control flow, malformed/unsupported rejected\n");
     return 0;
 }
