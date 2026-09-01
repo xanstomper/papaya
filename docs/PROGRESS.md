@@ -120,6 +120,12 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   real 32-byte element layout + semantic names). Bounds-checked; bad magic /
   truncated fail cleanly. Tested with a synthetic-but-valid DXBC blob
   (chunks=2, bytecode, 1 input sig "POSITION"). ctest 22/22.
+- Stage 2a (done, verified): `sm4_decode()` — SM4/SM5 instruction decoder
+  (instruction token: length/opcode-type/opcode; extended-opcode token for
+  MOV/MUL-class ops; operand tokens: reg type, mask, swizzle, indexables with
+  absolute/relative addressing). Malformed streams (bad length) fail cleanly.
+  Base opcodes 0x1..0x1D + extended MOV/MUL decoded; rest read as Unknown.
+  Tested with synthetic ADD + extended-MOV streams; ctest 23/23.
 - Stage 2 (next): wire the compiler-lib backend and the D3D11-state->Vulkan
   pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
 
@@ -137,8 +143,9 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
 
 ## Known honest open items (not claimed done)
 - D3D->Vulkan: swapchain image acquisition + staging upload so presents actually
-  render; **DXBC/HLSL -> SPIR-V** shader translation (the multi-year DXVK-
-  equivalent piece) is NOT started in any real form.
+  render; **DXBC/HLSL -> SPIR-V** shader translation has its container parser
+  (Stage 1) + SM4/SM5 decoder (Stage 2a); the compiler-lib backend that emits
+  SPIR-V is NOT started (needs SPIRV-Cross/DXC/glslang on the host).
 - GDI text/font (CreateFontIndirectW, GetTextMetricsW) needs a real font engine
   (FreeType decision not yet made).
 - advapi32 services (feature-absent decision not yet made).

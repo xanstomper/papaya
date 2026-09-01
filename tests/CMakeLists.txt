@@ -177,6 +177,11 @@ add_executable(test_shader_translator test_shader_translator.cpp)
 target_link_libraries(test_shader_translator PRIVATE papaya-gpu)
 add_test(NAME ShaderTranslatorTest COMMAND test_shader_translator)
 
+# SM4/SM5 instruction decoder (Stage 2a of D3D11 shader translation).
+add_executable(test_shader_decoder test_shader_decoder.cpp)
+target_link_libraries(test_shader_decoder PRIVATE papaya-gpu)
+add_test(NAME ShaderDecoderTest COMMAND test_shader_decoder)
+
 if (PAPAYA_ENABLE_FUZZING)
     add_subdirectory(fuzz)
 endif()
