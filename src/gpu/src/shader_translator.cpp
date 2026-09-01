@@ -432,8 +432,9 @@ std::string pad(int indent) { return std::string(static_cast<size_t>(indent) * 4
 
 bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) {
     out.clear();
-    out += "// papaya sm4->glsl (Stage 2c/2d: ALU subset + control flow)\n";
+    out += "// papaya sm4->glsl (Stage 2c/2d/3: ALU + control flow + textures)\n";
     int indent = 0;
+    u32 res_type[16] = {};   // tN -> resource type (from dcl_resource aux bits)
     auto line = [&](std::string s) { out += pad(indent) + s + "\n"; };
     for (const auto& ins : insns) {
         switch (ins.opcode) {
@@ -455,13 +456,28 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             // binds resources/samplers/global flags from the DXBC container.
             case ShaderOpcode::DclGlobalFlags:
             case ShaderOpcode::DclSampler:
-            case ShaderOpcode::DclResource:
             case ShaderOpcode::DclIndexableTemp:
             case ShaderOpcode::DclIndexRange:
             case ShaderOpcode::DclOutputTopology:
             case ShaderOpcode::DclInputPrimitive:
             case ShaderOpcode::DclVerticesOut:
                 break;
+            case ShaderOpcode::DclResource: {
+                // dcl_resource tN, <type>: resource type in opcode bits 11-14
+                // (aux bits 0-3). GLSL ES 3.0-style sampler declarations.
+                if (ins.operands.size() != 1) return false;
+                const u32 rtype = ins.aux & 0xFu;
+                const char* decl = rtype == 3 ? "sampler2D" :
+                                   rtype == 5 ? "sampler3D" :
+                                   rtype == 6 ? "samplerCube" :
+                                   rtype == 8 ? "sampler2DArray" : nullptr;
+                if (!decl) return false;   // 1D/buffer/MS/raw: not supported yet
+                const u32 tidx = ins.operands[0].reg_index();
+                if (tidx >= 16) return false;
+                res_type[tidx] = rtype;
+                out += "uniform " + std::string(decl) + " t" + std::to_string(tidx) + ";\n";
+                break;
+            }
             case ShaderOpcode::DclConstantBuffer: {
                 // dcl_constantbuffer cbN[M]: operand idx0 = buffer, idx1 = size
                 // in vec4 registers -> uniform vec4 cbN[M];
@@ -571,6 +587,43 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 }
                 if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
                 line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";");
+                break;
+            }
+            case ShaderOpcode::Sample: {
+                // sample dst, uv, tN, sN  (2D/3D/cube/2D-array texture()).
+                if (ins.operands.size() < 4) return false;
+                const DecodedOperand& uvo = ins.operands[1];
+                const u32 tidx = ins.operands[2].reg_index();
+                if (tidx >= 16) return false;
+                const u32 rtype = res_type[tidx];
+                const bool vec2_coords = rtype == 3;   // sampler2D
+                if (rtype != 3 && rtype != 5 && rtype != 6 && rtype != 8) return false;
+                // uv must read components x,y (identity or xy-first swizzle).
+                if ((uvo.swizzle & 0x3u) != 0 || ((uvo.swizzle >> 2) & 0x3u) != 1 ||
+                    !((uvo.swizzle & 0x3) == 0 && ((uvo.swizzle >> 2) & 0x3) == 1 &&
+                      ((uvo.swizzle >> 4) & 0x3) == 2 && ((uvo.swizzle >> 6) & 0x3) == 3))
+                    return false;
+                std::string uv;
+                if (!src_expr(uvo, uv, vec2_coords ? ".xy" : ".xyz")) return false;
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                     " = texture(t" + std::to_string(tidx) + ", " + uv + ");");
+                break;
+            }
+            case ShaderOpcode::Ld: {
+                // ld dst, address, tN  (2D: texelFetch with int coords + mip).
+                if (ins.operands.size() < 3) return false;
+                const DecodedOperand& ao = ins.operands[1];
+                const u32 tidx = ins.operands[2].reg_index();
+                if (tidx >= 16 || res_type[tidx] != 3) return false;   // 2D only
+                if ((ao.swizzle & 0x3u) != 0 || ((ao.swizzle >> 2) & 0x3u) != 1 ||
+                    !((ao.swizzle & 0x3) == 0 && ((ao.swizzle >> 2) & 0x3) == 1 &&
+                      ((ao.swizzle >> 4) & 0x3) == 2 && ((ao.swizzle >> 6) & 0x3) == 3))
+                    return false;
+                std::string af;
+                if (!src_expr(ao, af, "")) return false;   // full vec4 address
+                line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                     " = texelFetch(t" + std::to_string(tidx) + ", ivec2(" + af +
+                     ".xy), int(" + af + ".z));");
                 break;
             }
             case ShaderOpcode::If: {

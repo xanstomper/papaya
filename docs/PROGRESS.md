@@ -169,11 +169,19 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   texture stage. Relative cb addressing still refused (honest). Verified:
   decode+emit of dcl_cb + mov/add from cb0/cb1 yields the exact expected
   GLSL. ctest 23/23, guest suite 21/21.
-- Stage 3 (next): switch/case (int value representation), texture loads/
-  samples + resource binding, constant-buffer indexing, integer ops, and
-  wiring the emitted GLSL into glslang (SPIRV-Cross/DXC) for SPIR-V; then
-  D3D11-state->Vulkan pipeline mapping (OMSetRenderTargets->attachments,
-  shaders->pipeline stages).
+- Stage 3b (done, verified): texture sampling + loads. `dcl_resource tN`
+  emits sampler declarations from the resource type in opcode bits 11-14
+  (sampler2D/sampler3D/samplerCube/sampler2DArray; 1D/buffer/MS/raw refused
+  — GLSL ES 3.0 has no faithful forms); `sample` emits texture(tN, uv.xy/
+  uv.xyz) for the declared type; `ld` emits texelFetch(tN, ivec2(addr.xy),
+  int(addr.z)) for 2D. uv/address operands must have identity swizzles (real
+  fxc output always does); everything else is refused honestly. Verified:
+  decode+emit of dcl_resource/sampler + sample + ld yields the exact expected
+  GLSL, and a 1D resource is refused. ctest 23/23, guest suite 21/21.
+- Stage 3 (next): switch/case (int value representation), sample variants
+  (sample_b/lod/grad/c), integer ops, and wiring the emitted GLSL into
+  glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan pipeline
+  mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
 
 ## Hygiene standard (adopted)
 

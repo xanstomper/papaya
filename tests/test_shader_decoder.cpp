@@ -299,6 +299,50 @@ int main() {
         if (!has("r3.xy = (cb0[4].xy + cb1[2].xy);")) return 48;
     }
 
-    std::printf("ok: decode+info+emit+control flow+cb reads, malformed/unsupported rejected\n");
+    // --- textures (Stage 3b) ---
+    // dcl_resource t0, 2D;  dcl_sampler s0
+    // sample r0.xyzw, v0.xy, t0, s0
+    // ld r1.xyzw, v1.xyzw, t0
+    std::vector<u32> tx;
+    tx.push_back(inst(0x58, 4, 3));                    // dcl_resource: type 2D = 3
+    tx.push_back(operand(0x07, 1, 3, 0));              // RESOURCE t0
+    tx.push_back(0);
+    tx.push_back(0x55555555);                          // component types (unorm)
+    tx.push_back(inst(0x5A, 3));                       // dcl_sampler s0
+    tx.push_back(operand(0x06, 1, 3, 0));
+    tx.push_back(0);
+    tx.push_back(inst(0x45, 9));                       // sample
+    tx.push_back(operand(0x00, 1, 3, 0xF));            // dst r0
+    tx.push_back(0);
+    tx.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));  // uv v0
+    tx.push_back(0);
+    tx.push_back(operand(0x07, 1, 3, 0));              // RESOURCE t0
+    tx.push_back(0);
+    tx.push_back(operand(0x06, 1, 3, 0));              // SAMPLER s0
+    tx.push_back(0);
+    tx.push_back(inst(0x2D, 7));                       // ld
+    tx.push_back(operand(0x00, 1, 3, 0xF));            // dst r1
+    tx.push_back(1);
+    tx.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));  // addr v1
+    tx.push_back(1);
+    tx.push_back(operand(0x07, 1, 3, 0));              // RESOURCE t0
+    tx.push_back(0);
+    std::vector<DecodedInstruction> txins;
+    if (!sm4_decode({tx.data(), tx.size()}, txins)) return 50;
+    {
+        std::string gls;
+        if (!sm4_emit_glsl({txins.data(), txins.size()}, gls)) return 51;
+        const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
+        if (!has("uniform sampler2D t0;")) return 52;
+        if (!has("r0 = texture(t0, v0.xy);")) return 53;
+        if (!has("r1 = texelFetch(t0, ivec2(v1.xy), int(v1.z));")) return 54;
+    }
+    // 1D resource (type 2) must be refused, not silently mis-typed
+    std::vector<u32> tx1d = { inst(0x58, 4, 2), operand(0x07, 1, 3, 0), 0, 0x55555555 };
+    std::vector<DecodedInstruction> tx1;
+    if (!sm4_decode({tx1d.data(), tx1d.size()}, tx1)) return 55;
+    if (sm4_emit_glsl({tx1.data(), tx1.size()}, junk)) return 56;
+
+    std::printf("ok: decode+info+emit+control flow+cb+textures, malformed/unsupported rejected\n");
     return 0;
 }
