@@ -18,6 +18,7 @@
 #include <vector>
 
 using papaya::gpu::sm4_decode;
+using papaya::gpu::sm4_emit_glsl;
 using papaya::gpu::sm4_opcode_info;
 using papaya::gpu::sm4_opcode_name;
 using papaya::gpu::ShaderOpcode;
@@ -139,6 +140,70 @@ int main() {
     std::vector<u32> empty;
     if (sm4_decode({empty.data(), empty.size()}, ins)) return 21;
 
-    std::printf("ok: mov/add/dcl_temps/relative decode, info table, malformed rejected\n");
+    // --- GLSL emission (Stage 2c): decode+emit a small ALU shader ---
+    std::vector<u32> g;
+    // dcl_input v0
+    g.push_back(inst(0x5F, 3));
+    g.push_back(operand(0x01, 1, 3, 0xF));
+    g.push_back(0);
+    // dcl_output o0
+    g.push_back(inst(0x65, 3));
+    g.push_back(operand(0x02, 1, 3, 0xF));
+    g.push_back(0);
+    // dcl_temps 2
+    g.push_back(inst(0x68, 2));
+    g.push_back(2);
+    // mov r0.xyzw, v0.xyzw
+    g.push_back(inst(0x36, 5));
+    g.push_back(operand(0x00, 1, 3, 0xF));
+    g.push_back(0);
+    g.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));
+    g.push_back(0);
+    // mul r1.xy, r0.xyzw, l(2,2,2,2)
+    g.push_back(inst(0x38, 10));
+    g.push_back(operand(0x00, 1, 3, 0x3));               // TEMP r1, mask .xy
+    g.push_back(1);
+    g.push_back(operand(0x00, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));
+    g.push_back(0);
+    g.push_back(operand(0x04, 0, 3) | swizzle(0, 1, 2, 3));   // IMMCONST vec4
+    g.push_back(fbits(2.0f));
+    g.push_back(fbits(2.0f));
+    g.push_back(fbits(2.0f));
+    g.push_back(fbits(2.0f));
+    // add o0.xyzw, r0.xyzw, r1.xyzw  (saturate)
+    g.push_back(inst(0x00, 7, 0x4));
+    g.push_back(operand(0x02, 1, 3, 0xF));
+    g.push_back(0);
+    g.push_back(operand(0x00, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));
+    g.push_back(0);
+    g.push_back(operand(0x00, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));
+    g.push_back(1);
+
+    std::vector<DecodedInstruction> gins;
+    if (!sm4_decode({g.data(), g.size()}, gins)) return 22;
+    if (gins.size() != 6) return 23;
+    std::string glsl;
+    if (!sm4_emit_glsl({gins.data(), gins.size()}, glsl)) return 24;
+    const auto has = [&](const char* what) {
+        return glsl.find(what) != std::string::npos;
+    };
+    if (!has("vec4 v0;") || !has("vec4 o0;") || !has("vec4 r0;") || !has("vec4 r1;")) return 25;
+    if (!has("r0 = v0;")) return 26;
+    if (!has("r1.xy = (r0 * vec4(2.0, 2.0, 2.0, 2.0));")) return 27;
+    if (!has("o0 = clamp((r0 + r1), 0.0, 1.0);")) return 28;
+    // unsupported opcode (ld) must make emission fail, not emit garbage
+    std::vector<DecodedInstruction> lins;
+    std::vector<u32> ld = { inst(0x2D, 7) };                 // ld r0, t0, v0
+    ld.push_back(operand(0x00, 1, 3, 0xF));                  // dst TEMP r0
+    ld.push_back(0);
+    ld.push_back(operand(0x07, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));  // RESOURCE t0
+    ld.push_back(0);
+    ld.push_back(operand(0x01, 1, 3, 0, 0, 0, 0) | swizzle(0, 1, 2, 3));  // INPUT v0
+    ld.push_back(0);
+    if (!sm4_decode({ld.data(), ld.size()}, lins)) return 29;
+    std::string junk;
+    if (sm4_emit_glsl({lins.data(), lins.size()}, junk)) return 30;
+
+    std::printf("ok: mov/add/dcl_temps/relative decode, info table, GLSL emit, malformed rejected\n");
     return 0;
 }

@@ -197,6 +197,17 @@ const char* sm4_opcode_name(ShaderOpcode opcode);
 // and reported as ShaderOpcode::Unknown.
 bool sm4_decode(std::span<const u32> stream, std::vector<DecodedInstruction>& out);
 
+// ---- Stage 2c: SM4 -> GLSL emission (ALU subset) ----------------------------
+// Emits the shader BODY as GLSL (declarations + straight-line ALU) for the
+// supported subset: mov/add/mul/mad/min/max/dp2-4, comparisons (eq/ge/lt/ne),
+// exp/log/frc/sqrt/rsq/rcp/round_*, ddx/ddy, movc, saturate, immediate
+// constants, write masks and swizzles. dcl_temps/dcl_input/dcl_output become
+// vec4 declarations (the runtime binds actual inputs/outputs via the DXBC
+// ISGN/OSGN signatures). Returns false when an instruction is outside the
+// subset so the caller can fall back to another path; never emits partial
+// lies for unsupported opcodes.
+bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out);
+
 // FourCC helper ('SHEX' = 0x58454853 little-endian).
 inline u32 fourcc(char a, char b, char c, char d) {
     return static_cast<u32>(a) | (static_cast<u32>(b) << 8) |

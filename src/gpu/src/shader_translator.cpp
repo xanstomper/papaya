@@ -330,4 +330,234 @@ bool sm4_decode(std::span<const u32> stream, std::vector<DecodedInstruction>& ou
     return !out.empty();
 }
 
+// ---- SM4 -> GLSL emission (Stage 2c, ALU subset) ----------------------------
+namespace {
+
+// Write-mask suffix: 0xF -> ".xyzw", 0x3 -> ".xy", 0x1 -> ".x".
+std::string mask_suffix(u32 mask) {
+    if (mask == 0xF) return std::string();
+    std::string s = ".";
+    if (mask & 1) s += 'x';
+    if (mask & 2) s += 'y';
+    if (mask & 4) s += 'z';
+    if (mask & 8) s += 'w';
+    return s;
+}
+
+// Swizzle suffix: decoded swizzle value (comp i in bits 2i..2i+1) -> ".xyzw".
+std::string swizzle_suffix(u32 sw) {
+    static const char kC[4] = {'x', 'y', 'z', 'w'};
+    std::string s = ".";
+    for (int i = 0; i < 4; ++i) s += kC[(sw >> (2 * i)) & 3];
+    return s;
+}
+
+std::string fstr(float f) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.6g", static_cast<double>(f));
+    std::string s(buf);
+    if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
+        s.find("inf") == std::string::npos && s.find("nan") == std::string::npos)
+        s += ".0";
+    return s;
+}
+
+// Register reference: rN / vN / oN / tN / sN / cbN.
+std::string reg_ref(const DecodedOperand& op) {
+    switch (op.reg_type) {
+        case 0x00: return "r" + std::to_string(op.reg_index());
+        case 0x01: return "v" + std::to_string(op.reg_index());
+        case 0x02: return "o" + std::to_string(op.reg_index());
+        case 0x06: return "s" + std::to_string(op.reg_index());
+        case 0x07: return "t" + std::to_string(op.reg_index());
+        case 0x08: return "cb" + std::to_string(op.reg_index());
+        default: return std::string();
+    }
+}
+
+// Source operand expression with modifier + swizzle applied.
+bool src_expr(const DecodedOperand& op, std::string& out) {
+    if (op.reg_type == 0x04 || op.reg_type == 0x05) {   // immconst
+        if (op.imm.empty()) return false;
+        out += "vec4(";
+        for (size_t i = 0; i < 4; ++i) {
+            if (i) out += ", ";
+            float v = 0.0f;
+            if (i < op.imm.size()) std::memcpy(&v, &op.imm[i], 4);
+            out += fstr(v);
+        }
+        out += ")";
+        if ((op.swizzle & 0x3) == 0 && ((op.swizzle >> 2) & 0x3) == 1 &&
+            ((op.swizzle >> 4) & 0x3) == 2 && ((op.swizzle >> 6) & 0x3) == 3) {
+            // identity swizzle: no suffix
+        } else {
+            out += swizzle_suffix(op.swizzle);
+        }
+        if (op.modifier == 1) out = "-(" + out + ")";
+        else if (op.modifier == 2) out = "abs(" + out + ")";
+        else if (op.modifier == 3) out = "-abs(" + out + ")";
+        return true;
+    }
+    const std::string ref = reg_ref(op);
+    if (ref.empty() || !op.rel.empty()) return false;   // cb/r indexing unsupported
+    std::string s = ref;
+    if ((op.swizzle & 0x3) != 0 || ((op.swizzle >> 2) & 0x3) != 1 ||
+        ((op.swizzle >> 4) & 0x3) != 2 || ((op.swizzle >> 6) & 0x3) != 3)
+        s += swizzle_suffix(op.swizzle);
+    if (op.modifier == 1) s = "-(" + s + ")";
+    else if (op.modifier == 2) s = "abs(" + s + ")";
+    else if (op.modifier == 3) s = "-abs(" + s + ")";
+    out += s;
+    return true;
+}
+
+const DecodedOperand& dst_of(const DecodedInstruction& ins) { return ins.operands[0]; }
+
+} // namespace
+
+bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) {
+    out.clear();
+    out += "// papaya sm4->glsl (Stage 2c, ALU subset)\n";
+    for (const auto& ins : insns) {
+        switch (ins.opcode) {
+            case ShaderOpcode::DclTemps: {
+                const u32 count = ins.raw_words.empty() ? 0 : ins.raw_words[0];
+                for (u32 i = 0; i < count; ++i)
+                    out += "vec4 r" + std::to_string(i) + ";\n";
+                break;
+            }
+            case ShaderOpcode::DclInput:
+                if (ins.operands.size() != 1) return false;
+                out += "vec4 v" + std::to_string(ins.operands[0].reg_index()) + ";\n";
+                break;
+            case ShaderOpcode::DclOutput:
+                if (ins.operands.size() != 1) return false;
+                out += "vec4 o" + std::to_string(ins.operands[0].reg_index()) + ";\n";
+                break;
+            case ShaderOpcode::DclSampler:   // unused in the ALU body
+            case ShaderOpcode::DclResource:
+                break;
+            case ShaderOpcode::Mov:
+            case ShaderOpcode::Add:
+            case ShaderOpcode::Mul:
+            case ShaderOpcode::Mad:
+            case ShaderOpcode::Min:
+            case ShaderOpcode::Max: {
+                if (ins.operands.size() < 2) return false;
+                std::string a, b, c;
+                if (!src_expr(ins.operands[1], a)) return false;
+                std::string body;
+                switch (ins.opcode) {
+                    case ShaderOpcode::Mov: body = a; break;
+                    case ShaderOpcode::Add: if (!src_expr(ins.operands[2], b)) return false; body = "(" + a + " + " + b + ")"; break;
+                    case ShaderOpcode::Mul: if (!src_expr(ins.operands[2], b)) return false; body = "(" + a + " * " + b + ")"; break;
+                    case ShaderOpcode::Mad:
+                        if (ins.operands.size() < 3 || !src_expr(ins.operands[2], b) || !src_expr(ins.operands[3], c)) return false;
+                        body = "((" + a + " * " + b + ") + " + c + ")";
+                        break;
+                    case ShaderOpcode::Min: if (!src_expr(ins.operands[2], b)) return false; body = "min(" + a + ", " + b + ")"; break;
+                    case ShaderOpcode::Max: if (!src_expr(ins.operands[2], b)) return false; body = "max(" + a + ", " + b + ")"; break;
+                    default: return false;
+                }
+                if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
+                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                break;
+            }
+            case ShaderOpcode::Movc: {
+                if (ins.operands.size() < 3) return false;
+                std::string cond, a, b;
+                if (!src_expr(ins.operands[1], cond) || !src_expr(ins.operands[2], a) ||
+                    !src_expr(ins.operands[3], b)) return false;
+                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                       " = mix(" + b + ", " + a + ", clamp(" + cond + ", 0.0, 1.0));\n";
+                break;
+            }
+            case ShaderOpcode::Dp2:
+            case ShaderOpcode::Dp3:
+            case ShaderOpcode::Dp4: {
+                if (ins.operands.size() < 2) return false;
+                std::string a, b;
+                if (!src_expr(ins.operands[1], a) || !src_expr(ins.operands[2], b)) return false;
+                static const char* kComp[3] = {"xy", "xyz", "xyzw"};
+                const int n = static_cast<int>(ins.opcode) - static_cast<int>(ShaderOpcode::Dp2) + 2;
+                const std::string body = "dot(" + a + "." + kComp[n - 2] + ", " + b + "." + kComp[n - 2] + ")";
+                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                break;
+            }
+            case ShaderOpcode::Eq:
+            case ShaderOpcode::Ge:
+            case ShaderOpcode::Lt:
+            case ShaderOpcode::Ne: {
+                if (ins.operands.size() < 2) return false;
+                std::string a, b;
+                if (!src_expr(ins.operands[1], a) || !src_expr(ins.operands[2], b)) return false;
+                const char* fn =
+                        ins.opcode == ShaderOpcode::Eq ? "equal" :
+                        ins.opcode == ShaderOpcode::Ge ? "greaterThanEqual" :
+                        ins.opcode == ShaderOpcode::Lt ? "lessThan" : "notEqual";
+                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
+                       " = vec4(" + fn + "(" + a + ", " + b + "));\n";
+                break;
+            }
+            case ShaderOpcode::Exp:
+            case ShaderOpcode::Log:
+            case ShaderOpcode::Frc:
+            case ShaderOpcode::Sqrt:
+            case ShaderOpcode::Rsq:
+            case ShaderOpcode::Rcp:
+            case ShaderOpcode::RoundNe:
+            case ShaderOpcode::RoundNi:
+            case ShaderOpcode::RoundPi:
+            case ShaderOpcode::RoundZ:
+            case ShaderOpcode::DerivRtx:
+            case ShaderOpcode::DerivRty: {
+                if (ins.operands.size() < 2) return false;
+                std::string a;
+                if (!src_expr(ins.operands[1], a)) return false;
+                std::string body;
+                switch (ins.opcode) {
+                    case ShaderOpcode::Exp: body = "exp2(" + a + ")"; break;
+                    case ShaderOpcode::Log: body = "log2(" + a + ")"; break;
+                    case ShaderOpcode::Frc: body = "fract(" + a + ")"; break;
+                    case ShaderOpcode::Sqrt: body = "sqrt(" + a + ")"; break;
+                    case ShaderOpcode::Rsq: body = "inversesqrt(" + a + ")"; break;
+                    case ShaderOpcode::Rcp: body = "(1.0 / " + a + ")"; break;
+                    case ShaderOpcode::RoundNe: body = "floor(" + a + " + 0.5)"; break;
+                    case ShaderOpcode::RoundNi: body = "floor(" + a + ")"; break;
+                    case ShaderOpcode::RoundPi: body = "ceil(" + a + ")"; break;
+                    case ShaderOpcode::RoundZ: body = "trunc(" + a + ")"; break;
+                    case ShaderOpcode::DerivRtx: body = "dFdx(" + a + ")"; break;
+                    case ShaderOpcode::DerivRty: body = "dFdy(" + a + ")"; break;
+                    default: return false;
+                }
+                if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
+                out += reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) + " = " + body + ";\n";
+                break;
+            }
+            case ShaderOpcode::Ret:
+            case ShaderOpcode::Retc:
+            case ShaderOpcode::Nop:
+            case ShaderOpcode::If:
+            case ShaderOpcode::Else:
+            case ShaderOpcode::EndIf:
+            case ShaderOpcode::Loop:
+            case ShaderOpcode::EndLoop:
+            case ShaderOpcode::Break:
+            case ShaderOpcode::Breakc:
+            case ShaderOpcode::Continue:
+            case ShaderOpcode::Continuec:
+            case ShaderOpcode::Discard:
+            case ShaderOpcode::Switch:
+            case ShaderOpcode::Case:
+            case ShaderOpcode::Default:
+            case ShaderOpcode::EndSwitch:
+                // Control flow: recognized, not emitted (Stage 3 will emit it).
+                break;
+            default:
+                return false;   // unsupported opcode: caller falls back
+        }
+    }
+    return true;
+}
+
 } // namespace papaya::gpu

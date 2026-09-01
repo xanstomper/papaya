@@ -134,8 +134,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   off-by-one opcode table and the wrong bit layout; corrected here.
   Verified: `test_shader_decoder` — MOV/ADD+immconst/dcl_temps/relative
   addressing decode, info lookup, malformed rejection. ctest 23/23.
-- Stage 2 (next): wire the compiler-lib backend and the D3D11-state->Vulkan
-  pipeline mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
+- Stage 2c (done, verified): `sm4_emit_glsl()` — the FIRST real translation
+  output: decoded SM4 instructions -> GLSL body. Supported ALU subset:
+  mov/add/mul/mad/min/max/dp2-4, comparisons (eq/ge/lt/ne via bvec-construct),
+  exp2/log2/fract/sqrt/inversesqrt/rcp/round_* (banker's rounding approx)/
+  dFdx/dFdy, movc (mix), saturate (clamp), immediates with swizzles, write
+  masks, src modifiers (-/abs/-abs). dcl_temps/dcl_input/dcl_output become
+  vec4 declarations; resource/sampler dcls are consumed but inert in the ALU
+  body. Control-flow opcodes are recognized but not emitted (Stage 3). Any
+  unsupported opcode makes emission fail cleanly (no partial lies). Verified:
+  decode+emit of dcl_input/dcl_output/dcl_temps/mov/mul+immconst/add.sat
+  yields exact expected GLSL lines, and an ld instruction is refused.
+  ctest 23/23, guest suite 21/21.
+- Stage 3 (next): control flow (if/else/loop/switch/break/continue), texture
+  loads/samples, constant-buffer indexing, and wiring the emitted GLSL into
+  glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan pipeline
+  mapping (OMSetRenderTargets->attachments, shaders->pipeline stages).
 
 ## Hygiene standard (adopted)
 
