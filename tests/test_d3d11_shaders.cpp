@@ -20,6 +20,7 @@ using papaya::win32::d3d11_shader_get_spirv;
 using papaya::win32::d3d11_context_vertex_data;
 using papaya::win32::d3d11_context_draw_vertices;
 using papaya::win32::d3d11_context_cbuffer;
+using papaya::win32::d3d11_context_texture;
 #include "papaya/gpu/vulkan_swapchain.hpp"
 using papaya::u8;
 using papaya::u32;
@@ -231,10 +232,49 @@ int main() {
     if (gotcb[0] != 1.0f || gotcb[3] != 1.0f) { std::printf("fail: cb data\n"); return 21; }
     if (d3d11_context_cbuffer(ctx, 1, 4, &cbdata_out, &cbsize)) { std::printf("fail: unbound cb\n"); return 22; }
 
+    // ---- texture path: CreateTexture2D/SRV/UpdateSubresource/sampler ----
+    using create_tex_t = D3DMS long (*)(void*, void*, void*);
+    using create_srv_t = D3DMS long (*)(void*, void*, void*, void*);
+    using create_sam_t = D3DMS long (*)(void*, void*, void*);
+    using upd_sub_t = D3DMS void (*)(void*, void*, u32, void*, void*, u32, u32);
+    using set_sam_t = D3DMS void (*)(void*, u32, u32, void**);
+    using set_srv_t = D3DMS void (*)(void*, u32, u32, void**);
+    auto create_tex = reinterpret_cast<create_tex_t>(vtbl[5]);
+    auto create_srv = reinterpret_cast<create_srv_t>(vtbl[7]);
+    auto create_sam = reinterpret_cast<create_sam_t>(vtbl[23]);
+    auto update_sub = reinterpret_cast<upd_sub_t>(ctx_vtbl[47]);
+    auto ps_set_sam = reinterpret_cast<set_sam_t>(ctx_vtbl[10]);
+    auto ps_set_srv = reinterpret_cast<set_srv_t>(ctx_vtbl[8]);
+    u32 tex_desc[8] = { 4, 4, 1, 1, 28, 0, 0, 2 };   // 4x4 R8G8B8A8_UNORM, BindFlags=SRV(8)
+    void* tex = nullptr;
+    if (create_tex(dev, tex_desc, &tex) != 0 || !tex) { std::printf("fail: CreateTexture2D\n"); return 23; }
+    void* srv = nullptr;
+    if (create_srv(dev, tex, nullptr, &srv) != 0 || !srv) { std::printf("fail: CreateSRV\n"); return 24; }
+    u8 texels[4 * 4 * 4];
+    std::memset(texels, 0x00, sizeof(texels));
+    for (int i = 0; i < 4; ++i) texels[i * 4] = 255;   // red row
+    update_sub(ctx, tex, 0, nullptr, texels, 4 * 4, 0);
+    u32 sam_desc[11] = { 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };  // Filter=5 (linear)
+    void* sampler = nullptr;
+    if (create_sam(dev, sam_desc, &sampler) != 0 || !sampler) { std::printf("fail: CreateSamplerState\n"); return 25; }
+    void* sams[1] = { sampler };
+    void* srvs[1] = { srv };
+    ps_set_sam(ctx, 0, 1, sams);
+    ps_set_srv(ctx, 0, 1, srvs);
+    const u8* texdata = nullptr;
+    u32 texw = 0, texh = 0;
+    if (!d3d11_context_texture(ctx, 1, 0, &texdata, &texw, &texh) || texw != 4 || texh != 4) {
+        std::printf("fail: texture capture (%u x %u)\n", texw, texh); return 26;
+    }
+    // Row 0 all red (4 pixels), rows 1-3 black (row stride 16 bytes).
+    if (texdata[0] != 255 || texdata[4] != 255 || texdata[16] != 0 || texdata[17] != 0) {
+        std::printf("fail: texture data\n"); return 27;
+    }
+
     // Draw glue: with an uninitialized swapchain it must refuse cleanly.
     papaya::gpu::VulkanSwapchain no_swapchain;
-    if (d3d11_context_draw_vertices(ctx, &no_swapchain)) { std::printf("fail: draw without swapchain\n"); return 23; }
-    if (d3d11_context_draw_vertices(ctx, nullptr)) { std::printf("fail: draw null swapchain\n"); return 24; }
+    if (d3d11_context_draw_vertices(ctx, &no_swapchain)) { std::printf("fail: draw without swapchain\n"); return 28; }
+    if (d3d11_context_draw_vertices(ctx, nullptr)) { std::printf("fail: draw null swapchain\n"); return 29; }
 
     std::printf("ok: shader + input-layout + pipeline-state through real vtables, garbage refused\n");
     return 0;

@@ -65,6 +65,9 @@ void d3d11_context_vertex_data(void* ctx, const u8** data, u32* count, u32* stri
 // when bound, filling data/size (the buffer content written via Map).
 u32 d3d11_context_cbuffer(void* ctx, u32 stage, u32 slot, const u8** data, u32* size);
 
+// Bound sampled texture (RGBA8) via an SRV: returns 1 + data/dimensions.
+u32 d3d11_context_texture(void* ctx, u32 stage, u32 slot, const u8** data, u32* w, u32* h);
+
 // Render the bound translated pipeline into the given VulkanSwapchain and
 // present it: builds the PipelineSpec from the context snapshot (VS/PS SPIR-V,
 // input layout -> vertex input, bound vertex buffer). Returns false when the

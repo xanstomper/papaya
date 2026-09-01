@@ -361,6 +361,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   the full cb->descriptor->UBO-data path. Verified: vtable-level capture
   roundtrip in test_d3d11_shaders + verify_d3d_triangle.sh green.
   ctest 27/27, guest suite 22/22, glslang validation green.
+- Stage 3f-2 (done, verified): texture path -> image descriptors. The D3D11
+  side now captures the full texture pipeline: CreateTexture2D (device 5,
+  RGBA8-family formats host-backed), CreateShaderResourceView (device 7),
+  UpdateSubresource (context 47, row-pitch copy), CreateSamplerState (device
+  23) and PSSetSamplers (10)/VSSetSamplers (26) with PSSetShaderResources
+  (8)/VSSetShaderResources (25) unchanged. build_context_pipeline_spec adds
+  combined-image-sampler descriptors (binding = tN slot) for bound SRVs and
+  hands the first texture out; render_pipeline now uploads caller texture
+  data (staging -> image, replacing the 2x2 red fallback when provided).
+  d3d11_context_texture exposes the capture. The d3d_triangle guest's PS now
+  SAMPLES t0 (2x2 red texture created via the real vtables) and multiplies
+  by cb0[0]: the windowed end-to-end verification exercises texture creation
+  -> SRV -> bind -> update -> descriptor -> GPU upload -> texel fetch in
+  SPIR-V. Verified: vtable-level texture capture roundtrip in
+  test_d3d11_shaders (row-pitch copy + getter) + verify_d3d_triangle.sh
+  green. ctest 27/27, guest suite 22/22, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

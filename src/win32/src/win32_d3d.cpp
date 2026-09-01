@@ -72,6 +72,18 @@ struct D3D11Buffer : D3DObject {
     u32 stride_bytes{0};        // StructureByteStride (0 for raw usage)
     std::vector<u8> data;       // host storage written through Map/Unmap
 };
+struct D3D11Texture2D : D3DObject {
+    u32 w{0}, h{0};
+    u32 dxgi_format{0};         // only RGBA8-family formats are host-backed
+    bool supported{false};
+    std::vector<u8> data;       // RGBA8, filled via UpdateSubresource/Map
+};
+struct D3D11ShaderResourceView : D3DObject {
+    D3D11Texture2D* texture{nullptr};
+};
+struct D3D11Sampler : D3DObject {
+    u32 filter{0};              // D3D11_FILTER (0 = MIN_MAG_MIP_POINT, 1 = LINEAR...)
+};
 struct D3DContext : D3DObject {
     // last render targets for ClearRenderTargetView
     void* rtv{nullptr};
@@ -87,8 +99,10 @@ struct D3DContext : D3DObject {
     // resource binds (bindings match the emitter's scheme: cbN -> 16+N)
     D3D11Buffer* cb_vs[16] = {};
     D3D11Buffer* cb_ps[16] = {};
-    void* srv_vs[16] = {};
-    void* srv_ps[16] = {};
+    D3D11ShaderResourceView* srv_vs[16] = {};
+    D3D11ShaderResourceView* srv_ps[16] = {};
+    D3D11Sampler* sam_vs[16] = {};
+    D3D11Sampler* sam_ps[16] = {};
 };
 struct SwapChain : D3DObject {
     void* hwnd{nullptr};
@@ -132,6 +146,43 @@ static D3DMS u64 dev_create_vertex_shader(void* self, u64 code, u64 len, u64 lin
 }
 static D3DMS u64 dev_create_pixel_shader(void* self, u64 code, u64 len, u64 linkage, u64 out) {
     return dev_create_shader_impl(self, code, len, linkage, out, papaya::gpu::kStageFragment);
+}
+
+static D3DMS u64 dev_create_texture2d(void* self, u64 desc, u64 out) {
+    (void)self;
+    auto* tex = new D3D11Texture2D();
+    const u8* p = reinterpret_cast<const u8*>(desc);
+    if (p) {
+        u32 v[8];
+        std::memcpy(v, p, sizeof(v));          // D3D11_TEXTURE2D_DESC
+        tex->w = v[0];
+        tex->h = v[1];
+        tex->dxgi_format = v[4];
+        // Host-back only the RGBA8 family (28/29/85/87/88); others unsupported.
+        tex->supported = (tex->dxgi_format == 28u || tex->dxgi_format == 29u ||
+                          tex->dxgi_format == 85u || tex->dxgi_format == 87u ||
+                          tex->dxgi_format == 88u);
+        if (tex->supported) tex->data.assign(static_cast<size_t>(tex->w) * tex->h * 4, 0);
+    }
+    if (out) *reinterpret_cast<void**>(out) = tex;
+    return 0; // S_OK
+}
+
+static D3DMS u64 dev_create_shader_resource_view(void* self, u64 resource, u64 desc, u64 out) {
+    (void)self; (void)desc;
+    auto* srv = new D3D11ShaderResourceView();
+    srv->texture = static_cast<D3D11Texture2D*>(reinterpret_cast<void*>(resource));
+    if (out) *reinterpret_cast<void**>(out) = srv;
+    return 0; // S_OK
+}
+
+static D3DMS u64 dev_create_sampler_state(void* self, u64 desc, u64 out) {
+    (void)self;
+    auto* sam = new D3D11Sampler();
+    const u8* p = reinterpret_cast<const u8*>(desc);
+    if (p) sam->filter = *reinterpret_cast<const u32*>(p);   // D3D11_SAMPLER_DESC.Filter
+    if (out) *reinterpret_cast<void**>(out) = sam;
+    return 0; // S_OK
 }
 
 static D3DMS u64 dev_create_buffer(void* self, u64 desc, u64 out) {
@@ -217,6 +268,35 @@ static D3DMS u64 ctx_ia_set_vertex_buffers(void* self, u64 start_slot, u64 num,
     }
     return 0;
 }
+static D3DMS u64 ctx_update_subresource(void* self, u64 resource, u64 sub, u64 box,
+        u64 src, u64 pitch, u64 depth_pitch) {
+    (void)self; (void)sub; (void)box; (void)depth_pitch;
+    if (auto* tex = static_cast<D3D11Texture2D*>(reinterpret_cast<void*>(resource));
+        tex && tex->supported && src && pitch) {
+        const u32 row_bytes = tex->w * 4;
+        const u32 copy = pitch < row_bytes ? static_cast<u32>(pitch) : row_bytes;
+        for (u32 y = 0; y < tex->h; ++y) {
+            const u8* srow = reinterpret_cast<const u8*>(src) + static_cast<size_t>(y) * pitch;
+            if (y * pitch + copy <= tex->data.size())
+                std::memcpy(tex->data.data() + static_cast<size_t>(y) * row_bytes, srow, copy);
+        }
+    }
+    return 0;
+}
+static D3DMS u64 ctx_set_samplers(void* self, u64 is_vs, u64 start, u64 num, u64 samplers) {
+    auto* ctx = static_cast<D3DContext*>(self);
+    auto** s = reinterpret_cast<void**>(samplers);
+    auto* dst = is_vs ? ctx->sam_vs : ctx->sam_ps;
+    for (u64 i = 0; i < num && start + i < 16; ++i)
+        dst[start + i] = static_cast<D3D11Sampler*>(s ? s[i] : nullptr);
+    return 0;
+}
+static D3DMS u64 ctx_vs_set_samplers(void* self, u64 start, u64 num, u64 samplers) {
+    return ctx_set_samplers(self, 1, start, num, samplers);
+}
+static D3DMS u64 ctx_ps_set_samplers(void* self, u64 start, u64 num, u64 samplers) {
+    return ctx_set_samplers(self, 0, start, num, samplers);
+}
 static D3DMS u64 ctx_vs_set_constant_buffers(void* self, u64 start, u64 num, u64 bufs) {
     auto* ctx = static_cast<D3DContext*>(self);
     auto** b = reinterpret_cast<void**>(bufs);
@@ -235,7 +315,8 @@ static D3DMS u64 ctx_set_shader_resources(void* self, u64 is_vs, u64 start, u64 
     auto* ctx = static_cast<D3DContext*>(self);
     auto** v = reinterpret_cast<void**>(views);
     auto* dst = is_vs ? ctx->srv_vs : ctx->srv_ps;
-    for (u64 i = 0; i < num && start + i < 16; ++i) dst[start + i] = v ? v[i] : nullptr;
+    for (u64 i = 0; i < num && start + i < 16; ++i)
+        dst[start + i] = static_cast<D3D11ShaderResourceView*>(v ? v[i] : nullptr);
     return 0;
 }
 static D3DMS u64 ctx_vs_set_shader_resources(void* self, u64 start, u64 num, u64 views) {
@@ -301,7 +382,9 @@ static D3DMS u64 ctx_noop(void*, u64, u64, u64) { return 0; }
 // shaders that use resources (cb/samplers) come back false -> CPU blit.
 bool build_context_pipeline_spec(D3DContext* ctx, papaya::gpu::PipelineSpec& spec,
                                  const u8** verts, u32* stride, u32* count,
-                                 std::vector<u8>& cb_blob) {
+                                 std::vector<u8>& cb_blob,
+                                 const u8** tex_out, u32* tex_w_out, u32* tex_h_out) {
+    if (tex_out) *tex_out = nullptr;
     if (!ctx || !ctx->vs || !ctx->ps || !ctx->input_layout || !ctx->vertex_buffer ||
         ctx->vertex_stride == 0 || !ctx->vs->compiled || !ctx->ps->compiled)
         return false;
@@ -354,6 +437,32 @@ bool build_context_pipeline_spec(D3DContext* ctx, papaya::gpu::PipelineSpec& spe
         add_cb(ctx->cb_vs[s_], s_, papaya::gpu::kDescriptorStageVertex);
         add_cb(ctx->cb_ps[s_], s_, papaya::gpu::kDescriptorStageFragment);
     }
+    // Sampled textures: SRV binds -> combined image sampler descriptors at
+    // the emitter's tN binding (N). The first valid texture is handed out for
+    // the render (multiple simultaneous textures: future work).
+    auto add_tex = [&](D3D11ShaderResourceView* srv, u32 slot, u32 stage_bit) {
+        if (!srv || !srv->texture || !srv->texture->supported) return;
+        for (auto& d : spec.descriptors)
+            if (d.binding == slot &&
+                d.type == papaya::gpu::DescriptorType::CombinedImageSampler) {
+                d.stage_bits |= stage_bit;
+                return;
+            }
+        papaya::gpu::VulkanDescriptorBinding b;
+        b.binding = slot;
+        b.type = papaya::gpu::DescriptorType::CombinedImageSampler;
+        b.stage_bits = stage_bit;
+        spec.descriptors.push_back(b);
+        if (!tex_out || !*tex_out) {
+            if (tex_out) *tex_out = srv->texture->data.data();
+            if (tex_w_out) *tex_w_out = srv->texture->w;
+            if (tex_h_out) *tex_h_out = srv->texture->h;
+        }
+    };
+    for (u32 s_ = 0; s_ < 16; ++s_) {
+        add_tex(ctx->srv_vs[s_], s_, papaya::gpu::kDescriptorStageVertex);
+        add_tex(ctx->srv_ps[s_], s_, papaya::gpu::kDescriptorStageFragment);
+    }
     *verts = ctx->vertex_buffer->data.data();
     *stride = ctx->vertex_stride;
     *count = static_cast<u32>(ctx->vertex_buffer->size / ctx->vertex_stride);
@@ -397,11 +506,14 @@ static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
         const u8* verts = nullptr;
         u32 stride = 0, count = 0;
         std::vector<u8> cb_blob;
-        const bool pipeline_ready = build_context_pipeline_spec(g_context, spec, &verts, &stride, &count, cb_blob);
+        const u8* tex = nullptr;
+        u32 tex_w = 0, tex_h = 0;
+        const bool pipeline_ready = build_context_pipeline_spec(g_context, spec, &verts, &stride,
+                                                                &count, cb_blob, &tex, &tex_w, &tex_h);
         if (g_vk.is_ready() && pipeline_ready)
             gpu_rendered = g_vk.render_and_present(spec, verts, stride, count,
                                                    cb_blob.empty() ? nullptr : cb_blob.data(),
-                                                   cb_blob.size());
+                                                   cb_blob.size(), tex, tex_w, tex_h);
         if (gpu_rendered) {
             if (const char* t = getenv("PAPAYA_D3D_TRACE"); t && *t)
                 (void)::write(2, "PAPAYA_GPU_PRESENT\n", 21);
@@ -466,10 +578,13 @@ void* build_device_vtbl() {
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
     v[3]=reinterpret_cast<void*>(&dev_create_buffer);          // CreateBuffer
+    v[5]=reinterpret_cast<void*>(&dev_create_texture2d);       // CreateTexture2D
+    v[7]=reinterpret_cast<void*>(&dev_create_shader_resource_view);  // CreateShaderResourceView
     v[9]=reinterpret_cast<void*>(&dev_create_render_target_view);
     v[11]=reinterpret_cast<void*>(&dev_create_input_layout);   // CreateInputLayout
     v[12]=reinterpret_cast<void*>(&dev_create_vertex_shader);   // CreateVertexShader
     v[15]=reinterpret_cast<void*>(&dev_create_pixel_shader);    // CreatePixelShader
+    v[23]=reinterpret_cast<void*>(&dev_create_sampler_state);   // CreateSamplerState
     // all other slots default null; guest calling them would fault, so fill no-ops
     return v;
 }
@@ -487,6 +602,7 @@ void* build_context_vtbl() {
     v[7]=reinterpret_cast<void*>(&ctx_vs_set_constant_buffers);
     v[8]=reinterpret_cast<void*>(&ctx_ps_set_shader_resources);
     v[9]=reinterpret_cast<void*>(&ctx_ps_set_shader);
+    v[10]=reinterpret_cast<void*>(&ctx_ps_set_samplers);
     v[11]=reinterpret_cast<void*>(&ctx_vs_set_shader);
     v[16]=reinterpret_cast<void*>(&ctx_ps_set_constant_buffers);
     v[12]=reinterpret_cast<void*>(&ctx_draw_indexed);
@@ -496,6 +612,8 @@ void* build_context_vtbl() {
     v[17]=reinterpret_cast<void*>(&ctx_ia_set_input_layout);
     v[18]=reinterpret_cast<void*>(&ctx_ia_set_vertex_buffers);
     v[25]=reinterpret_cast<void*>(&ctx_vs_set_shader_resources);
+    v[26]=reinterpret_cast<void*>(&ctx_vs_set_samplers);
+    v[47]=reinterpret_cast<void*>(&ctx_update_subresource);
     v[33]=reinterpret_cast<void*>(&ctx_om_set_render_targets);
     v[43]=reinterpret_cast<void*>(&ctx_rsset_viewports);
     v[49]=reinterpret_cast<void*>(&ctx_clear_render_target_view);
@@ -604,6 +722,25 @@ const u32* d3d11_shader_get_spirv(void* shader, u32* word_count) {
 
 // Bound constant buffer: stage 0 = vertex, 1 = pixel; slot 0-15.
 // Returns 1 when bound, filling data/size; 0 otherwise.
+// Bound sampled texture (stage 0 = vertex, 1 = pixel, slot 0-15): returns 1
+// when bound through an SRV, filling RGBA8 data + dimensions.
+u32 d3d11_context_texture(void* ctx_handle, u32 stage, u32 slot, const u8** data,
+                          u32* w, u32* h) {
+    auto* ctx = static_cast<D3DContext*>(ctx_handle);
+    auto* srv = ctx && slot < 16 ? (stage == 0 ? ctx->srv_vs[slot] : ctx->srv_ps[slot]) : nullptr;
+    auto* tex = srv ? srv->texture : nullptr;
+    if (!tex || !tex->supported) {
+        if (data) *data = nullptr;
+        if (w) *w = 0;
+        if (h) *h = 0;
+        return 0;
+    }
+    if (data) *data = tex->data.data();
+    if (w) *w = tex->w;
+    if (h) *h = tex->h;
+    return 1;
+}
+
 u32 d3d11_context_cbuffer(void* ctx_handle, u32 stage, u32 slot, const u8** data, u32* size) {
     auto* ctx = static_cast<D3DContext*>(ctx_handle);
     auto* buf = ctx && slot < 16 ? (stage == 0 ? ctx->cb_vs[slot] : ctx->cb_ps[slot]) : nullptr;
@@ -635,10 +772,14 @@ bool d3d11_context_draw_vertices(void* ctx_handle, void* swapchain_handle) {
     const u8* verts = nullptr;
     u32 stride = 0, count = 0;
     std::vector<u8> cb_blob;
-    if (!sc || !build_context_pipeline_spec(ctx, spec, &verts, &stride, &count, cb_blob))
+    const u8* tex = nullptr;
+    u32 tex_w = 0, tex_h = 0;
+    if (!sc || !build_context_pipeline_spec(ctx, spec, &verts, &stride, &count, cb_blob,
+                                            &tex, &tex_w, &tex_h))
         return false;
     const u8* cb = cb_blob.empty() ? nullptr : cb_blob.data();
-    return sc->render_and_present(spec, verts, stride, count, cb, cb_blob.size());
+    return sc->render_and_present(spec, verts, stride, count, cb, cb_blob.size(),
+                                  tex, tex_w, tex_h);
 }
 #else
 bool d3d11_context_draw_vertices(void*, void*) { return false; }

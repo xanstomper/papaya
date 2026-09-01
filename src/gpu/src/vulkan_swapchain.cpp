@@ -417,7 +417,9 @@ u32 VulkanSwapchain::surface_format() const {
 bool VulkanSwapchain::render_and_present(const PipelineSpec& spec,
                                          const u8* vertex_data, u32 vertex_stride,
                                          u32 vertex_count,
-                                         const u8* cbuffer_data, size_t cbuffer_size) {
+                                         const u8* cbuffer_data, size_t cbuffer_size,
+                                         const u8* texture_data, u32 texture_w,
+                                         u32 texture_h) {
     if (!ready_ || !impl_ || !impl_->device || impl_->images.empty()) return false;
     if (!vertex_data || vertex_count == 0) return false;   // nothing to draw yet
 
@@ -472,7 +474,9 @@ bool VulkanSwapchain::render_and_present(const PipelineSpec& spec,
                                       width_, height_, static_cast<u32>(im.format),
                                       spec, reinterpret_cast<u64>(im.images[idx]),
                                       vertex_data, vertex_stride, vertex_count,
-                                      cbuffer_data, cbuffer_size, nullptr, err)) {
+                                      cbuffer_data, cbuffer_size,
+                                      texture_data, texture_w, texture_h,
+                                      nullptr, err)) {
         last_error_ = "GPU render: " + err;
         return false;
     }

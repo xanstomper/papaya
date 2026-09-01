@@ -58,6 +58,7 @@ bool render_pipeline(u64 device, u64 physical_device, u32 w, u32 h, u32 color_fo
                      const PipelineSpec& spec, u64 target_image,
                      const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
                      const u8* cbuffer_data, size_t cbuffer_size,
+                     const u8* texture_data, u32 texture_w, u32 texture_h,
                      std::vector<u8>* pixels_out, std::string& err);
 
 // Offscreen convenience wrapper: own target + readback pixels.
@@ -68,7 +69,7 @@ inline bool render_offscreen(u64 device, u64 physical_device, u32 w, u32 h,
                              std::vector<u8>& pixels, std::string& err) {
     return render_pipeline(device, physical_device, w, h, color_format, spec, 0,
                            vertex_data, vertex_stride, vertex_count,
-                           cbuffer_data, cbuffer_size, &pixels, err);
+                           cbuffer_data, cbuffer_size, nullptr, 0, 0, &pixels, err);
 }
 
 } // namespace papaya::gpu

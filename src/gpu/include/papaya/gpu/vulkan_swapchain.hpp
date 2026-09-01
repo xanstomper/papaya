@@ -54,7 +54,9 @@ public:
     // render fails (caller falls back to the CPU blit path).
     bool render_and_present(const PipelineSpec& spec,
                             const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
-                            const u8* cbuffer_data, size_t cbuffer_size);
+                            const u8* cbuffer_data, size_t cbuffer_size,
+                            const u8* texture_data = nullptr, u32 texture_w = 0,
+                            u32 texture_h = 0);
 
     // Device handles for the pipeline builder (0 when not initialized).
     u64 device() const;

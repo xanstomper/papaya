@@ -287,6 +287,7 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
                       const PipelineSpec& spec, u64 target_image_u64,
                       const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
                       const u8* cbuffer_data, size_t cbuffer_size,
+                      const u8* texture_data, u32 texture_w, u32 texture_h,
                       std::vector<u8>* pixels_out, std::string& err) {
     auto* device = reinterpret_cast<VkDevice>(device_u64);
     auto* phys = reinterpret_cast<VkPhysicalDevice>(phys_u64);
@@ -363,18 +364,28 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
         vkUnmapMemory(device, ubom);
     }
 
-    // ---- 2x2 red texture for image bindings ----
+    // ---- texture for image bindings (caller data or 2x2 red fallback) ----
     VkImage tex = VK_NULL_HANDLE;
     VkDeviceMemory texm = VK_NULL_HANDLE;
     VkImageView tex_view = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
+    VkBuffer tex_staging = VK_NULL_HANDLE;
+    VkDeviceMemory tex_staging_mem = VK_NULL_HANDLE;
+    u32 tex_w = texture_data ? texture_w : 2u;
+    u32 tex_h = texture_data ? texture_h : 2u;
     if (img_count) {
-        if (!create_device_image(device, phys, 2, 2, VK_FORMAT_R8G8B8A8_UNORM,
+        if (!create_device_image(device, phys, tex_w, tex_h, VK_FORMAT_R8G8B8A8_UNORM,
                                  VK_IMAGE_USAGE_SAMPLED_BIT, tex, texm))
-            return fail("test texture", VK_ERROR_OUT_OF_HOST_MEMORY);
+            return fail("texture", VK_ERROR_OUT_OF_HOST_MEMORY);
         guard([&] { vkDestroyImage(device, tex, nullptr); vkFreeMemory(device, texm, nullptr); });
-        // transition + write via a one-shot command (simple: use host-visible
-        // memory by rebinding a host buffer? keep it correct with a command).
+        if (texture_data) {
+            if (!create_host_buffer(device, phys, static_cast<VkDeviceSize>(tex_w) * tex_h * 4,
+                                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, texture_data,
+                                    tex_staging, tex_staging_mem))
+                return fail("texture staging", VK_ERROR_OUT_OF_HOST_MEMORY);
+            guard([&] { vkDestroyBuffer(device, tex_staging, nullptr);
+                        vkFreeMemory(device, tex_staging_mem, nullptr); });
+        }
         VkImageViewCreateInfo ivc{};
         ivc.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         ivc.image = tex;
@@ -505,7 +516,7 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         if (vkBeginCommandBuffer(cb, &bi) != VK_SUCCESS) return false;
-        // texture: layout transition + fill (2x2 red)
+        // texture: layout transition + fill (caller data via staging, else 2x2 red)
         if (img_count && tex) {
             VkImageMemoryBarrier bar{};
             bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -517,10 +528,18 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
             bar.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
             vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                  VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-            const u8 red[4] = { 255, 0, 0, 255 };
-            const VkImageSubresourceRange tex_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            vkCmdClearColorImage(cb, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                 reinterpret_cast<const VkClearColorValue*>(&red), 1, &tex_range);
+            if (texture_data && tex_staging) {
+                VkBufferImageCopy bic{};
+                bic.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                bic.imageExtent = { tex_w, tex_h, 1 };
+                vkCmdCopyBufferToImage(cb, tex_staging, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                       1, &bic);
+            } else {
+                const u8 red[4] = { 255, 0, 0, 255 };
+                const VkImageSubresourceRange tex_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+                vkCmdClearColorImage(cb, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                     reinterpret_cast<const VkClearColorValue*>(&red), 1, &tex_range);
+            }
             bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
