@@ -84,6 +84,11 @@ struct D3DContext : D3DObject {
     D3D11Buffer* vertex_buffer{nullptr};
     u32 vertex_stride{0};
     u32 vertex_offset{0};
+    // resource binds (bindings match the emitter's scheme: cbN -> 16+N)
+    D3D11Buffer* cb_vs[16] = {};
+    D3D11Buffer* cb_ps[16] = {};
+    void* srv_vs[16] = {};
+    void* srv_ps[16] = {};
 };
 struct SwapChain : D3DObject {
     void* hwnd{nullptr};
@@ -212,6 +217,33 @@ static D3DMS u64 ctx_ia_set_vertex_buffers(void* self, u64 start_slot, u64 num,
     }
     return 0;
 }
+static D3DMS u64 ctx_vs_set_constant_buffers(void* self, u64 start, u64 num, u64 bufs) {
+    auto* ctx = static_cast<D3DContext*>(self);
+    auto** b = reinterpret_cast<void**>(bufs);
+    for (u64 i = 0; i < num && start + i < 16; ++i)
+        ctx->cb_vs[start + i] = static_cast<D3D11Buffer*>(b ? b[i] : nullptr);
+    return 0;
+}
+static D3DMS u64 ctx_ps_set_constant_buffers(void* self, u64 start, u64 num, u64 bufs) {
+    auto* ctx = static_cast<D3DContext*>(self);
+    auto** b = reinterpret_cast<void**>(bufs);
+    for (u64 i = 0; i < num && start + i < 16; ++i)
+        ctx->cb_ps[start + i] = static_cast<D3D11Buffer*>(b ? b[i] : nullptr);
+    return 0;
+}
+static D3DMS u64 ctx_set_shader_resources(void* self, u64 is_vs, u64 start, u64 num, u64 views) {
+    auto* ctx = static_cast<D3DContext*>(self);
+    auto** v = reinterpret_cast<void**>(views);
+    auto* dst = is_vs ? ctx->srv_vs : ctx->srv_ps;
+    for (u64 i = 0; i < num && start + i < 16; ++i) dst[start + i] = v ? v[i] : nullptr;
+    return 0;
+}
+static D3DMS u64 ctx_vs_set_shader_resources(void* self, u64 start, u64 num, u64 views) {
+    return ctx_set_shader_resources(self, 1, start, num, views);
+}
+static D3DMS u64 ctx_ps_set_shader_resources(void* self, u64 start, u64 num, u64 views) {
+    return ctx_set_shader_resources(self, 0, start, num, views);
+}
 static D3DMS u64 ctx_ia_set_input_layout(void* self, u64 layout) {
     static_cast<D3DContext*>(self)->input_layout =
             static_cast<D3DInputLayout*>(reinterpret_cast<void*>(layout));
@@ -268,7 +300,8 @@ static D3DMS u64 ctx_noop(void*, u64, u64, u64) { return 0; }
 // translated+compiled and a vertex buffer is bound with a nonzero stride;
 // shaders that use resources (cb/samplers) come back false -> CPU blit.
 bool build_context_pipeline_spec(D3DContext* ctx, papaya::gpu::PipelineSpec& spec,
-                                 const u8** verts, u32* stride, u32* count) {
+                                 const u8** verts, u32* stride, u32* count,
+                                 std::vector<u8>& cb_blob) {
     if (!ctx || !ctx->vs || !ctx->ps || !ctx->input_layout || !ctx->vertex_buffer ||
         ctx->vertex_stride == 0 || !ctx->vs->compiled || !ctx->ps->compiled)
         return false;
@@ -297,7 +330,30 @@ bool build_context_pipeline_spec(D3DContext* ctx, papaya::gpu::PipelineSpec& spe
     // layout-derived stride.
     for (auto& b : spec.vertex_bindings)
         if (b.binding == 0) b.stride = ctx->vertex_stride;
-    spec.descriptors.clear();   // resource binds land in Stage 3f
+    // Resource binds -> descriptors (emitter binding scheme: cbN -> 16 + N,
+    // one 64KB slot per binding in a 1MB scratch UBO).
+    spec.descriptors.clear();
+    cb_blob.assign(1024 * 1024, 0);
+    auto add_cb = [&](D3D11Buffer* buf, u32 slot, u32 stage_bit) {
+        if (!buf || buf->data.empty()) return;
+        cb_blob[slot * 65536 + 0] = 0;   // (bounds: slot*64KB + size <= 1MB)
+        if (buf->data.size() <= 65536)
+            std::memcpy(cb_blob.data() + slot * 65536, buf->data.data(), buf->data.size());
+        for (auto& d : spec.descriptors)
+            if (d.binding == 16u + slot && d.type == papaya::gpu::DescriptorType::UniformBuffer) {
+                d.stage_bits |= stage_bit;
+                return;
+            }
+        papaya::gpu::VulkanDescriptorBinding b;
+        b.binding = 16u + slot;
+        b.type = papaya::gpu::DescriptorType::UniformBuffer;
+        b.stage_bits = stage_bit;
+        spec.descriptors.push_back(b);
+    };
+    for (u32 s_ = 0; s_ < 16; ++s_) {
+        add_cb(ctx->cb_vs[s_], s_, papaya::gpu::kDescriptorStageVertex);
+        add_cb(ctx->cb_ps[s_], s_, papaya::gpu::kDescriptorStageFragment);
+    }
     *verts = ctx->vertex_buffer->data.data();
     *stride = ctx->vertex_stride;
     *count = static_cast<u32>(ctx->vertex_buffer->size / ctx->vertex_stride);
@@ -340,9 +396,12 @@ static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
         papaya::gpu::PipelineSpec spec;
         const u8* verts = nullptr;
         u32 stride = 0, count = 0;
-        build_context_pipeline_spec(g_context, spec, &verts, &stride, &count);
-        if (g_vk.is_ready() && build_context_pipeline_spec(g_context, spec, &verts, &stride, &count))
-            gpu_rendered = g_vk.render_and_present(spec, verts, stride, count, nullptr, 0);
+        std::vector<u8> cb_blob;
+        const bool pipeline_ready = build_context_pipeline_spec(g_context, spec, &verts, &stride, &count, cb_blob);
+        if (g_vk.is_ready() && pipeline_ready)
+            gpu_rendered = g_vk.render_and_present(spec, verts, stride, count,
+                                                   cb_blob.empty() ? nullptr : cb_blob.data(),
+                                                   cb_blob.size());
         if (gpu_rendered) {
             if (const char* t = getenv("PAPAYA_D3D_TRACE"); t && *t)
                 (void)::write(2, "PAPAYA_GPU_PRESENT\n", 21);
@@ -425,14 +484,18 @@ void* build_context_vtbl() {
     v[0]=reinterpret_cast<void*>(&thunk_query_interface);
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
+    v[7]=reinterpret_cast<void*>(&ctx_vs_set_constant_buffers);
+    v[8]=reinterpret_cast<void*>(&ctx_ps_set_shader_resources);
     v[9]=reinterpret_cast<void*>(&ctx_ps_set_shader);
     v[11]=reinterpret_cast<void*>(&ctx_vs_set_shader);
+    v[16]=reinterpret_cast<void*>(&ctx_ps_set_constant_buffers);
     v[12]=reinterpret_cast<void*>(&ctx_draw_indexed);
     v[13]=reinterpret_cast<void*>(&ctx_draw);
     v[14]=reinterpret_cast<void*>(&ctx_map);
     v[15]=reinterpret_cast<void*>(&ctx_unmap);
     v[17]=reinterpret_cast<void*>(&ctx_ia_set_input_layout);
     v[18]=reinterpret_cast<void*>(&ctx_ia_set_vertex_buffers);
+    v[25]=reinterpret_cast<void*>(&ctx_vs_set_shader_resources);
     v[33]=reinterpret_cast<void*>(&ctx_om_set_render_targets);
     v[43]=reinterpret_cast<void*>(&ctx_rsset_viewports);
     v[49]=reinterpret_cast<void*>(&ctx_clear_render_target_view);
@@ -539,6 +602,21 @@ const u32* d3d11_shader_get_spirv(void* shader, u32* word_count) {
     return s->spirv.data();
 }
 
+// Bound constant buffer: stage 0 = vertex, 1 = pixel; slot 0-15.
+// Returns 1 when bound, filling data/size; 0 otherwise.
+u32 d3d11_context_cbuffer(void* ctx_handle, u32 stage, u32 slot, const u8** data, u32* size) {
+    auto* ctx = static_cast<D3DContext*>(ctx_handle);
+    auto* buf = ctx && slot < 16 ? (stage == 0 ? ctx->cb_vs[slot] : ctx->cb_ps[slot]) : nullptr;
+    if (!buf) {
+        if (data) *data = nullptr;
+        if (size) *size = 0;
+        return 0;
+    }
+    if (data) *data = buf->data.data();
+    if (size) *size = static_cast<u32>(buf->data.size());
+    return 1;
+}
+
 void d3d11_context_vertex_data(void* ctx_handle, const u8** data, u32* count,
                                u32* stride, u32* offset) {
     auto* ctx = static_cast<D3DContext*>(ctx_handle);
@@ -556,8 +634,11 @@ bool d3d11_context_draw_vertices(void* ctx_handle, void* swapchain_handle) {
     papaya::gpu::PipelineSpec spec;
     const u8* verts = nullptr;
     u32 stride = 0, count = 0;
-    if (!sc || !build_context_pipeline_spec(ctx, spec, &verts, &stride, &count)) return false;
-    return sc->render_and_present(spec, verts, stride, count, nullptr, 0);
+    std::vector<u8> cb_blob;
+    if (!sc || !build_context_pipeline_spec(ctx, spec, &verts, &stride, &count, cb_blob))
+        return false;
+    const u8* cb = cb_blob.empty() ? nullptr : cb_blob.data();
+    return sc->render_and_present(spec, verts, stride, count, cb, cb_blob.size());
 }
 #else
 bool d3d11_context_draw_vertices(void*, void*) { return false; }

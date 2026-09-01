@@ -61,6 +61,10 @@ const char* d3d11_input_layout_element(void* layout, u32 i, u32* semantic_index,
 void d3d11_context_vertex_data(void* ctx, const u8** data, u32* count, u32* stride,
                                u32* offset);
 
+// Bound constant buffer (stage 0 = vertex, 1 = pixel, slot 0-15): returns 1
+// when bound, filling data/size (the buffer content written via Map).
+u32 d3d11_context_cbuffer(void* ctx, u32 stage, u32 slot, const u8** data, u32* size);
+
 // Render the bound translated pipeline into the given VulkanSwapchain and
 // present it: builds the PipelineSpec from the context snapshot (VS/PS SPIR-V,
 // input layout -> vertex input, bound vertex buffer). Returns false when the

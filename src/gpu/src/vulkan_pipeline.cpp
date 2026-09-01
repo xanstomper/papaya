@@ -340,22 +340,24 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
     if (auto r = vkAllocateDescriptorSets(device, &dai, &set); r != VK_SUCCESS)
         return fail("vkAllocateDescriptorSets", r);
 
-    // ---- cbuffer scratch UBO (64KB; binding b reads at offset 16*(b-16)) ----
+    // ---- cbuffer scratch UBO (64KB per binding; binding b reads at offset
+    // 65536*(b-16) within a 1MB scratch buffer) ----
     constexpr VkDeviceSize kCbScratchSize = 64 * 1024;
+    constexpr VkDeviceSize kCbScratchTotal = 16 * kCbScratchSize;
     VkBuffer ubo = VK_NULL_HANDLE;
     VkDeviceMemory ubom = VK_NULL_HANDLE;
-    if (!create_host_buffer(device, phys, kCbScratchSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    if (!create_host_buffer(device, phys, kCbScratchTotal, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                             nullptr, ubo, ubom))
         return fail("cbuffer UBO", VK_ERROR_OUT_OF_HOST_MEMORY);
     guard([&] { vkDestroyBuffer(device, ubo, nullptr); vkFreeMemory(device, ubom, nullptr); });
     {
         void* p = nullptr;
-        if (vkMapMemory(device, ubom, 0, kCbScratchSize, 0, &p) != VK_SUCCESS)
+        if (vkMapMemory(device, ubom, 0, kCbScratchTotal, 0, &p) != VK_SUCCESS)
             return fail("vkMapMemory(ubo)", VK_ERROR_OUT_OF_HOST_MEMORY);
-        std::memset(p, 0, static_cast<size_t>(kCbScratchSize));
+        std::memset(p, 0, static_cast<size_t>(kCbScratchTotal));
         if (cbuffer_data && cbuffer_size) {
-            const size_t copy = cbuffer_size < static_cast<size_t>(kCbScratchSize)
-                                        ? cbuffer_size : static_cast<size_t>(kCbScratchSize);
+            const size_t copy = cbuffer_size < static_cast<size_t>(kCbScratchTotal)
+                                        ? cbuffer_size : static_cast<size_t>(kCbScratchTotal);
             std::memcpy(p, cbuffer_data, copy);
         }
         vkUnmapMemory(device, ubom);
@@ -400,7 +402,7 @@ bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_forma
     for (const auto& d : spec.descriptors) {
         if (d.type == DescriptorType::UniformBuffer) {
             dinfo[ui].buffer = ubo;
-            dinfo[ui].offset = static_cast<VkDeviceSize>(16) * (d.binding - 16u);
+            dinfo[ui].offset = static_cast<VkDeviceSize>(kCbScratchSize) * (d.binding - 16u);
             dinfo[ui].range = kCbScratchSize;
             VkWriteDescriptorSet w{};
             w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

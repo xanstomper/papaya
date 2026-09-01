@@ -346,6 +346,21 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   (lavapipe xlib present, realtime-thread glibc asserts); render correctness
   is pixel-verified by the offscreen readback test instead. ctest 27/27,
   guest suite 22/22, glslang validation green.
+- Stage 3f-1 (done, verified): constant-buffer binds -> descriptors.
+  ID3D11DeviceContext::VSSetConstantBuffers (7) / PSSetConstantBuffers (16)
+  capture bound D3D11Buffer objects (whose data the guest fills via the
+  existing Map/Unmap path), and PSSetShaderResources (8) / VSSetShader
+  Resources (25) capture SRV binds (texture path still lands later).
+  build_context_pipeline_spec now builds descriptors from the bound cbs
+  (binding 16+slot, vertex/fragment stage bits) and merges each buffer into
+  a 1MB scratch UBO at slot*64KB; render_pipeline's UBO offsets moved from
+  16*(b-16) to 64KB*(b-16) with a 1MB scratch. d3d11_context_cbuffer
+  exposes the capture. The d3d_triangle guest's PS now reads its red color
+  from cb0[0] (dcl_constantbuffer cb0[1], mov o0, cb0[0]) and binds the
+  cbuffer before Present, so the windowed end-to-end verification exercises
+  the full cb->descriptor->UBO-data path. Verified: vtable-level capture
+  roundtrip in test_d3d11_shaders + verify_d3d_triangle.sh green.
+  ctest 27/27, guest suite 22/22, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->
