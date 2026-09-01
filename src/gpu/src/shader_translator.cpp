@@ -561,7 +561,9 @@ static bool emit_sm4_stream(std::span<const DecodedInstruction> insns, std::stri
                        std::string(decl) + " t" + std::to_string(tidx) + ";\n";
                 if (shadow_used[tidx]) {
                     if (rtype != 3) return false;   // shadow only for sampler2D
-                    out += "layout(binding = " + std::to_string(tidx) + ") uniform " +
+                    // Shadows take bindings 32+ so tN and tN_shadow never
+                    // collide in one descriptor set (cbuffers use 16-31).
+                    out += "layout(binding = " + std::to_string(32u + tidx) + ") uniform " +
                            "sampler2DShadow t" + std::to_string(tidx) + "_shadow;\n";
                 }
                 break;

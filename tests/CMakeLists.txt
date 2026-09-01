@@ -146,6 +146,11 @@ target_link_libraries(test_d3d11_shaders PRIVATE
 )
 add_test(NAME D3D11ShadersTest COMMAND test_d3d11_shaders)
 
+# D3D11-state -> Vulkan pipeline mapping (Stage 4b).
+add_executable(test_pipeline_map test_pipeline_map.cpp)
+target_link_libraries(test_pipeline_map PRIVATE papaya-gpu)
+add_test(NAME PipelineMapTest COMMAND test_pipeline_map)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)

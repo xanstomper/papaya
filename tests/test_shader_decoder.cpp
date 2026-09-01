@@ -415,7 +415,7 @@ int main() {
         std::string gls;
         if (!sm4_emit_glsl({svins.data(), svins.size()}, gls)) return 58;
         const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
-        if (!has("uniform sampler2DShadow t1_shadow;")) return 59;
+        if (!has("layout(binding = 33) uniform sampler2DShadow t1_shadow;")) return 59;
         if (!has("r2 = texture(t0, v2.xy, vec4(0.5).x);")) return 60;
         if (!has("r3 = textureLod(t0, v3.xy, v4.x);")) return 61;
         if (!has("r4 = textureGrad(t0, v5.xy, v6.xy, v7.xy);")) return 62;

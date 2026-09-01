@@ -234,6 +234,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   test_d3d11_shaders drives CreateInputLayout + the three setter slots
   through the REAL vtables and checks the snapshot; guests 21/21.
   ctest 24/24, guest suite 21/21, glslang validation green.
+- Stage 4b (done, verified): D3D11-state -> Vulkan pipeline mapping.
+  `pipeline_map` (pure logic, no device needed): DXGI_FORMAT -> VkFormat for
+  vertex inputs (real VK_FORMAT constants; typeless/depth/compressed/unknown
+  refused as 0) + per-format sizes; build_vertex_input computes
+  VkVertexInputBinding/AttributeDescription equivalents (one binding per
+  input slot, stride = max element end, D3D11_APPEND_ALIGNED_ELEMENT at
+  4-byte alignment like the D3D10/11 runtime, per-instance slots flagged);
+  build_descriptor_layout matches the emitter's binding scheme (samplers
+  0-15, cbuffers 16-31, shadow samplers 32-47) so the GLSL->SPIR-V the
+  emitter produces and the descriptor set the pipeline builder will write
+  agree by construction. Also fixed a latent Vulkan-invalid emitter output:
+  tN_shadow shared binding N with the plain tN sampler; shadows moved to
+  32+N. test_pipeline_map (25th ctest): format spot checks against real
+  VkFormat values, append-aligned + per-instance vertex math, descriptor
+  layout + collision check, depth-format refusal. ctest 25/25, guest suite
+  21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->
