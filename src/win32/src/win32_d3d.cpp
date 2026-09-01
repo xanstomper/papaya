@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <unistd.h>
 
 #ifdef PAPAYA_HAS_VULKAN
 #include "papaya/gpu/vulkan_swapchain.hpp"
@@ -147,7 +148,9 @@ static D3DMS u64 dev_create_input_layout(void* self, u64 descs, u64 num_elements
         u64 shader_code, u64 code_len, u64 out) {
     (void)self; (void)shader_code; (void)code_len;
     auto* layout = new D3DInputLayout();
+    if (!descs || !num_elements) { delete layout; return 0x80070057u; }   // E_INVALIDARG
     const u8* p = reinterpret_cast<const u8*>(descs);
+
     for (u64 i = 0; i < num_elements && p; ++i) {
         // D3D11_INPUT_ELEMENT_DESC (x64): LPCSTR SemanticName(8) + 6 x UINT.
         D3DInputLayoutElement e;
@@ -337,9 +340,14 @@ static D3DMS u64 sc_present(void* self, u64 sync, u64 flags) {
         papaya::gpu::PipelineSpec spec;
         const u8* verts = nullptr;
         u32 stride = 0, count = 0;
+        build_context_pipeline_spec(g_context, spec, &verts, &stride, &count);
         if (g_vk.is_ready() && build_context_pipeline_spec(g_context, spec, &verts, &stride, &count))
             gpu_rendered = g_vk.render_and_present(spec, verts, stride, count, nullptr, 0);
-        if (gpu_rendered) return 0;
+        if (gpu_rendered) {
+            if (const char* t = getenv("PAPAYA_D3D_TRACE"); t && *t)
+                (void)::write(2, "PAPAYA_GPU_PRESENT\n", 21);
+            return 0;
+        }
         if (g_vk.is_ready() && sc->fb) {
             u32 idx = g_vk.acquire();
             if (idx != 0xFFFFFFFFu && g_vk.upload_rgba(sc->fb, sc->w, sc->h)) {

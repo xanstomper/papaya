@@ -325,6 +325,27 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   Map/Unmap/IASetVertexBuffers roundtrip triangle vertices into the
   snapshot getter, and draw_vertices refuses cleanly with an uninitialized
   swapchain. ctest 27/27, guest suite 21/21, glslang validation green.
+- Stage 4h (done, verified): end-to-end windowed guest render. New guest
+  `d3d_triangle` drives the REAL D3D11 vtables with embedded DXBC: device+
+  swapchain via D3D11CreateDeviceAndSwapChain, CreateVertexShader/
+  CreatePixelShader, CreateInputLayout + vertex buffer via Map/Unmap,
+  IASetVertexBuffers, VSSetShader/PSSetShader/IASetInputLayout, Present.
+  `scripts/verify_d3d_triangle.sh` runs it under Xvfb with PAPAYA_VULKAN=1
+  and asserts the complete flow: guest exit 0, "d3dtri ok" + present=0, and
+  the PAPAYA_GPU_PRESENT marker from sc_present after a successful
+  render_and_present (the translated DXBC->SPIR-V->VkPipeline actually
+  rendered into the swapchain image). Debugging it found TWO real bugs:
+  (1) VulkanSwapchain::acquire waited on a fence that is only armed by a
+  submit, guaranteeing a deadlock on the very first present - now waits only
+  when fence_pending, with bounded timeouts on both waits; (2) the GPU path
+  PRESENTED while waiting on the render-finished semaphore that only the CPU
+  upload path signals - present() gained wait_on_render (the GPU path renders
+  synchronously via device-wait-idle). Also discovered: the runtime logger
+  must not be called from inside ms_abi vtable thunks (it deadlocks), so
+  thunks stay logger-free. Pixel-level WSI visibility on Xvfb is host-flaky
+  (lavapipe xlib present, realtime-thread glibc asserts); render correctness
+  is pixel-verified by the offscreen readback test instead. ctest 27/27,
+  guest suite 22/22, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

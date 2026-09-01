@@ -40,8 +40,10 @@ public:
     // Acquire the next swapchain image and return its index (UINT32_MAX on error).
     u32 acquire();
 
-    // Present the current image. Returns VK-style result (0 == success).
-    u32 present(u32 image_index);
+    // Present the current image. wait_on_render: wait on the render-finished
+    // semaphore (the CPU upload path signals it); the GPU pipeline path
+    // renders synchronously (device wait idle) so it presents without it.
+    u32 present(u32 image_index, bool wait_on_render = true);
 
     // Copy an RGBA8 CPU buffer into the acquired swapchain image.
     bool upload_rgba(const u8* rgba, u32 width, u32 height);

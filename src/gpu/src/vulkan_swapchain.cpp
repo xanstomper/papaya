@@ -35,6 +35,7 @@ struct VulkanSwapchain::Impl {
     VkSurfaceKHR     surface{VK_NULL_HANDLE};
     VkSwapchainKHR   swapchain{VK_NULL_HANDLE};
     VkQueue          queue{VK_NULL_HANDLE};
+    bool             fence_pending{false};   // a submit that signals the fence
     VkFormat         format{VK_FORMAT_B8G8R8A8_UNORM};
     VkExtent2D       extent{0, 0};
     VkCommandPool    cmd_pool{VK_NULL_HANDLE};
@@ -283,21 +284,29 @@ void VulkanSwapchain::shutdown() {
 u32 VulkanSwapchain::acquire() {
     if (!ready_) return 0xFFFFFFFFu;
     u32 index = 0xFFFFFFFFu;
-    vkWaitForFences(impl_->device, 1, &impl_->fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(impl_->device, 1, &impl_->fence);
-    VkResult r = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, UINT64_MAX,
+    // Only wait when a prior frame's submit armed the fence (the first
+    // acquire must never block on a never-signaled fence).
+    if (impl_->fence_pending) {
+        if (vkWaitForFences(impl_->device, 1, &impl_->fence, VK_TRUE, 5'000'000'000u) != VK_SUCCESS)
+            return 0xFFFFFFFFu;
+        vkResetFences(impl_->device, 1, &impl_->fence);
+        impl_->fence_pending = false;
+    }
+    VkResult r = vkAcquireNextImageKHR(impl_->device, impl_->swapchain, 2'000'000'000u,
                                         impl_->image_ready, impl_->fence, &index);
-    if (r != VK_SUCCESS) return 0xFFFFFFFFu;
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return 0xFFFFFFFFu;
     last_image_ = index;
     return index;
 }
 
-u32 VulkanSwapchain::present(u32 image_index) {
+u32 VulkanSwapchain::present(u32 image_index, bool wait_on_render) {
     if (!ready_) return VK_ERROR_DEVICE_LOST;
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    pi.waitSemaphoreCount = impl_->render_finished ? 1 : 0;
-    pi.pWaitSemaphores = impl_->render_finished ? &impl_->render_finished : nullptr;
+    if (wait_on_render && impl_->render_finished) {
+        pi.waitSemaphoreCount = 1;
+        pi.pWaitSemaphores = &impl_->render_finished;
+    }
     pi.swapchainCount = 1;
     pi.pSwapchains = &impl_->swapchain;
     pi.pImageIndices = &image_index;
@@ -392,6 +401,7 @@ bool VulkanSwapchain::upload_rgba(const u8* rgba, u32 width, u32 height) {
     si.signalSemaphoreCount = impl_->render_finished ? 1 : 0;
     si.pSignalSemaphores = impl_->render_finished ? &impl_->render_finished : nullptr;
     if (vkQueueSubmit(impl_->queue, 1, &si, impl_->fence) != VK_SUCCESS) return false;
+    impl_->fence_pending = true;
     return true;
 }
 
@@ -466,7 +476,7 @@ bool VulkanSwapchain::render_and_present(const PipelineSpec& spec,
         last_error_ = "GPU render: " + err;
         return false;
     }
-    return present(idx) == 0;
+    return present(idx, false) == 0;
 }
 
 } // namespace papaya::gpu

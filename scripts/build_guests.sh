@@ -55,5 +55,7 @@ build pump_min     -luser32 -lgdi32
 # D3D11 swapchain-clear suite (swrast / WARP-style path)
 build dbg10        -luser32 -lgdi32 -ld3d11 -ldxgi
 build d3d_clear3   -luser32 -lgdi32 -ld3d11 -ldxgi
+# d3d_triangle: full vtable flow with real DXBC shaders (renders via GPU path under PAPAYA_VULKAN=1)
+build d3d_triangle   -luser32 -lgdi32 -ld3d11 -ldxgi
 
 echo "Guests built into $OUT"
