@@ -1,8 +1,10 @@
 #include "papaya/win32/win32_d3d.hpp"
 #include "papaya/win32/win32_window.hpp"
 #include "papaya/common/logger.hpp"
+#include "papaya/gpu/shader_translator.hpp"
 #include <cstring>
 #include <cstdlib>
+#include <string>
 
 #ifdef PAPAYA_HAS_VULKAN
 #include "papaya/gpu/vulkan_swapchain.hpp"
@@ -18,6 +20,7 @@ struct D3DDevice;
 struct D3DContext;
 struct SwapChain;
 struct RenderTargetView;
+struct D3DShader;
 
 using msabi_void4 = u64 (*)(void*, u64, u64, u64);
 using msabi_void3 = u64 (*)(void*, u64, u64);
@@ -61,10 +64,25 @@ struct SwapChain : D3DObject {
 struct RenderTargetView : D3DObject {
     SwapChain* swap{nullptr};
 };
+struct D3DShader : D3DObject {
+    std::string glsl;      // emitted GLSL from the DXBC->GLSL translation
+    bool translated{false}; // false when outside the supported emission subset
+};
 
 D3DDevice*  g_device  = nullptr;
 D3DContext* g_context = nullptr;
 SwapChain*  g_swap    = nullptr;
+
+static D3DMS u64 dev_create_shader(void* self, u64 code, u64 len, u64 linkage, u64 out) {
+    (void)self; (void)linkage;
+    auto* shader = new D3DShader();
+    if (code && len) {
+        const auto* bytes = reinterpret_cast<const u8*>(code);
+        shader->translated = papaya::gpu::dxbc_to_glsl({bytes, len}, shader->glsl);
+    }
+    if (out) *reinterpret_cast<void**>(out) = shader;
+    return 0; // S_OK
+}
 
 // ---- ID3D11Device methods ----------------------------------------------------
 static D3DMS u64 dev_create_render_target_view(void* self, void* res, void* desc, void* rtv_out) {
@@ -196,6 +214,8 @@ void* build_device_vtbl() {
     v[1]=reinterpret_cast<void*>(&thunk_add_ref);
     v[2]=reinterpret_cast<void*>(&thunk_release);
     v[9]=reinterpret_cast<void*>(&dev_create_render_target_view);
+    v[12]=reinterpret_cast<void*>(&dev_create_shader);   // CreateVertexShader
+    v[15]=reinterpret_cast<void*>(&dev_create_shader);   // CreatePixelShader
     // all other slots default null; guest calling them would fault, so fill no-ops
     return v;
 }
@@ -274,6 +294,16 @@ void* d3d11_swapchain_get_buffer(void* swapchain, u32 index) {
 
 void d3d11_clear_rtv(void* rtv, const float rgba[4]) {
     ctx_clear_render_target_view(g_context, rtv, rgba);
+}
+
+const char* d3d11_shader_get_glsl(void* shader, bool* translated) {
+    auto* s = static_cast<D3DShader*>(shader);
+    if (!s) {
+        if (translated) *translated = false;
+        return nullptr;
+    }
+    if (translated) *translated = s->translated;
+    return s->glsl.c_str();
 }
 
 } // namespace papaya::win32

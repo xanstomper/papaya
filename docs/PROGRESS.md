@@ -189,6 +189,18 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   All variants are 2D-only for now (honest). Verified: exact GLSL strings for
   all four variants + shadow declaration, refusal of comparison-with-default-
   sampler. ctest 23/23, guest suite 21/21.
+- Stage 3d (done, verified): end-to-end DXBC->GLSL + D3D11 wiring.
+  `dxbc_to_glsl()` — one call from raw .cso bytes to GLSL text (dxbc_parse ->
+  sm4_decode -> sm4_emit_glsl, honoring the SHDR token-count header); verified
+  end-to-end in test_shader_translator with a real-format container, and a
+  container whose shader is outside the subset fails the whole translation.
+  ID3D11Device::CreateVertexShader (vtbl 12) / CreatePixelShader (vtbl 15)
+  are now wired through it: the shader object stores the emitted GLSL +
+  translated flag (false for unsupported bytecode; the call still succeeds so
+  guests keep running), readable via d3d11_shader_get_glsl() for the future
+  pipeline-layout binding. test_d3d11_shaders drives the REAL ms_abi vtable
+  with a real DXBC blob and asserts the GLSL, plus garbage-bytecode refusal.
+  ctest 24/24, guest suite 21/21.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants, then wiring the emitted GLSL
   into glslang (SPIRV-Cross/DXC) for SPIR-V; then D3D11-state->Vulkan

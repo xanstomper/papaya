@@ -138,6 +138,14 @@ target_link_libraries(test_pe_loader PRIVATE
     papaya-input
 )
 
+# D3D11 Create*Shader wired to the DXBC->GLSL translation layer (Stage 3d).
+add_executable(test_d3d11_shaders test_d3d11_shaders.cpp)
+target_link_libraries(test_d3d11_shaders PRIVATE
+    papaya-win32
+    papaya-gpu
+)
+add_test(NAME D3D11ShadersTest COMMAND test_d3d11_shaders)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)

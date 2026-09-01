@@ -128,6 +128,19 @@ bool dxbc_parse(std::span<const u8> data, DxbcContainer& out) {
     return !out.chunks.empty();
 }
 
+bool dxbc_to_glsl(std::span<const u8> data, std::string& out) {
+    out.clear();
+    DxbcContainer c;
+    if (!dxbc_parse(data, c)) return false;
+    // SHDR/SHEX chunk body: [version u32][token count u32][instructions...].
+    if (c.shader_bytecode.size() < 2) return false;
+    const u32 count = c.shader_bytecode[1];
+    if (2u + count > c.shader_bytecode.size()) return false;
+    std::vector<DecodedInstruction> decoded;
+    if (!sm4_decode({c.shader_bytecode.data() + 2, count}, decoded)) return false;
+    return sm4_emit_glsl({decoded.data(), decoded.size()}, out);
+}
+
 // ---- SM4/SM5 instruction decoder -------------------------------------------
 // Encoding (real on-disk values, wine vkd3d-shader tpf.c, verified byte-exact
 // against native fxc output by wine's CI):

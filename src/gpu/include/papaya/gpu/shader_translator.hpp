@@ -60,6 +60,12 @@ struct DxbcContainer {
 // 'DXBC' / version / chunk count disagree) — reported, never crash.
 bool dxbc_parse(std::span<const u8> data, DxbcContainer& out);
 
+// End-to-end DXBC -> GLSL: parse the container, run sm4_decode over the
+// SHDR/SHEX instruction stream (version word + token count header), and
+// sm4_emit_glsl. Returns false when the container is malformed or any
+// instruction is outside the supported emission subset (caller falls back).
+bool dxbc_to_glsl(std::span<const u8> data, std::string& out);
+
 // ---- Stage 2: SM4/SM5 shader instruction decoder ----------------------------
 // Walks the D3D11 shader instruction stream (u32 tokens after the chunk's
 // version/header) into a list of instructions, each with its opcode and the

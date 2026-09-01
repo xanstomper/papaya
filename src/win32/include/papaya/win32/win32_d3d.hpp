@@ -35,4 +35,13 @@ void* d3d11_swapchain_get_buffer(void* swapchain, u32 index);
 // (float RGBA). The RTV wraps the swapchain's backbuffer, so Present shows it.
 void d3d11_clear_rtv(void* rtv, const float rgba[4]);
 
+// ID3D11Device::CreateVertexShader / CreatePixelShader are wired through the
+// real DXBC->GLSL translation layer: the shader object keeps the emitted GLSL
+// (translated=false when the bytecode is outside the supported subset; the
+// call still succeeds so the guest keeps running).
+//
+// Read back the translation result from a shader object (for pipeline-layout
+// consumers and tests). Returns nullptr for null shaders.
+const char* d3d11_shader_get_glsl(void* shader, bool* translated);
+
 } // namespace papaya::win32

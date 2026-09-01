@@ -11,6 +11,7 @@
 #include <vector>
 
 using papaya::gpu::dxbc_parse;
+using papaya::gpu::dxbc_to_glsl;
 using papaya::gpu::DxbcContainer;
 using papaya::gpu::fourcc;
 using papaya::u8;
@@ -110,7 +111,75 @@ int main() {
     truncated.resize(20);   // too short for header
     if (dxbc_parse({truncated.data(), truncated.size()}, m)) { std::printf("fail: truncated parsed\n"); return 7; }
 
-    std::printf("ok: dxbc parsed %zu chunks, %zu bytecode words, %zu input sigs\n",
+    // ---- End-to-end: DXBC container -> GLSL (Stage 3d) ----
+    auto build_blob = [](std::vector<u32> shdr_words) {
+        std::vector<u8> b;
+        for (u32 w : shdr_words) put_u32(b, w);
+        u32 total = 44 + 12 + static_cast<u32>(b.size());
+        std::vector<u8> blob;
+        blob.insert(blob.end(), { 'D','X','B','C' });
+        for (int i = 0; i < 16; ++i) blob.push_back(0);
+        put_u32(blob, 1);      // version
+        put_u32(blob, 0);      // creator len
+        put_u32(blob, 0);      // creator off
+        put_u32(blob, total);  // total size
+        put_u32(blob, 1);      // chunk count
+        put_u32(blob, 44);     // chunk offset
+        put_u32(blob, fourcc('S','H','D','R'));
+        put_u32(blob, static_cast<u32>(b.size()));
+        put_u32(blob, 56);     // chunk data offset
+        blob.insert(blob.end(), b.begin(), b.end());
+        return blob;
+    };
+
+    // dcl_input v0; dcl_output o0; dcl_temps 2;
+    // mov r0, v0;  add o0, r0, l(1,2,3,4)
+    auto inst = [](u32 op, u32 len) { return ((len & 0x1Fu) << 24) | (op & 0xFFu); };
+    auto opd = [](u32 rt, u32 order, u32 dim, u32 mask, u32 sw) {
+        return (rt << 12) | ((order & 3) << 20) | (dim & 3) | ((mask & 0xF) << 4) | sw;
+    };
+    auto swz = [](u32 x, u32 y, u32 z, u32 w) { return (x&3)<<4 | (y&3)<<6 | (z&3)<<8 | (w&3)<<10; };
+    auto fw = [](float f) { u32 x; std::memcpy(&x, &f, 4); return x; };
+    const u32 kIdentity = swz(0, 1, 2, 3);
+    std::vector<u32> stream = {
+        inst(0x5F, 3), opd(1, 1, 3, 0xF, 0), 0,                   // dcl_input v0
+        inst(0x65, 3), opd(2, 1, 3, 0xF, 0), 0,                   // dcl_output o0
+        inst(0x68, 2), 2,                                        // dcl_temps 2
+        inst(0x36, 5), opd(0, 1, 3, 0xF, 0), 0,
+        opd(1, 1, 3, 0, kIdentity), 0,                           // mov r0, v0
+        inst(0x00, 10), opd(2, 1, 3, 0xF, 0), 0,
+        opd(0, 1, 3, 0, kIdentity), 0,
+        opd(4, 0, 3, 0, kIdentity),                               // immconst
+        fw(1.0f), fw(2.0f), fw(3.0f), fw(4.0f),                  // add o0, r0, l(1,2,3,4)
+    };
+    std::vector<u32> shdr = { 0x3000, static_cast<u32>(stream.size()) };
+    shdr.insert(shdr.end(), stream.begin(), stream.end());
+    std::vector<u8> blob2 = build_blob(shdr);
+    std::string glsl;
+    if (!dxbc_to_glsl({blob2.data(), blob2.size()}, glsl)) {
+        std::printf("fail: dxbc_to_glsl rejected valid shader\n"); return 8;
+    }
+    const auto has = [&](const char* s) { return glsl.find(s) != std::string::npos; };
+    if (!has("vec4 v0;") || !has("vec4 o0;") || !has("vec4 r0;") || !has("vec4 r1;")) {
+        std::printf("fail: missing declarations\n%s\n", glsl.c_str()); return 9;
+    }
+    if (!has("r0 = v0;") || !has("o0 = (r0 + vec4(1.0, 2.0, 3.0, 4.0));")) {
+        std::printf("fail: wrong body\n%s\n", glsl.c_str()); return 10;
+    }
+
+    // Unsupported opcode inside a container must fail the whole translation.
+    std::vector<u32> bad_stream = { inst(0x45, 9), opd(0, 1, 3, 0xF, 0), 0,
+                                    opd(1, 1, 3, 0, kIdentity), 0,
+                                    opd(7, 1, 3, 0, 0), 0,
+                                    opd(6, 1, 3, 0, 0), 0 };   // sample without dcl_resource
+    std::vector<u32> shdr2 = { 0x3000, static_cast<u32>(bad_stream.size()) };
+    shdr2.insert(shdr2.end(), bad_stream.begin(), bad_stream.end());
+    std::vector<u8> blob3 = build_blob(shdr2);
+    if (dxbc_to_glsl({blob3.data(), blob3.size()}, glsl)) {
+        std::printf("fail: unresolved-resource sample translated\n"); return 11;
+    }
+
+    std::printf("ok: dxbc parsed %zu chunks, %zu bytecode words, %zu input sigs, dxbc_to_glsl verified\n",
                 out.chunks.size(), out.shader_bytecode.size(), out.input_signature.size());
     return 0;
 }
