@@ -65,6 +65,9 @@ bool dxbc_parse(std::span<const u8> data, DxbcContainer& out);
 // sm4_emit_glsl. Returns false when the container is malformed or any
 // instruction is outside the supported emission subset (caller falls back).
 bool dxbc_to_glsl(std::span<const u8> data, std::string& out);
+// Same, with the shader stage chosen explicitly (0 = vertex, 1 = fragment):
+// vertex shaders emit "gl_Position = o0" so they rasterize.
+bool dxbc_to_glsl_stage(std::span<const u8> data, u32 stage, std::string& out);
 
 // ---- Stage 2: SM4/SM5 shader instruction decoder ----------------------------
 // Walks the D3D11 shader instruction stream (u32 tokens after the chunk's
@@ -220,7 +223,9 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out);
 // Complete standalone shader: #version 310 es + precision + global
 // declarations (uniforms, vec4 registers) + void main() { body }.
 // Compilable with glslang (validated in tests when GLSLANG_VALIDATOR is set).
-bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out);
+// stage: 0 = vertex (outputs get gl_Position = o0), 1 = fragment.
+bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out,
+                          u32 stage = 1);
 
 // FourCC helper ('SHEX' = 0x58454853 little-endian).
 inline u32 fourcc(char a, char b, char c, char d) {

@@ -100,7 +100,7 @@ static D3DMS u64 dev_create_shader_impl(void* self, u64 code, u64 len, u64 linka
     auto* shader = new D3DShader();
     if (code && len) {
         const auto* bytes = reinterpret_cast<const u8*>(code);
-        shader->translated = papaya::gpu::dxbc_to_glsl({bytes, len}, shader->glsl);
+        shader->translated = papaya::gpu::dxbc_to_glsl_stage({bytes, len}, stage, shader->glsl);
         if (shader->translated) {
             std::string err;
             shader->compiled =

@@ -77,7 +77,7 @@ bool compile_glsl_to_spirv(const std::string&, u32, std::vector<u32>&, std::stri
 bool dxbc_to_spirv(std::span<const u8> dxbc, u32 stage,
                    std::vector<u32>& spirv, std::string& err) {
     std::string glsl;
-    if (!dxbc_to_glsl(dxbc, glsl)) {
+    if (!dxbc_to_glsl_stage(dxbc, stage, glsl)) {
         err = "dxbc_to_glsl failed (unsupported instruction set?)";
         spirv.clear();
         return false;

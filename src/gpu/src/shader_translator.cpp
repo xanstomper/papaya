@@ -128,7 +128,7 @@ bool dxbc_parse(std::span<const u8> data, DxbcContainer& out) {
     return !out.chunks.empty();
 }
 
-bool dxbc_to_glsl(std::span<const u8> data, std::string& out) {
+bool dxbc_to_glsl_stage(std::span<const u8> data, u32 stage, std::string& out) {
     out.clear();
     DxbcContainer c;
     if (!dxbc_parse(data, c)) return false;
@@ -138,7 +138,11 @@ bool dxbc_to_glsl(std::span<const u8> data, std::string& out) {
     if (2u + count > c.shader_bytecode.size()) return false;
     std::vector<DecodedInstruction> decoded;
     if (!sm4_decode({c.shader_bytecode.data() + 2, count}, decoded)) return false;
-    return sm4_emit_glsl_shader({decoded.data(), decoded.size()}, out);
+    return sm4_emit_glsl_shader({decoded.data(), decoded.size()}, out, stage);
+}
+
+bool dxbc_to_glsl(std::span<const u8> data, std::string& out) {
+    return dxbc_to_glsl_stage(data, 1, out);   // fragment stage default
 }
 
 // ---- SM4/SM5 instruction decoder -------------------------------------------
@@ -520,11 +524,13 @@ static bool emit_sm4_stream(std::span<const DecodedInstruction> insns, std::stri
             }
             case ShaderOpcode::DclInput:
                 if (ins.operands.size() != 1) return false;
-                out += "vec4 v" + std::to_string(ins.operands[0].reg_index()) + ";\n";
+                out += "layout(location = " + std::to_string(ins.operands[0].reg_index()) +
+                   ") in vec4 v" + std::to_string(ins.operands[0].reg_index()) + ";\n";
                 break;
             case ShaderOpcode::DclOutput:
                 if (ins.operands.size() != 1) return false;
-                out += "vec4 o" + std::to_string(ins.operands[0].reg_index()) + ";\n";
+                out += "layout(location = " + std::to_string(ins.operands[0].reg_index()) +
+                   ") out vec4 o" + std::to_string(ins.operands[0].reg_index()) + ";\n";
                 break;
             // SM4 declarations that do not change the ALU body: the runtime
             // binds resources/samplers/global flags from the DXBC container.
@@ -855,7 +861,8 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
     return emit_sm4_stream(insns, out, EmitMode::kAll, res_type, sam_cmp, shadow_used);
 }
 
-bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out) {
+bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string& out,
+                          u32 stage) {
     out.clear();
     out += "#version 310 es\n";   // must be the first line in ES-profile shaders
     out += "// papaya sm4->glsl (complete shader)\n";
@@ -876,6 +883,7 @@ bool sm4_emit_glsl_shader(std::span<const DecodedInstruction> insns, std::string
     out += "\nvoid main() {\n";
     if (!emit_sm4_stream(insns, out, EmitMode::kBody, res_type, sam_cmp, shadow_used))
         return false;
+    if (stage == 0) out += "gl_Position = o0;\n";   // vertex position output
     out += "}\n";
     return true;
 }

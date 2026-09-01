@@ -279,6 +279,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   (exit 0) when no Vulkan device exists so CI stays hermetic. On this host
   it creates a REAL pipeline. ctest 27/27, guest suite 21/21, glslang
   validation green.
+- Stage 4e (done, verified): offscreen record/execute + FIRST RENDERED FRAME.
+  `render_offscreen` runs the whole hardware path: vertex buffer upload,
+  descriptor pool/set with UBO writes (binding b at 16*(b-16) in a 64KB
+  scratch UBO) and a 2x2 test texture, offscreen render target + framebuffer,
+  command recording (render pass with blue clear, pipeline + descriptors +
+  vertex buffer + draw), submission, and image->buffer readback. Two real
+  bugs found while getting it to render: (1) the GLSL emitter declared
+  vN/oN as plain globals, so SPIR-V had no shader interface - they are now
+  `layout(location = N) in/out vec4` and vertex shaders emit
+  `gl_Position = o0` (dxbc_to_glsl_stage threads the stage through);
+  (2) dynamic viewport/scissor silently drew nothing on both llvmpipe and
+  the Intel driver - the builder now bakes a static viewport matching the
+  D3D11 target size (which matches D3D11 state semantics anyway).
+  test_vulkan_pipeline renders a real triangle through the translated
+  pipeline and asserts the pixels (red triangle on blue clear). ctest 27/27,
+  guest suite 21/21, glslang validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

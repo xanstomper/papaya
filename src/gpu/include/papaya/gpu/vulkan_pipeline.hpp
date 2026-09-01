@@ -36,10 +36,27 @@ struct GraphicsPipeline {
 };
 
 // Create the pipeline on `device` for a color target of `color_format`
-// (VkFormat, e.g. VK_FORMAT_B8G8R8A8_UNORM). Returns false + err on failure.
-bool create_graphics_pipeline(u64 device, u32 color_format, const PipelineSpec& spec,
+// (VkFormat, e.g. VK_FORMAT_B8G8R8A8_UNORM). vp_w/vp_h bake a STATIC
+// viewport+scissor (matching D3D11 state semantics; dynamic viewport was
+// observed to silently draw nothing on some drivers); 0/0 keeps the
+// pseudo-dynamic path. Returns false + err on failure.
+bool create_graphics_pipeline(u64 device, u32 color_format, u32 vp_w, u32 vp_h,
+                              const PipelineSpec& spec,
                               GraphicsPipeline& out, std::string& err);
 
 void destroy_graphics_pipeline(GraphicsPipeline& p);
+
+// One-shot offscreen render of the pipeline: draws `vertex_count` vertices
+// (vertex_data layout = vertex_stride bytes per vertex, matching the spec's
+// bindings) into a w x h offscreen color target, with cbuffer_data uploaded
+// to every UniformBuffer binding (binding b reads at offset 16*(b-16) within
+// a 64KB scratch UBO) and a 2x2 red test texture on every image binding.
+// Returns the rendered RGBA8 pixels. This is the record/execute path: render
+// pass, command buffer, descriptors, submit, and image readback.
+bool render_offscreen(u64 device, u64 physical_device, u32 w, u32 h, u32 color_format,
+                      const PipelineSpec& spec,
+                      const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
+                      const u8* cbuffer_data, size_t cbuffer_size,
+                      std::vector<u8>& pixels, std::string& err);
 
 } // namespace papaya::gpu

@@ -28,6 +28,7 @@ using papaya::gpu::kAppendAlignedElement;
 using papaya::gpu::kStageFragment;
 using papaya::gpu::kStageVertex;
 using papaya::gpu::PipelineSpec;
+using papaya::gpu::render_offscreen;
 using papaya::u8;
 using papaya::u32;
 using papaya::u64;
@@ -169,7 +170,7 @@ int main() {
     spec.descriptors = desc;
     papaya::gpu::GraphicsPipeline gp;
     if (!create_graphics_pipeline(reinterpret_cast<u64>(device), VK_FORMAT_B8G8R8A8_UNORM,
-                                  spec, gp, err)) {
+                                  64, 64, spec, gp, err)) {
         std::printf("fail: pipeline creation: %s\n", err.c_str());
         vkDestroyDevice(device, nullptr); vkDestroyInstance(inst, nullptr);
         return 3;
@@ -178,9 +179,87 @@ int main() {
         return 4;
     destroy_graphics_pipeline(gp);
 
+    // ---- offscreen render with pixel readback (Stage 4e) ----
+    // Pass-through VS (mov o0, v0) + constant-red PS (mov o0, l(1,0,0,1)).
+    auto inst_l = [](u32 op, u32 len) { return ((len & 0x1Fu) << 24) | (op & 0xFFu); };
+    auto opd = [](u32 rt, u32 order, u32 dim, u32 mask, u32 sw) {
+        return (rt << 12) | ((order & 3) << 20) | (dim & 3) | ((mask & 0xF) << 4) | sw;
+    };
+    auto swz = [](u32 x, u32 y, u32 z, u32 w) { return (x&3)<<4 | (y&3)<<6 | (z&3)<<8 | (w&3)<<10; };
+    auto fw = [](float f) { u32 x; std::memcpy(&x, &f, 4); return x; };
+    const u32 kId = swz(0, 1, 2, 3);
+    auto make_blob = [&](std::vector<u32> stream) {
+        std::vector<u8> b;
+        put_u32(b, 0x3000);
+        put_u32(b, static_cast<u32>(stream.size()));
+        for (u32 wd : stream) put_u32(b, wd);
+        const u32 total = 44 + 12 + static_cast<u32>(b.size());
+        std::vector<u8> blob;
+        blob.insert(blob.end(), { 'D','X','B','C' });
+        for (int i = 0; i < 16; ++i) blob.push_back(0);
+        put_u32(blob, 1); put_u32(blob, 0); put_u32(blob, 0);
+        put_u32(blob, total); put_u32(blob, 1); put_u32(blob, 44);
+        put_u32(blob, 0x52444853);
+        put_u32(blob, static_cast<u32>(b.size()));
+        put_u32(blob, 56);
+        blob.insert(blob.end(), b.begin(), b.end());
+        return blob;
+    };
+    const std::vector<u32> vs_pt = {
+        inst_l(0x5F, 3), opd(1, 1, 3, 0xF, 0), 0,          // dcl_input v0
+        inst_l(0x65, 3), opd(2, 1, 3, 0xF, 0), 0,          // dcl_output o0
+        inst_l(0x36, 5), opd(2, 1, 3, 0xF, 0), 0,          // mov o0, v0
+        opd(1, 1, 3, 0, kId), 0,
+    };
+    const std::vector<u32> ps_red = {
+        inst_l(0x65, 3), opd(2, 1, 3, 0xF, 0), 0,          // dcl_output o0
+        inst_l(0x36, 8), opd(2, 1, 3, 0xF, 0), 0,          // mov o0, l(1,0,0,1)
+        opd(4, 0, 3, 0, kId), fw(1.0f), fw(0.0f), fw(0.0f), fw(1.0f),
+    };
+    const std::vector<u8> vs_blob = make_blob(vs_pt);
+    const std::vector<u8> ps_blob = make_blob(ps_red);
+
+    std::vector<u32> vs2, ps2;
+    if (!dxbc_to_spirv({vs_blob.data(), vs_blob.size()}, kStageVertex, vs2, err) ||
+        !dxbc_to_spirv({ps_blob.data(), ps_blob.size()}, kStageFragment, ps2, err))
+        { std::printf("fail: render shaders: %s\n", err.c_str()); return 5; }
+    // Render layout: POSITION R32G32B32_FLOAT only (stride 12 == the data).
+    const std::vector<D3d11InputElement> r_elements = {
+        { "POSITION", 0, 6, 0, kAppendAlignedElement, 0, 0 },
+    };
+    std::vector<papaya::gpu::VulkanVertexBinding> rbind;
+    std::vector<papaya::gpu::VulkanVertexAttribute> rattr;
+    if (!build_vertex_input(r_elements, rbind, rattr)) { std::printf("fail: render layout\n"); return 5; }
+    PipelineSpec rspec;
+    rspec.vs_spirv = vs2;
+    rspec.ps_spirv = ps2;
+    rspec.vertex_bindings = rbind;
+    rspec.vertex_attributes = rattr;
+    rspec.descriptors = desc;
+
+    const float tri[9] = { 0.0f, 0.5f, 0.0f,   0.5f, -0.5f, 0.0f,   -0.5f, -0.5f, 0.0f };
+    u8 cb_data[64] = {};
+    std::vector<u8> pixels;
+    if (!render_offscreen(reinterpret_cast<u64>(device), reinterpret_cast<u64>(phys),
+                          64, 64, VK_FORMAT_R8G8B8A8_UNORM, rspec,
+                          reinterpret_cast<const u8*>(tri), 12, 3,
+                          cb_data, sizeof(cb_data), pixels, err)) {
+        std::printf("fail: offscreen render: %s\n", err.c_str()); return 6;
+    }
+    if (pixels.size() != 64u * 64u * 4u) { std::printf("fail: pixel count\n"); return 7; }
+    const u8* center = &pixels[(32u * 64u + 32u) * 4u];   // triangle covers center
+    const u8* corner = &pixels[0];                        // clear color (blue)
+    if (center[0] < 200 || center[2] > 60) {
+        std::printf("fail: center not red (r=%u b=%u)\n", center[0], center[2]); return 8;
+    }
+    if (corner[2] < 200 || corner[0] > 60) {
+        std::printf("fail: corner not blue (r=%u b=%u)\n", corner[0], corner[2]); return 9;
+    }
+    // diagnostics: histogram-ish scan for any non-blue pixel
+
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(inst, nullptr);
-    std::printf("ok: DXBC -> glslang -> VkPipeline (+render pass +layout +descriptors)\n");
+    std::printf("ok: DXBC -> glslang -> VkPipeline -> rendered triangle, pixels read back\n");
     return 0;
 #else
     std::printf("skip: Vulkan unavailable in this build\n");
