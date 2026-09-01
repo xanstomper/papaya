@@ -263,6 +263,22 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   shader_compile (26th ctest): SPIR-V magic + word count for fragment and
   vertex, clean refusal for garbage bytecode and for missing-glslang builds.
   ctest 26/26, guest suite 21/21, glslang validation green.
+- Stage 4d (done, verified): device-bound VkPipeline creation.
+  `vulkan_pipeline` builds a real graphics pipeline from the D3D11 state the
+  whole chain captures: VS/PS SPIR-V from the shader objects (4c),
+  vertex-input bindings/attributes + descriptor set layout from pipeline_map
+  (4b), and a dedicated presentable render pass on the swapchain color
+  format. The builder is thin glue (shader modules, pipeline layout,
+  render pass, fixed-function state: triangle list, fill, no cull,
+  CCW front face, dynamic viewport/scissor, optional alpha blend).
+  test_vulkan_pipeline (27th ctest) runs headless end-to-end: own
+  VkInstance + first graphics device (lavapipe/llvmpipe), compiles a real
+  VS+PS from DXBC in-process, builds the pipeline state from an input
+  layout + sampler + cbuffer, and creates + destroys the VkPipeline,
+  VkRenderPass, VkPipelineLayout and VkDescriptorSetLayout; skips cleanly
+  (exit 0) when no Vulkan device exists so CI stays hermetic. On this host
+  it creates a REAL pipeline. ctest 27/27, guest suite 21/21, glslang
+  validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

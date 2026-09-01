@@ -23,8 +23,8 @@ using papaya::gpu::DescriptorType;
 using papaya::gpu::dxgi_format_size;
 using papaya::gpu::dxgi_format_to_vk_format;
 using papaya::gpu::kAppendAlignedElement;
-using papaya::gpu::kStageFragment;
-using papaya::gpu::kStageVertex;
+using papaya::gpu::kDescriptorStageFragment;
+using papaya::gpu::kDescriptorStageVertex;
 using papaya::gpu::VulkanVertexAttribute;
 using papaya::gpu::VulkanVertexBinding;
 using papaya::u32;
@@ -92,9 +92,10 @@ int main() {
     u32 count = 0;
     for (const auto& d : desc) {
         if (d.binding == 0 && d.type == DescriptorType::CombinedImageSampler &&
-            d.stage_bits == kStageFragment) got_sampler0 = true;
+            d.stage_bits == kDescriptorStageFragment) got_sampler0 = true;
         if (d.binding == 16 && d.type == DescriptorType::UniformBuffer &&
-            (d.stage_bits & (kStageVertex | kStageFragment)) == (kStageVertex | kStageFragment))
+            (d.stage_bits & (kDescriptorStageVertex | kDescriptorStageFragment)) ==
+            (kDescriptorStageVertex | kDescriptorStageFragment))
             got_cb0 = true;
         if (d.binding == 33 && d.type == DescriptorType::CombinedImageSampler) got_shadow1 = true;
         ++count;

@@ -7,6 +7,7 @@ add_library(papaya-gpu STATIC
     src/shader_translator.cpp
     src/pipeline_map.cpp
     src/shader_compile.cpp
+    src/vulkan_pipeline.cpp
 )
 
 target_include_directories(papaya-gpu PUBLIC

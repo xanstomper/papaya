@@ -156,6 +156,11 @@ add_executable(test_shader_compile test_shader_compile.cpp)
 target_link_libraries(test_shader_compile PRIVATE papaya-gpu)
 add_test(NAME ShaderCompileTest COMMAND test_shader_compile)
 
+# Device-bound VkPipeline creation from DXBC (Stage 4d; skips without a device).
+add_executable(test_vulkan_pipeline test_vulkan_pipeline.cpp)
+target_link_libraries(test_vulkan_pipeline PRIVATE papaya-gpu)
+add_test(NAME VulkanPipelineTest COMMAND test_vulkan_pipeline)
+
 add_test(NAME SteamStubTest COMMAND test_steam_stub)
 add_test(NAME CpuPagesTest COMMAND test_cpu_pages)
 add_test(NAME PotatoGpuTest COMMAND test_potato_gpu)

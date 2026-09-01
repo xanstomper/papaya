@@ -121,13 +121,13 @@ void build_descriptor_layout(const bool cbuffers[16], const bool samplers[16],
                              std::vector<VulkanDescriptorBinding>& out) {
     out.clear();
     for (u32 s = 0; s < 16; ++s) {
-        if (samplers[s]) out.push_back({ s, DescriptorType::CombinedImageSampler, kStageFragment });
-        if (shadows[s]) out.push_back({ 32u + s, DescriptorType::CombinedImageSampler, kStageFragment });
+        if (samplers[s]) out.push_back({ s, DescriptorType::CombinedImageSampler, kDescriptorStageFragment });
+        if (shadows[s]) out.push_back({ 32u + s, DescriptorType::CombinedImageSampler, kDescriptorStageFragment });
     }
     for (u32 c = 0; c < 16; ++c)
         if (cbuffers[c])
             out.push_back({ 16u + c, DescriptorType::UniformBuffer,
-                            kStageVertex | kStageFragment });
+                            kDescriptorStageVertex | kDescriptorStageFragment });
 }
 
 bool descriptor_bindings_valid(const std::vector<VulkanDescriptorBinding>& bindings) {

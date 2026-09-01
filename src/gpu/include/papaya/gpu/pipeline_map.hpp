@@ -46,8 +46,8 @@ struct VulkanVertexAttribute {
 
 enum class DescriptorType : u32 { CombinedImageSampler = 0, UniformBuffer = 1 };
 
-constexpr u32 kStageVertex = 1;
-constexpr u32 kStageFragment = 2;
+constexpr u32 kDescriptorStageVertex = 1;   // stage bits (VK-style flags)
+constexpr u32 kDescriptorStageFragment = 2;
 
 // VkDescriptorSetLayoutBinding-ish.
 struct VulkanDescriptorBinding {
