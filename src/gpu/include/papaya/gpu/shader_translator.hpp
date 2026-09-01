@@ -170,6 +170,9 @@ struct DecodedInstruction {
     ShaderOpcode opcode{ShaderOpcode::Unknown};
     u32 opcode_raw{0};              // raw opcode byte (bits 0-7)
     u32 flags{0};                   // instruction flags (bits 11-13; saturate=0x4)
+    u32 aux{0};                     // opcode-token bits 11-19: interpolation mode,
+                                    // global flags, resource type (11-14), sample
+                                    // count (16-19), conditional NZ (bit 18)
     u32 length{0};                  // length in u32 tokens incl. the opcode token
     u32 token_offset{0};            // u32 offset of instruction start in stream
     std::vector<u32> modifier_tokens;  // instruction modifiers (AOFFIMMI etc.)

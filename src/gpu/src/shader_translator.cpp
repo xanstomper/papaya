@@ -270,6 +270,7 @@ bool sm4_decode(std::span<const u32> stream, std::vector<DecodedInstruction>& ou
         DecodedInstruction ins{};
         ins.opcode_raw = raw;
         ins.flags = (token >> 11) & 0x7u;
+        ins.aux = (token >> 11) & 0x1FFu;
         ins.length = len;
         ins.token_offset = static_cast<u32>(i);
         ins.opcode = find_opcode_row(raw) ? static_cast<ShaderOpcode>(raw) : ShaderOpcode::Unknown;
@@ -362,7 +363,7 @@ std::string fstr(float f) {
     return s;
 }
 
-// Register reference: rN / vN / oN / tN / sN / cbN.
+// Register reference: rN / vN / oN / tN / sN.
 std::string reg_ref(const DecodedOperand& op) {
     switch (op.reg_type) {
         case 0x00: return "r" + std::to_string(op.reg_index());
@@ -370,39 +371,52 @@ std::string reg_ref(const DecodedOperand& op) {
         case 0x02: return "o" + std::to_string(op.reg_index());
         case 0x06: return "s" + std::to_string(op.reg_index());
         case 0x07: return "t" + std::to_string(op.reg_index());
-        default: return std::string();   // cb/other indexed classes: Stage 3
+        default: return std::string();   // cb handled in src_expr
     }
 }
 
-// Source operand expression with modifier + swizzle applied.
-bool src_expr(const DecodedOperand& op, std::string& out) {
-    if (op.reg_type == 0x04 || op.reg_type == 0x05) {   // immconst
+// Constant-buffer read: cb<buffer>[<element>]  (encoded indices: idx0=buffer,
+// idx1=element). Only absolute addressing for now; relative -> unsupported.
+bool cb_expr(const DecodedOperand& op, std::string& out) {
+    if (op.reg_type != 0x08 || op.rel.size() != 0 || op.indices.size() != 2)
+        return false;
+    out += "cb" + std::to_string(op.indices[0]) + "[" + std::to_string(op.indices[1]) + "]";
+    return true;
+}
+
+// Source operand expression with modifier + swizzle applied. `slice` is the
+// dst write-mask suffix ("" for a full write, ".xy" etc. otherwise): when a
+// src has an identity swizzle its components are taken from the dst mask
+// (SM4 semantics: dst.xy reads src.xy of the full vec4 result), which keeps
+// the emitted GLSL valid (no vec4->vec2 implicit narrowing).
+bool src_expr(const DecodedOperand& op, std::string& out, const std::string& slice) {
+    bool is_imm = op.reg_type == 0x04 || op.reg_type == 0x05;
+    const bool identity = (op.swizzle & 0x3) == 0 && ((op.swizzle >> 2) & 0x3) == 1 &&
+                          ((op.swizzle >> 4) & 0x3) == 2 && ((op.swizzle >> 6) & 0x3) == 3;
+    std::string s;
+    if (is_imm) {
         if (op.imm.empty()) return false;
-        out += "vec4(";
+        s += "vec4(";
         for (size_t i = 0; i < 4; ++i) {
-            if (i) out += ", ";
+            if (i) s += ", ";
             float v = 0.0f;
             if (i < op.imm.size()) std::memcpy(&v, &op.imm[i], 4);
-            out += fstr(v);
+            s += fstr(v);
         }
-        out += ")";
-        if ((op.swizzle & 0x3) == 0 && ((op.swizzle >> 2) & 0x3) == 1 &&
-            ((op.swizzle >> 4) & 0x3) == 2 && ((op.swizzle >> 6) & 0x3) == 3) {
-            // identity swizzle: no suffix
-        } else {
-            out += swizzle_suffix(op.swizzle);
-        }
-        if (op.modifier == 1) out = "-(" + out + ")";
-        else if (op.modifier == 2) out = "abs(" + out + ")";
-        else if (op.modifier == 3) out = "-abs(" + out + ")";
-        return true;
+        s += ")";
+    } else if (op.reg_type == 0x08) {
+        if (!cb_expr(op, s)) return false;
+    } else {
+        const std::string ref = reg_ref(op);
+        if (ref.empty() || !op.rel.empty()) return false;   // indexed classes unsupported
+        s = ref;
     }
-    const std::string ref = reg_ref(op);
-    if (ref.empty() || !op.rel.empty()) return false;   // cb/r indexing unsupported
-    std::string s = ref;
-    if ((op.swizzle & 0x3) != 0 || ((op.swizzle >> 2) & 0x3) != 1 ||
-        ((op.swizzle >> 4) & 0x3) != 2 || ((op.swizzle >> 6) & 0x3) != 3)
+    // identity swizzle -> slice to the dst write mask; else keep the swizzle.
+    if (identity) {
+        if (!slice.empty()) s += slice;
+    } else {
         s += swizzle_suffix(op.swizzle);
+    }
     if (op.modifier == 1) s = "-(" + s + ")";
     else if (op.modifier == 2) s = "abs(" + s + ")";
     else if (op.modifier == 3) s = "-abs(" + s + ")";
@@ -438,9 +452,8 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 out += "vec4 o" + std::to_string(ins.operands[0].reg_index()) + ";\n";
                 break;
             // SM4 declarations that do not change the ALU body: the runtime
-            // binds resources/cbuffers/global flags from the DXBC container.
+            // binds resources/samplers/global flags from the DXBC container.
             case ShaderOpcode::DclGlobalFlags:
-            case ShaderOpcode::DclConstantBuffer:
             case ShaderOpcode::DclSampler:
             case ShaderOpcode::DclResource:
             case ShaderOpcode::DclIndexableTemp:
@@ -449,6 +462,16 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::DclInputPrimitive:
             case ShaderOpcode::DclVerticesOut:
                 break;
+            case ShaderOpcode::DclConstantBuffer: {
+                // dcl_constantbuffer cbN[M]: operand idx0 = buffer, idx1 = size
+                // in vec4 registers -> uniform vec4 cbN[M];
+                if (ins.operands.size() != 1 || ins.operands[0].indices.size() != 2)
+                    return false;
+                const u32 buf = ins.operands[0].indices[0];
+                const u32 size = ins.operands[0].indices[1];
+                out += "uniform vec4 cb" + std::to_string(buf) + "[" + std::to_string(size) + "];\n";
+                break;
+            }
             case ShaderOpcode::Mov:
             case ShaderOpcode::Add:
             case ShaderOpcode::Mul:
@@ -456,19 +479,20 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::Min:
             case ShaderOpcode::Max: {
                 if (ins.operands.size() < 2) return false;
+                const std::string slice = mask_suffix(dst_of(ins).mask);
                 std::string a, b, c;
-                if (!src_expr(ins.operands[1], a)) return false;
+                if (!src_expr(ins.operands[1], a, slice)) return false;
                 std::string body;
                 switch (ins.opcode) {
                     case ShaderOpcode::Mov: body = a; break;
-                    case ShaderOpcode::Add: if (!src_expr(ins.operands[2], b)) return false; body = "(" + a + " + " + b + ")"; break;
-                    case ShaderOpcode::Mul: if (!src_expr(ins.operands[2], b)) return false; body = "(" + a + " * " + b + ")"; break;
+                    case ShaderOpcode::Add: if (!src_expr(ins.operands[2], b, slice)) return false; body = "(" + a + " + " + b + ")"; break;
+                    case ShaderOpcode::Mul: if (!src_expr(ins.operands[2], b, slice)) return false; body = "(" + a + " * " + b + ")"; break;
                     case ShaderOpcode::Mad:
-                        if (ins.operands.size() < 3 || !src_expr(ins.operands[2], b) || !src_expr(ins.operands[3], c)) return false;
+                        if (ins.operands.size() < 3 || !src_expr(ins.operands[2], b, slice) || !src_expr(ins.operands[3], c, slice)) return false;
                         body = "((" + a + " * " + b + ") + " + c + ")";
                         break;
-                    case ShaderOpcode::Min: if (!src_expr(ins.operands[2], b)) return false; body = "min(" + a + ", " + b + ")"; break;
-                    case ShaderOpcode::Max: if (!src_expr(ins.operands[2], b)) return false; body = "max(" + a + ", " + b + ")"; break;
+                    case ShaderOpcode::Min: if (!src_expr(ins.operands[2], b, slice)) return false; body = "min(" + a + ", " + b + ")"; break;
+                    case ShaderOpcode::Max: if (!src_expr(ins.operands[2], b, slice)) return false; body = "max(" + a + ", " + b + ")"; break;
                     default: return false;
                 }
                 if (ins.flags & 0x4) body = "clamp(" + body + ", 0.0, 1.0)";
@@ -477,9 +501,10 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             }
             case ShaderOpcode::Movc: {
                 if (ins.operands.size() < 3) return false;
+                const std::string slice = mask_suffix(dst_of(ins).mask);
                 std::string cond, a, b;
-                if (!src_expr(ins.operands[1], cond) || !src_expr(ins.operands[2], a) ||
-                    !src_expr(ins.operands[3], b)) return false;
+                if (!src_expr(ins.operands[1], cond, "") || !src_expr(ins.operands[2], a, slice) ||
+                    !src_expr(ins.operands[3], b, slice)) return false;
                 line(reg_ref(dst_of(ins)) + mask_suffix(dst_of(ins).mask) +
                      " = mix(" + b + ", " + a + ", clamp(" + cond + ", 0.0, 1.0));");
                 break;
@@ -489,7 +514,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::Dp4: {
                 if (ins.operands.size() < 2) return false;
                 std::string a, b;
-                if (!src_expr(ins.operands[1], a) || !src_expr(ins.operands[2], b)) return false;
+                if (!src_expr(ins.operands[1], a, "") || !src_expr(ins.operands[2], b, "")) return false;
                 static const char* kComp[3] = {"xy", "xyz", "xyzw"};
                 const int n = static_cast<int>(ins.opcode) - static_cast<int>(ShaderOpcode::Dp2) + 2;
                 const std::string body = "dot(" + a + "." + kComp[n - 2] + ", " + b + "." + kComp[n - 2] + ")";
@@ -501,8 +526,9 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::Lt:
             case ShaderOpcode::Ne: {
                 if (ins.operands.size() < 2) return false;
+                const std::string slice = mask_suffix(dst_of(ins).mask);
                 std::string a, b;
-                if (!src_expr(ins.operands[1], a) || !src_expr(ins.operands[2], b)) return false;
+                if (!src_expr(ins.operands[1], a, slice) || !src_expr(ins.operands[2], b, slice)) return false;
                 const char* fn =
                         ins.opcode == ShaderOpcode::Eq ? "equal" :
                         ins.opcode == ShaderOpcode::Ge ? "greaterThanEqual" :
@@ -524,8 +550,9 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::DerivRtx:
             case ShaderOpcode::DerivRty: {
                 if (ins.operands.size() < 2) return false;
+                const std::string slice = mask_suffix(dst_of(ins).mask);
                 std::string a;
-                if (!src_expr(ins.operands[1], a)) return false;
+                if (!src_expr(ins.operands[1], a, slice)) return false;
                 std::string body;
                 switch (ins.opcode) {
                     case ShaderOpcode::Exp: body = "exp2(" + a + ")"; break;
@@ -550,7 +577,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 // if (cond != 0.0) {   (nonzero condition, per SM4 semantics)
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
-                if (!src_expr(ins.operands[0], cond)) return false;
+                if (!src_expr(ins.operands[0], cond, "")) return false;
                 line("if (any(" + cond + " != vec4(0.0))) {");
                 ++indent;
                 break;
@@ -582,14 +609,14 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
                 // if (cond != 0.0) break;   (Z/NZ flag at bit 18: NZ by default)
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
-                if (!src_expr(ins.operands[0], cond)) return false;
+                if (!src_expr(ins.operands[0], cond, "")) return false;
                 line("if (any(" + cond + " != vec4(0.0))) break;");
                 break;
             }
             case ShaderOpcode::Continuec: {
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
-                if (!src_expr(ins.operands[0], cond)) return false;
+                if (!src_expr(ins.operands[0], cond, "")) return false;
                 line("if (any(" + cond + " != vec4(0.0))) continue;");
                 break;
             }
@@ -602,7 +629,7 @@ bool sm4_emit_glsl(std::span<const DecodedInstruction> insns, std::string& out) 
             case ShaderOpcode::Retc: {
                 if (ins.operands.size() < 1) return false;
                 std::string cond;
-                if (!src_expr(ins.operands[0], cond)) return false;
+                if (!src_expr(ins.operands[0], cond, "")) return false;
                 line("if (any(" + cond + " != vec4(0.0))) return;");
                 break;
             }

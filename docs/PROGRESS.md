@@ -157,6 +157,18 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   emitting undefined identifiers. Verified: decode+emit of if/else/loop/
   breakc/continue/discard yields the expected GLSL, and switch fails cleanly.
   ctest 23/23, guest suite 21/21.
+- Stage 3a (done, verified): constant-buffer reads. `dcl_constantbuffer cbN[M]`
+  emits `uniform vec4 cbN[M];` (operand idx0 = buffer, idx1 = size, from
+  vkd3d's exact layout); instruction cb operands (encoded order 2: idx0 =
+  buffer, idx1 = element) emit `cbN[i]` reads with swizzle support. Also
+  fixed a latent GLSL correctness bug: full-vec4 RHS assigned to a partial
+  write mask is invalid GLSL, so identity-swizzled sources are now sliced to
+  the dst mask (`r1.xy = (r0.xy * ...)`) matching SM4 semantics exactly.
+  Decoder captures opcode-token bits 11-19 into `DecodedInstruction::aux`
+  (interpolation mode/global flags/resource type/sample count) for the
+  texture stage. Relative cb addressing still refused (honest). Verified:
+  decode+emit of dcl_cb + mov/add from cb0/cb1 yields the exact expected
+  GLSL. ctest 23/23, guest suite 21/21.
 - Stage 3 (next): switch/case (int value representation), texture loads/
   samples + resource binding, constant-buffer indexing, integer ops, and
   wiring the emitted GLSL into glslang (SPIRV-Cross/DXC) for SPIR-V; then

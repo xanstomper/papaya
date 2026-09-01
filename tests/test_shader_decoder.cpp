@@ -189,7 +189,7 @@ int main() {
     };
     if (!has("vec4 v0;") || !has("vec4 o0;") || !has("vec4 r0;") || !has("vec4 r1;")) return 25;
     if (!has("r0 = v0;")) return 26;
-    if (!has("r1.xy = (r0 * vec4(2.0, 2.0, 2.0, 2.0));")) return 27;
+    if (!has("r1.xy = (r0.xy * vec4(2.0, 2.0, 2.0, 2.0).xy);")) return 27;
     if (!has("o0 = clamp((r0 + r1), 0.0, 1.0);")) return 28;
     // unsupported opcode (ld) must make emission fail, not emit garbage
     std::vector<DecodedInstruction> lins;
@@ -263,6 +263,42 @@ int main() {
     if (!sm4_decode({sw.data(), sw.size()}, sins)) return 39;
     if (sm4_emit_glsl({sins.data(), sins.size()}, junk)) return 40;
 
-    std::printf("ok: decode+info+emit+control flow, malformed/unsupported rejected\n");
+    // --- constant buffers (Stage 3a) ---
+    // dcl_constantbuffer cb0[16]
+    // mov r2.xyz, cb0[4].xyz
+    // add r3.xy, cb0[4], cb1[2]
+    std::vector<u32> cb;
+    cb.push_back(inst(0x59, 4));                       // dcl_constantbuffer, len 4
+    cb.push_back(operand(0x08, 2, 3, 0));              // CB reg, order 2
+    cb.push_back(0);                                   // buffer 0
+    cb.push_back(16);                                  // 16 vec4s
+    cb.push_back(inst(0x36, 6));                       // mov r2.xyz, cb0[4].xyz
+    cb.push_back(operand(0x00, 1, 3, 0x7));            // TEMP r2, mask .xyz
+    cb.push_back(2);
+    cb.push_back(operand(0x08, 2, 3, 0) | swizzle(0, 1, 2, 3));  // cb0 element 4
+    cb.push_back(0);
+    cb.push_back(4);
+    cb.push_back(inst(0x00, 9));                       // add r3.xy, cb0[4], cb1[2]
+    cb.push_back(operand(0x00, 1, 3, 0x3));            // TEMP r3, mask .xy
+    cb.push_back(3);
+    cb.push_back(operand(0x08, 2, 3, 0) | swizzle(0, 1, 2, 3));
+    cb.push_back(0);
+    cb.push_back(4);
+    cb.push_back(operand(0x08, 2, 3, 0) | swizzle(0, 1, 2, 3));
+    cb.push_back(1);
+    cb.push_back(2);
+    std::vector<DecodedInstruction> cbins;
+    if (!sm4_decode({cb.data(), cb.size()}, cbins)) return 43;
+    if (cbins.size() != 3) return 44;
+    {
+        std::string gls;
+        if (!sm4_emit_glsl({cbins.data(), cbins.size()}, gls)) return 45;
+        const auto has = [&](const char* what) { return gls.find(what) != std::string::npos; };
+        if (!has("uniform vec4 cb0[16];")) return 46;
+        if (!has("r2.xyz = cb0[4].xyz;")) return 47;
+        if (!has("r3.xy = (cb0[4].xy + cb1[2].xy);")) return 48;
+    }
+
+    std::printf("ok: decode+info+emit+control flow+cb reads, malformed/unsupported rejected\n");
     return 0;
 }
