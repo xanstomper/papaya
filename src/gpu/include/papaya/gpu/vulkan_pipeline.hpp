@@ -46,17 +46,29 @@ bool create_graphics_pipeline(u64 device, u32 color_format, u32 vp_w, u32 vp_h,
 
 void destroy_graphics_pipeline(GraphicsPipeline& p);
 
-// One-shot offscreen render of the pipeline: draws `vertex_count` vertices
-// (vertex_data layout = vertex_stride bytes per vertex, matching the spec's
-// bindings) into a w x h offscreen color target, with cbuffer_data uploaded
-// to every UniformBuffer binding (binding b reads at offset 16*(b-16) within
-// a 64KB scratch UBO) and a 2x2 red test texture on every image binding.
-// Returns the rendered RGBA8 pixels. This is the record/execute path: render
-// pass, command buffer, descriptors, submit, and image readback.
-bool render_offscreen(u64 device, u64 physical_device, u32 w, u32 h, u32 color_format,
-                      const PipelineSpec& spec,
-                      const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
-                      const u8* cbuffer_data, size_t cbuffer_size,
-                      std::vector<u8>& pixels, std::string& err);
+// Render the pipeline into a target. `target_image` = 0 creates its own
+// offscreen image (and fills `pixels_out` with RGBA8 readback when non-null);
+// `target_image` != 0 renders into that image (an external target such as a
+// swapchain image: a view + framebuffer are created for it, no readback).
+// cbuffer_data is uploaded to every UniformBuffer binding (binding b reads at
+// offset 16*(b-16) in a 64KB scratch UBO); image bindings get a 2x2 red
+// test texture. This is the record/execute path: render pass, command
+// buffer, descriptors, submit.
+bool render_pipeline(u64 device, u64 physical_device, u32 w, u32 h, u32 color_format,
+                     const PipelineSpec& spec, u64 target_image,
+                     const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
+                     const u8* cbuffer_data, size_t cbuffer_size,
+                     std::vector<u8>* pixels_out, std::string& err);
+
+// Offscreen convenience wrapper: own target + readback pixels.
+inline bool render_offscreen(u64 device, u64 physical_device, u32 w, u32 h,
+                             u32 color_format, const PipelineSpec& spec,
+                             const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
+                             const u8* cbuffer_data, size_t cbuffer_size,
+                             std::vector<u8>& pixels, std::string& err) {
+    return render_pipeline(device, physical_device, w, h, color_format, spec, 0,
+                           vertex_data, vertex_stride, vertex_count,
+                           cbuffer_data, cbuffer_size, &pixels, err);
+}
 
 } // namespace papaya::gpu

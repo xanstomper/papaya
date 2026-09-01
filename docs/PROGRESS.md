@@ -295,6 +295,21 @@ lib (SPIRV-Cross / DXC / glslang) for DXBC->SPIR-V.
   test_vulkan_pipeline renders a real triangle through the translated
   pipeline and asserts the pixels (red triangle on blue clear). ctest 27/27,
   guest suite 21/21, glslang validation green.
+- Stage 4f (done, verified): swapchain GPU-render path. render_pipeline was
+  generalized to target an EXTERNAL image (own offscreen target + readback
+  when target=0), so the same verified record/execute core can render into
+  swapchain images. VulkanSwapchain::render_and_present() then does the
+  swapchain integration: per-spec cached VkPipeline/layout/descriptor-
+  layout/render-pass (spec identity = the SPIR-V pointers owned by the D3D11
+  shader objects), lazily created image views + framebuffers per swapchain
+  image, acquire -> render_pipeline into the image -> present. Also exposed
+  device()/physical_device()/surface_format() for the pipeline builder.
+  Honest scope: presenting through a real surface still needs a visible
+  X11 window (not exercisable headless), so the swapchain test verifies the
+  headless contract: accessors are 0 and render_and_present refuses cleanly
+  before initialization; the rendered-frame acceptance stays on the
+  offscreen path (Stage 4e). ctest 27/27, guest suite 21/21, glslang
+  validation green.
 - Stage 3 (next): switch/case (int value representation), integer ops,
   resinfo/gather + 3D/array sample variants + DCL input-signature coupling
   (inputs/outputs from ISGN/OSGN instead of fixed vN/oN), then D3D11-state->

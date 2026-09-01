@@ -11,6 +11,7 @@
 // CPU RGBA, which is correct for the current D3D11 swrast path.
 
 #include "papaya/gpu/vulkan_swapchain.hpp"
+#include "papaya/gpu/vulkan_pipeline.hpp"
 #include "papaya/common/logger.hpp"
 
 #define VK_USE_PLATFORM_XLIB_KHR
@@ -49,6 +50,18 @@ struct VulkanSwapchain::Impl {
     u32              graphics_family{kInvalidQueue};
     u32              present_family{kInvalidQueue};
     std::vector<VkImage>     images;
+    // GPU pipeline path (render_and_present): cached per-spec objects + a
+    // framebuffer and image view per swapchain image.
+    VkPipeline       gpu_pipeline{VK_NULL_HANDLE};
+    VkPipelineLayout gpu_layout{VK_NULL_HANDLE};
+    VkDescriptorSetLayout gpu_dsl{VK_NULL_HANDLE};
+    VkRenderPass     gpu_rp{VK_NULL_HANDLE};
+    const void*      gpu_spec_key{nullptr};
+    std::vector<VkImageView>   image_views;
+    std::vector<VkFramebuffer> framebuffers;
+    VkCommandPool    gpu_pool{VK_NULL_HANDLE};
+    VkCommandBuffer  gpu_cmd{VK_NULL_HANDLE};
+    VkQueue          gpu_queue{VK_NULL_HANDLE};
 };
 
 VulkanSwapchain::VulkanSwapchain() = default;
@@ -232,6 +245,24 @@ Result<> VulkanSwapchain::initialize(_XDisplay* display, std::uint64_t xwindow, 
     return {};
 }
 
+void VulkanSwapchain::destroy_gpu_path() {
+    if (!impl_ || !impl_->device) return;
+    auto& im = *impl_;
+    for (auto fb : im.framebuffers) if (fb) vkDestroyFramebuffer(im.device, fb, nullptr);
+    for (auto v : im.image_views) if (v) vkDestroyImageView(im.device, v, nullptr);
+    im.framebuffers.clear();
+    im.image_views.clear();
+    if (im.gpu_pipeline) vkDestroyPipeline(im.device, im.gpu_pipeline, nullptr);
+    if (im.gpu_layout) vkDestroyPipelineLayout(im.device, im.gpu_layout, nullptr);
+    if (im.gpu_dsl) vkDestroyDescriptorSetLayout(im.device, im.gpu_dsl, nullptr);
+    if (im.gpu_rp) vkDestroyRenderPass(im.device, im.gpu_rp, nullptr);
+    im.gpu_pipeline = VK_NULL_HANDLE;
+    im.gpu_layout = VK_NULL_HANDLE;
+    im.gpu_dsl = VK_NULL_HANDLE;
+    im.gpu_rp = VK_NULL_HANDLE;
+    im.gpu_spec_key = nullptr;
+}
+
 void VulkanSwapchain::shutdown() {
     ready_ = false;
     if (!impl_) return;
@@ -362,6 +393,80 @@ bool VulkanSwapchain::upload_rgba(const u8* rgba, u32 width, u32 height) {
     si.pSignalSemaphores = impl_->render_finished ? &impl_->render_finished : nullptr;
     if (vkQueueSubmit(impl_->queue, 1, &si, impl_->fence) != VK_SUCCESS) return false;
     return true;
+}
+
+
+u64 VulkanSwapchain::device() const { return impl_ && impl_->device ? reinterpret_cast<u64>(impl_->device) : 0; }
+u64 VulkanSwapchain::physical_device() const {
+    return impl_ && impl_->physical ? reinterpret_cast<u64>(impl_->physical) : 0;
+}
+u32 VulkanSwapchain::surface_format() const {
+    return impl_ ? static_cast<u32>(impl_->format) : 0;
+}
+
+bool VulkanSwapchain::render_and_present(const PipelineSpec& spec,
+                                         const u8* vertex_data, u32 vertex_stride,
+                                         u32 vertex_count,
+                                         const u8* cbuffer_data, size_t cbuffer_size) {
+    if (!ready_ || !impl_ || !impl_->device || impl_->images.empty()) return false;
+    if (!vertex_data || vertex_count == 0) return false;   // nothing to draw yet
+
+    Impl& im = *impl_;
+    // Cache the pipeline objects per spec (identity = the SPIR-V pointers,
+    // which are stable because the D3D11 shader objects own the vectors).
+    const void* key = spec.vs_spirv.data();
+    if (im.gpu_spec_key != key) {
+        destroy_gpu_path();
+        std::string err;
+        papaya::gpu::GraphicsPipeline gp;
+        if (!papaya::gpu::create_graphics_pipeline(reinterpret_cast<u64>(im.device),
+                                                   static_cast<u32>(im.format),
+                                                   width_, height_, spec, gp, err))
+            return false;
+        im.gpu_pipeline = reinterpret_cast<VkPipeline>(gp.pipeline);
+        im.gpu_layout = reinterpret_cast<VkPipelineLayout>(gp.layout);
+        im.gpu_dsl = reinterpret_cast<VkDescriptorSetLayout>(gp.descriptor_layout);
+        im.gpu_rp = reinterpret_cast<VkRenderPass>(gp.render_pass);
+        im.gpu_spec_key = key;
+        gp = {};   // ownership transferred
+    }
+
+    const u32 idx = acquire();
+    if (idx == 0xFFFFFFFFu) return false;
+    while (im.image_views.size() <= idx) {
+        VkImageViewCreateInfo ivc{};
+        ivc.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        ivc.image = im.images[im.image_views.size()];
+        ivc.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ivc.format = im.format;
+        ivc.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkImageView view = VK_NULL_HANDLE;
+        vkCreateImageView(im.device, &ivc, nullptr, &view);
+        im.image_views.push_back(view);
+        VkFramebufferCreateInfo fci{};
+        fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass = im.gpu_rp;
+        fci.attachmentCount = 1;
+        fci.pAttachments = &view;
+        fci.width = width_;
+        fci.height = height_;
+        fci.layers = 1;
+        VkFramebuffer fb = VK_NULL_HANDLE;
+        vkCreateFramebuffer(im.device, &fci, nullptr, &fb);
+        im.framebuffers.push_back(fb);
+    }
+
+    std::string err;
+    if (!papaya::gpu::render_pipeline(reinterpret_cast<u64>(im.device),
+                                      reinterpret_cast<u64>(im.physical),
+                                      width_, height_, static_cast<u32>(im.format),
+                                      spec, reinterpret_cast<u64>(im.images[idx]),
+                                      vertex_data, vertex_stride, vertex_count,
+                                      cbuffer_data, cbuffer_size, nullptr, err)) {
+        last_error_ = "GPU render: " + err;
+        return false;
+    }
+    return present(idx) == 0;
 }
 
 } // namespace papaya::gpu

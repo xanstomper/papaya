@@ -2,6 +2,7 @@
 
 #include "papaya/common/types.hpp"
 #include "papaya/common/error.hpp"
+#include "papaya/gpu/vulkan_pipeline.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,6 +46,19 @@ public:
     // Copy an RGBA8 CPU buffer into the acquired swapchain image.
     bool upload_rgba(const u8* rgba, u32 width, u32 height);
 
+    // GPU path: render the translated pipeline (spec from the D3D11 state
+    // mapping) into the acquired swapchain image and present it. Vertex data
+    // layout matches the spec's bindings. Returns false when not ready or the
+    // render fails (caller falls back to the CPU blit path).
+    bool render_and_present(const PipelineSpec& spec,
+                            const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
+                            const u8* cbuffer_data, size_t cbuffer_size);
+
+    // Device handles for the pipeline builder (0 when not initialized).
+    u64 device() const;
+    u64 physical_device() const;
+    u32 surface_format() const;   // VkFormat of the swapchain images
+
     // Diagnostics.
     const std::string& last_error() const { return last_error_; }
     const std::string& gpu_name() const { return gpu_name_; }
@@ -53,6 +67,7 @@ public:
 
 private:
     struct Impl;
+    void destroy_gpu_path();   // cached GPU pipeline/framebuffer objects
     std::unique_ptr<Impl> impl_;
     bool   ready_{false};
     u32    width_{0};

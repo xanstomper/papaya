@@ -283,14 +283,15 @@ bool create_device_image(VkDevice device, VkPhysicalDevice phys, u32 w, u32 h,
 
 } // namespace
 
-bool render_offscreen(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_format,
-                      const PipelineSpec& spec,
+bool render_pipeline(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_format,
+                      const PipelineSpec& spec, u64 target_image_u64,
                       const u8* vertex_data, u32 vertex_stride, u32 vertex_count,
                       const u8* cbuffer_data, size_t cbuffer_size,
-                      std::vector<u8>& pixels, std::string& err) {
+                      std::vector<u8>* pixels_out, std::string& err) {
     auto* device = reinterpret_cast<VkDevice>(device_u64);
     auto* phys = reinterpret_cast<VkPhysicalDevice>(phys_u64);
-    pixels.clear();
+    VkImage target_external = reinterpret_cast<VkImage>(target_image_u64);
+    if (pixels_out) pixels_out->clear();
     std::vector<std::function<void()>> cleanup;
     auto guard = [&](std::function<void()> fn) { cleanup.push_back(std::move(fn)); };
     auto fail = [&](const char* what, VkResult r) -> bool {
@@ -428,14 +429,16 @@ bool render_offscreen(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_form
     if (!writes.empty()) vkUpdateDescriptorSets(device, static_cast<u32>(writes.size()),
                                                 writes.data(), 0, nullptr);
 
-    // ---- offscreen render target: image + view + framebuffer ----
-    VkImage target = VK_NULL_HANDLE;
+    // ---- render target: own offscreen image or an external one ----
+    VkImage target = target_external;
     VkDeviceMemory target_mem = VK_NULL_HANDLE;
-    if (!create_device_image(device, phys, w, h, static_cast<VkFormat>(color_format),
-                             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                             target, target_mem))
-        return fail("render target", VK_ERROR_OUT_OF_HOST_MEMORY);
-    guard([&] { vkDestroyImage(device, target, nullptr); vkFreeMemory(device, target_mem, nullptr); });
+    if (!target) {
+        if (!create_device_image(device, phys, w, h, static_cast<VkFormat>(color_format),
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                 target, target_mem))
+            return fail("render target", VK_ERROR_OUT_OF_HOST_MEMORY);
+        guard([&] { vkDestroyImage(device, target, nullptr); vkFreeMemory(device, target_mem, nullptr); });
+    }
     VkImageView target_view = VK_NULL_HANDLE;
     {
         VkImageViewCreateInfo ivc{};
@@ -463,13 +466,15 @@ bool render_offscreen(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_form
         guard([&] { vkDestroyFramebuffer(device, fb, nullptr); });
     }
 
-    // ---- host-visible readback buffer ----
+    // ---- host-visible readback buffer (only for own targets with readback) ----
     VkBuffer rb = VK_NULL_HANDLE;
     VkDeviceMemory rbm = VK_NULL_HANDLE;
-    if (!create_host_buffer(device, phys, static_cast<VkDeviceSize>(w) * h * 4,
-                            VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, rb, rbm))
-        return fail("readback buffer", VK_ERROR_OUT_OF_HOST_MEMORY);
-    guard([&] { vkDestroyBuffer(device, rb, nullptr); vkFreeMemory(device, rbm, nullptr); });
+    if (pixels_out) {
+        if (!create_host_buffer(device, phys, static_cast<VkDeviceSize>(w) * h * 4,
+                                VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, rb, rbm))
+            return fail("readback buffer", VK_ERROR_OUT_OF_HOST_MEMORY);
+        guard([&] { vkDestroyBuffer(device, rb, nullptr); vkFreeMemory(device, rbm, nullptr); });
+    }
 
     // ---- command buffer ----
     VkCommandPool cpool = VK_NULL_HANDLE;
@@ -538,6 +543,7 @@ bool render_offscreen(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_form
         vkCmdBindVertexBuffers(cb, 0, 1, &vbuf, &off);
             vkCmdDraw(cb, vertex_count, 1, 0, 0);
         vkCmdEndRenderPass(cb);
+        if (!pixels_out) return vkEndCommandBuffer(cb) == VK_SUCCESS;
         // target -> readback buffer
         VkImageMemoryBarrier bar{};
         bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -570,13 +576,13 @@ bool render_offscreen(u64 device_u64, u64 phys_u64, u32 w, u32 h, u32 color_form
     if (auto r = vkDeviceWaitIdle(device); r != VK_SUCCESS)
         return fail("vkDeviceWaitIdle", r);
 
-    // ---- read back ----
-    pixels.resize(static_cast<size_t>(w) * h * 4);
-    {
+    // ---- read back (only for own offscreen targets) ----
+    if (pixels_out) {
+        pixels_out->resize(static_cast<size_t>(w) * h * 4);
         void* p = nullptr;
-        if (vkMapMemory(device, rbm, 0, pixels.size(), 0, &p) != VK_SUCCESS)
+        if (vkMapMemory(device, rbm, 0, pixels_out->size(), 0, &p) != VK_SUCCESS)
             return fail("vkMapMemory(readback)", VK_ERROR_OUT_OF_HOST_MEMORY);
-        std::memcpy(pixels.data(), p, pixels.size());
+        std::memcpy(pixels_out->data(), p, pixels_out->size());
         vkUnmapMemory(device, rbm);
     }
 
